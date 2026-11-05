@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-calendar-week"></i> Week 1, 2, 3 ... (Mon–Sun)</div>
+    </div>
+    {% if not week123_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Month</th><th>Week</th><th class="num">Sale (L)</th><th class="num">Days</th></tr></thead>
+        <tbody>
+            {% for r in week123_rows %}
+            <tr>
+                <td>{{ r.month|format_month }}</td>
+                <td>Week {{ r.week_of_month }}</td>
+                <td class="num">{{ format_indian(r.sale_qty) }} L</td>
+                <td class="num">{{ format_int(r.days) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

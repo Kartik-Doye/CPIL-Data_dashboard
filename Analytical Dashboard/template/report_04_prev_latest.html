@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if comparison_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Latest Day</div>
+        <div class="sc-value">{{ comparison_summary.latest_fmt }}</div>
+        <div class="sc-sub">{{ latest_date }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">vs Yesterday</div>
+        <div class="sc-value">{% if comparison_summary.prev_pct is not none %}{{ comparison_summary.prev_pct }}%{% else %}n/a{% endif %}</div>
+        <div class="sc-sub">{{ comparison_summary.prev_fmt }} ({{ prev_date or 'n/a' }})</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">vs Same Day Last Week</div>
+        <div class="sc-value">{% if comparison_summary.last_week_pct is not none %}{{ comparison_summary.last_week_pct }}%{% else %}n/a{% endif %}</div>
+        <div class="sc-sub">{{ comparison_summary.last_week_fmt }} ({{ last_week_date or 'n/a' }})</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">vs Same Date Last Year</div>
+        <div class="sc-value">{% if comparison_summary.last_year_pct is not none %}{{ comparison_summary.last_year_pct }}%{% else %}n/a{% endif %}</div>
+        <div class="sc-sub">{{ comparison_summary.last_year_fmt }} ({{ last_year_date or 'n/a' }})</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exchange-alt"></i> Multi-Period Comparison</div>
+        <div class="panel-subtitle">Latest day vs Yesterday vs Same Day Last Week vs Same Date Last Year</div>
+        <div class="panel-actions">
+            <form method="get" style="display:flex;gap:4px;">
+                {% for k, v in request.args.items() %}{% if k not in ['grouping'] %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+                <select name="grouping" class="filter-select" onchange="this.form.submit()">
+                    <option value="state" {% if prev_latest_grouping == 'state' %}selected{% endif %}>State</option>
+                    <option value="coordinator" {% if prev_latest_grouping == 'coordinator' %}selected{% endif %}>Coordinator</option>
+                    <option value="tm" {% if prev_latest_grouping == 'tm' %}selected{% endif %}>TM</option>
+                    <option value="type" {% if prev_latest_grouping == 'type' %}selected{% endif %}>Type</option>
+                </select>
+            </form>
+        </div>
+    </div>
+    {% if not prev_latest_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>{{ prev_latest_grouping|title }}</th>
+                <th class="num">Latest ({{ latest_date }})</th>
+                <th class="num">Yesterday ({{ prev_date or 'n/a' }})</th>
+                <th class="num">Yesterday %</th>
+                <th class="num">Last Week ({{ last_week_date or 'n/a' }})</th>
+                <th class="num">Last Week %</th>
+                <th class="num">Last Year ({{ last_year_date or 'n/a' }})</th>
+                <th class="num">Last Year %</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in prev_latest_rows %}
+            <tr>
+                <td>{{ r.dim }}</td>
+                <td class="num">{{ r.latest_fmt }}</td>
+                <td class="num {% if r.prev is none %}na{% endif %}">{{ r.prev_fmt }}</td>
+                <td class="num {% if r.prev_pct is none %}na{% elif r.prev_pct > 0 %}up{% elif r.prev_pct < 0 %}down{% endif %}">
+                    {% if r.prev_pct is not none %}{{ r.prev_pct }}%{% else %}—{% endif %}
+                </td>
+                <td class="num {% if r.last_week is none %}na{% endif %}">{{ r.last_week_fmt }}</td>
+                <td class="num {% if r.last_week_pct is none %}na{% elif r.last_week_pct > 0 %}up{% elif r.last_week_pct < 0 %}down{% endif %}">
+                    {% if r.last_week_pct is not none %}{{ r.last_week_pct }}%{% else %}—{% endif %}
+                </td>
+                <td class="num {% if r.last_year is none %}na{% endif %}">{{ r.last_year_fmt }}</td>
+                <td class="num {% if r.last_year_pct is none %}na{% elif r.last_year_pct > 0 %}up{% elif r.last_year_pct < 0 %}down{% endif %}">
+                    {% if r.last_year_pct is not none %}{{ r.last_year_pct }}%{% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p style="margin-top:12px;color:var(--text-muted);font-size:12px;">
+        <i class="fas fa-info-circle"></i> "n/a" means no data exists for that date. Last week and last year comparisons need sufficient historical data.
+    </p>
+    {% endif %}
+</div>
+{% if pl_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights &amp; Analysis</div>
+        <div class="panel-subtitle">What changed, who moved, and what it means</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in pl_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> Movement Analysis: Latest vs Yesterday</div>
+        <div class="panel-subtitle">Which {{ prev_latest_grouping }}s went up or down</div>
+    </div>
+    <div id="chart-prev-latest" class="chart-container"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-pl-rows">{{ prev_latest_rows|tojson }}</script>
+<script>
+var plData = JSON.parse(document.getElementById('data-pl-rows').textContent);
+makeGroupedBar('chart-prev-latest',
+  plData.map(function(r){return r.dim;}),
+  [
+    {name:'Yesterday', data: plData.map(function(r){return r.prev||0;})},
+    {name:'Latest', data: plData.map(function(r){return r.latest||0;})}
+  ], {decimals:0, unit:' L'});
+</script>
+{% endblock %}

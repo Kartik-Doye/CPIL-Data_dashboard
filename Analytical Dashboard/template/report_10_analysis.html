@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 10: Sales Analysis -->
+
+{% if analysis_rows %}
+<!-- Summary Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total</div>
+        <div class="sc-value">{{ analysis_rows | map(attribute='val') | sum }} {{ 'L' if analysis_measure in ['sale','free_sale'] else '' }}</div>
+        <div class="sc-sub">{{ analysis_measure|replace('_',' ')|title }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Groups</div>
+        <div class="sc-value">{{ analysis_rows|length }}</div>
+        <div class="sc-sub">{{ analysis_grouping }}s</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Top Performer</div>
+        <div class="sc-value">{{ analysis_rows[0].dim }}</div>
+        <div class="sc-sub">{{ "%.1f"|format(analysis_rows[0].share) }}% share</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Bottom Performer</div>
+        <div class="sc-value">{{ analysis_rows[-1].dim }}</div>
+        <div class="sc-sub">{{ "%.1f"|format(analysis_rows[-1].share) }}% share</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-pie"></i> Sales Analysis Report</div>
+        <div class="panel-actions">
+            <form method="get" style="display:flex;gap:4px;">
+                {% for k, v in request.args.items() %}{% if k not in ['measure', 'grouping'] %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+                <select name="measure" class="filter-select" onchange="this.form.submit()">
+                    <option value="sale" {% if analysis_measure == 'sale' %}selected{% endif %}>Sale</option>
+                    <option value="collection" {% if analysis_measure == 'collection' %}selected{% endif %}>Collection</option>
+                    <option value="free_sale" {% if analysis_measure == 'free_sale' %}selected{% endif %}>Free Sale</option>
+                    <option value="paytm" {% if analysis_measure == 'paytm' %}selected{% endif %}>Paytm</option>
+                </select>
+                <select name="grouping" class="filter-select" onchange="this.form.submit()">
+                    <option value="state" {% if analysis_grouping == 'state' %}selected{% endif %}>State</option>
+                    <option value="coordinator" {% if analysis_grouping == 'coordinator' %}selected{% endif %}>Coordinator</option>
+                    <option value="tm" {% if analysis_grouping == 'tm' %}selected{% endif %}>TM</option>
+                    <option value="type" {% if analysis_grouping == 'type' %}selected{% endif %}>Type</option>
+                </select>
+            </form>
+        </div>
+    </div>
+    <div id="chart-analysis" class="chart-container"></div>
+</div>
+
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-pie"></i> Share Distribution</div>
+        </div>
+        <div id="chart-analysis-donut" class="chart-container"></div>
+    </div>
+    {% if analysis_insights %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+        </div>
+        <div class="insights-box">
+            {% for insight in analysis_insights %}
+            <p><i class="fas fa-chevron-circle-right"></i> {{ insight }}</p>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if analysis_attention %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exclamation-triangle"></i> What Needs Attention</div>
+        <div class="panel-subtitle">{{ analysis_attention|length }} item(s) need action</div>
+    </div>
+    <div class="attention-list">
+        {% for item in analysis_attention %}
+        <div class="attention-item attention-{{ item.severity }}">
+            <span class="attention-badge attention-badge-{{ item.severity }}">{{ item.severity|upper }}</span>
+            <div class="attention-body">
+                <div class="attention-title">{{ item.title }}</div>
+                <div class="attention-detail">{{ item.detail }}</div>
+                {% if item.impact or item.action %}
+                <div class="attention-meta">
+                    {% if item.impact %}<span class="attention-impact"><i class="fas fa-chart-bar"></i> Impact: {{ item.impact }}</span>{% endif %}
+                    {% if item.action %}<span class="attention-action"><i class="fas fa-tasks"></i> Action: {{ item.action }}</span>{% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> {{ analysis_grouping|title }}-wise Breakdown</div>
+    </div>
+    {% if not analysis_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table style="margin-top:16px;">
+        <thead>
+            <tr>
+                <th>{{ analysis_grouping|title }}</th>
+                <th class="num">Stations</th>
+                <th class="num">{{ analysis_measure|replace('_',' ')|title }}</th>
+                <th class="num">Share</th>
+                <th class="num">Per Station</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in analysis_rows %}
+            <tr>
+                <td>{{ r.dim }}</td>
+                <td class="num">{{ format_int(r.stations) }}</td>
+                <td class="num">{{ r.val_fmt }}</td>
+                <td class="num">
+                    <span class="share-bar"><span class="share-bar-fill" data-width="{{ r.share|int }}"></span></span>
+                    {{ format_pct(r.share) }}
+                </td>
+                <td class="num">{{ format_indian(r.val / r.stations) if r.stations else 0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-analysis-rows">{{ analysis_rows|tojson }}</script>
+<script>
+var analysisData = JSON.parse(document.getElementById('data-analysis-rows').textContent);
+makeBarChart('chart-analysis',
+  analysisData.map(function(r){return r.dim;}),
+  analysisData.map(function(r){return r.val||0;}),
+  {decimals:0});
+makeDonutChart('chart-analysis-donut',
+  analysisData.map(function(r){return r.dim;}),
+  analysisData.map(function(r){return r.val||0;}));
+</script>
+{% endblock %}

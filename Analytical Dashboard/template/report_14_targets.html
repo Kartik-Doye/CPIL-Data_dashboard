@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 14: Targets (User Input) -->
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-bullseye"></i> Target vs Achievement</div>
+        <div class="panel-actions">
+            <form method="get" style="display:flex;gap:4px;">
+                {% for k, v in request.args.items() %}{% if k not in ['grouping'] and not k.startswith('t_') %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+                <select name="grouping" class="filter-select" onchange="this.form.submit()">
+                    <option value="state" {% if target_grouping == 'state' %}selected{% endif %}>State</option>
+                    <option value="coordinator" {% if target_grouping == 'coordinator' %}selected{% endif %}>Coordinator</option>
+                    <option value="tm" {% if target_grouping == 'tm' %}selected{% endif %}>TM</option>
+                </select>
+            </form>
+        </div>
+    </div>
+    <div class="insights-box" style="border-left-color:var(--blue, #007bff);">
+        <p><i class="fas fa-info-circle" style="color:var(--blue, #007bff);"></i>
+            <strong>How to use:</strong> Enter monthly target (in litres) for each {{ target_grouping }} in the input box below.
+            Then click "Calculate Achievement" to see which {{ target_grouping }}s met their targets and which are behind.
+            Status bands: <span class="badge badge-best">Achieved</span> (100%+),
+            <span class="badge" style="background:#28a745;color:white;">On Track</span> (80-99%),
+            <span class="badge" style="background:#ffc107;color:white;">At Risk</span> (60-79%),
+            <span class="badge" style="background:#dc3545;color:white;">Behind</span> (&lt;60%).
+        </p>
+    </div>
+
+    <form method="get">
+        {% for k, v in request.args.items() %}{% if k not in ['grouping'] and not k.startswith('t_') %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+        <input type="hidden" name="grouping" value="{{ target_grouping }}">
+        <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>{{ target_grouping|title }}</th>
+                    <th class="num">Actual Sale (L)</th>
+                    <th class="num">Stations</th>
+                    <th>Target (L) -- Enter Here</th>
+                    <th class="num">Achievement</th>
+                    <th class="num">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in target_rows %}
+                <tr>
+                    <td><strong>{{ r.dim }}</strong></td>
+                    <td class="num">{{ r.sale_fmt }}</td>
+                    <td class="num">{{ r.stations }}</td>
+                    <td>
+                        <input type="number" class="filter-input"
+                               name="t_{{ r.dim | replace(' ', '_') | replace('/', '_') }}"
+                               value="{{ r.target if r.target else '' }}"
+                               placeholder="Enter target..."
+                               style="width:120px; padding:4px 8px;">
+                    </td>
+                    <td class="num">
+                        {% if r.achievement is not none %}
+                            <strong>{{ "%.1f"|format(r.achievement) }}%</strong>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="num">
+                        {% if r.status == 'achieved' %}
+                            <span class="badge badge-best">{{ r.status_label }}</span>
+                        {% elif r.status == 'on-track' %}
+                            <span class="badge" style="background:#28a745;color:white;">{{ r.status_label }}</span>
+                        {% elif r.status == 'at-risk' %}
+                            <span class="badge" style="background:#ffc107;color:white;">{{ r.status_label }}</span>
+                        {% elif r.status == 'behind' %}
+                            <span class="badge" style="background:#dc3545;color:white;">{{ r.status_label }}</span>
+                        {% else %}
+                            <span class="badge badge-base">{{ r.status_label }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <div style="padding:12px 16px;">
+            <button type="submit" class="filter-btn apply"><i class="fas fa-calculator"></i> Calculate Achievement</button>
+        </div>
+    </form>
+</div>
+
+{% if target_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Overall Achievement</div>
+        <div class="sc-value {{ 'up' if target_summary.overall_pct >= 100 else 'down' }}">{{ "%.1f"|format(target_summary.overall_pct) }}%</div>
+        <div class="sc-sub">actual vs target</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Actual</div>
+        <div class="sc-value">{{ target_summary.total_actual_fmt }}</div>
+        <div class="sc-sub">litres sold</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Target</div>
+        <div class="sc-value">{{ target_summary.total_target_fmt }}</div>
+        <div class="sc-sub">litres targeted</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Achieved / Behind</div>
+        <div class="sc-value">{{ target_summary.achieved }} / {{ target_summary.behind }}</div>
+        <div class="sc-sub">groups</div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> Actual vs Target Comparison</div>
+    </div>
+    <div id="chart-targets" class="chart-container"></div>
+</div>
+
+{% if target_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in target_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-target-rows">{{ target_rows|tojson }}</script>
+<script>
+var tgtData = JSON.parse(document.getElementById('data-target-rows').textContent);
+var hasTargets = tgtData.filter(function(r){return r.target && r.target > 0;});
+if (hasTargets.length) {
+    makeGroupedBar('chart-targets',
+        hasTargets.map(function(r){return r.dim;}),
+        [
+            {name:'Actual', data: hasTargets.map(function(r){return r.sale_qty||0;})},
+            {name:'Target', data: hasTargets.map(function(r){return r.target||0;})}
+        ], {decimals:0, unit:' L'});
+}
+</script>
+{% endblock %}

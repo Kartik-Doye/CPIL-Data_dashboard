@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+{% if adhoc_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">4-Day Total</div>
+        <div class="sc-value">{{ adhoc_summary.total_fmt }}</div>
+        <div class="sc-sub">{{ adhoc_measure|title }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Daily Average</div>
+        <div class="sc-value">{{ adhoc_summary.avg_fmt }}</div>
+        <div class="sc-sub">Across 4 days</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Best Day</div>
+        <div class="sc-value">{{ adhoc_summary.best_fmt }}</div>
+        <div class="sc-sub">{{ adhoc_summary.best_day }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Latest vs Previous</div>
+        <div class="sc-value">{% if adhoc_summary.change_pct is not none %}{{ adhoc_summary.change_pct }}%{% else %}n/a{% endif %}</div>
+        <div class="sc-sub">{% if adhoc_summary.change_pct is not none and adhoc_summary.change_pct > 0 %}Up{% elif adhoc_summary.change_pct is not none %}Down{% else %}Need 2+ days{% endif %}</div>
+    </div>
+</div>
+{% endif %}
+
+{% if adhoc_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Ad-hoc Summary &amp; Insights</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in adhoc_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> 4-Day Daily Trend</div>
+        <div class="panel-subtitle">Total {{ adhoc_measure|title }} for the last 4 loaded days ({{ d3_date }} to {{ latest_date }})</div>
+    </div>
+    <div id="chart-adhoc-daily" class="chart-container"></div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> {{ adhoc_grouping|title }}-wise: Latest Day vs D-1, D-2, D-3</div>
+        <div class="panel-actions">
+            <form method="get" style="display:flex;gap:4px;">
+                {% for k, v in request.args.items() %}{% if k not in ['measure', 'grouping'] %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+                <select name="measure" class="filter-select" onchange="this.form.submit()">
+                    <option value="sale" {% if adhoc_measure == 'sale' %}selected{% endif %}>Sale (L)</option>
+                    <option value="collection" {% if adhoc_measure == 'collection' %}selected{% endif %}>Collection (₹)</option>
+                </select>
+                <select name="grouping" class="filter-select" onchange="this.form.submit()">
+                    <option value="state" {% if adhoc_grouping == 'state' %}selected{% endif %}>State</option>
+                    <option value="coordinator" {% if adhoc_grouping == 'coordinator' %}selected{% endif %}>Coordinator</option>
+                    <option value="tm" {% if adhoc_grouping == 'tm' %}selected{% endif %}>TM</option>
+                    <option value="type" {% if adhoc_grouping == 'type' %}selected{% endif %}>Type</option>
+                </select>
+            </form>
+        </div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>{{ adhoc_grouping|title }}</th>
+                <th class="num">Latest ({{ latest_date }})</th>
+                <th class="num">D-1 ({{ d1_date }})</th>
+                <th class="num">D-2 ({{ d2_date }})</th>
+                <th class="num">D-3 ({{ d3_date }})</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in adhoc_rows %}
+            <tr>
+                <td>{{ r.dim }}</td>
+                <td class="num">{{ r.latest_fmt }}</td>
+                <td class="num {% if r.d1 is none %}na{% endif %}">{{ r.d1_fmt }}</td>
+                <td class="num {% if r.d2 is none %}na{% endif %}">{{ r.d2_fmt }}</td>
+                <td class="num {% if r.d3 is none %}na{% endif %}">{{ r.d3_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <div class="insights-box" style="border-left-color:var(--blue, #007bff);">
+        <p><i class="fas fa-info-circle" style="color:var(--blue, #007bff);"></i>
+            <strong>What are D-1, D-2, D-3?</strong> These are the 3 days before the latest loaded day.
+            <strong>D-1</strong> = 1 day before latest (yesterday),
+            <strong>D-2</strong> = 2 days before latest,
+            <strong>D-3</strong> = 3 days before latest (oldest of the 4 days).
+            This lets you compare how each {{ adhoc_grouping }} performed across the last 4 days side by side.
+        </p>
+        <p><i class="fas fa-info-circle" style="color:var(--blue, #007bff);"></i>
+            "n/a" means that day's data has not been uploaded yet. Load more daily files to fill in the gaps.
+        </p>
+    </div>
+</div>
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-layer-group"></i> {{ adhoc_grouping|title }} Comparison</div>
+        <div class="panel-subtitle">Side-by-side comparison by {{ adhoc_grouping }}</div>
+    </div>
+    <div id="chart-adhoc" class="chart-container"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-adhoc-rows">{{ adhoc_rows|tojson }}</script>
+<script type="application/json" id="data-adhoc-daily">{{ adhoc_daily|tojson }}</script>
+<script>
+var adhocData = JSON.parse(document.getElementById('data-adhoc-rows').textContent);
+var adhocDaily = JSON.parse(document.getElementById('data-adhoc-daily').textContent);
+
+// 4-day daily trend bar chart
+if (adhocDaily && adhocDaily.length > 0) {
+  makeBarChart('chart-adhoc-daily',
+    adhocDaily.map(function(d){return d.sale_date;}),
+    adhocDaily.map(function(d){return d.val||0;}),
+    {decimals:0, unit: adhocData.length > 0 && adhocData[0].latest_fmt && adhocData[0].latest_fmt.indexOf('\u20b9') >= 0 ? ' \u20b9' : ' L'});
+}
+
+// Grouped comparison bar chart
+makeGroupedBar('chart-adhoc',
+  adhocData.map(function(r){return r.dim;}),
+  [
+    {name:'Latest', data: adhocData.map(function(r){return r.latest||0;})},
+    {name:'D-1', data: adhocData.map(function(r){return r.d1||0;})},
+    {name:'D-2', data: adhocData.map(function(r){return r.d2||0;})},
+    {name:'D-3', data: adhocData.map(function(r){return r.d3||0;})}
+  ], {decimals:0, unit:' L'});
+</script>
+{% endblock %}

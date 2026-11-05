@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report_name|default("Dashboard") }} — GO Gas Analytical Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="{{ url_for('static', filename='js/echarts.min.js') }}"></script>
+</head>
+<body>
+<div class="page-loading-overlay" id="pageLoader"><div class="spinner"></div></div>
+<div class="app">
+    <!-- ===================== SIDEBAR ===================== -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo"><i class="fas fa-chart-line"></i></div>
+            <span class="brand">GO Gas</span>
+            <button class="theme-btn" onclick="toggleTheme()" title="Toggle dark mode" id="themeBtn">
+                <i class="fas fa-moon"></i>
+            </button>
+            <button class="collapse-btn" onclick="toggleSidebar()" title="Collapse">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+        </div>
+        <div class="user-info">
+            <i class="fas fa-user-circle"></i>
+            <span>GO Gas Admin</span>
+        </div>
+        <div class="sidebar-search">
+            <i class="fas fa-search"></i>
+            <input type="text" id="report-search" placeholder="Search reports..." oninput="filterReports(this.value)">
+        </div>
+        <nav class="menu" id="report-menu">
+            {% for group, rids in menu_groups %}
+            <div class="menu-group">
+                <div class="menu-group-header" onclick="toggleGroup(this)">
+                    <span>{{ group }}</span>
+                    <i class="fas fa-chevron-down expand-arrow"></i>
+                </div>
+                <div class="menu-items">
+                    {% for rid in rids %}
+                    {% set info = reports[rid] %}
+                    <a href="/report/{{ rid }}{{ current_query_string() }}"
+                       class="menu-item {% if report_id == rid %}active{% endif %}">
+                        {{ info[0] }}
+                    </a>
+                    {% endfor %}
+                    {% if group == 'Data check' %}
+                    <a href="/data-check{{ current_query_string() }}"
+                       class="menu-item {% if report_id == 'data-check' %}active{% endif %}">
+                        Data Check
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </nav>
+    </aside>
+
+    <!-- ===================== MAIN ===================== -->
+    <main class="main">
+        <!-- Title panel -->
+        <div class="title-panel">
+            <button class="mobile-menu" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+            <h1>{{ report_name|default("Dashboard") }}</h1>
+            <div class="data-as-of">
+                <span class="label">Data as of</span>
+                <span class="date">{{ latest_date|default("n/a") }}</span>
+            </div>
+            {% if report_id and report_id != 'data-check' and not stub and report_id != 25 %}
+            <a href="/export/{{ report_id }}{{ current_query_string() }}" class="btn-export" title="Download CSV">
+                <i class="fas fa-file-csv"></i> CSV
+            </a>
+            <a href="/export/{{ report_id }}/xlsx{{ current_query_string() }}" class="btn-export" title="Download Excel">
+                <i class="fas fa-file-excel"></i> Excel
+            </a>
+            <a href="/export/{{ report_id }}/pdf{{ current_query_string() }}" target="_blank" class="btn-export" title="Print / Save as PDF">
+                <i class="fas fa-file-pdf"></i> PDF
+            </a>
+            {% endif %}
+        </div>
+
+        {% if loaded_days is defined and calendar_days is defined and loaded_days < calendar_days %}
+        <div class="days-notice">
+            <i class="fas fa-info-circle"></i>
+            {{ loaded_days }} of {{ calendar_days }} days loaded in this period.
+        </div>
+        {% endif %}
+
+        {% if data_stale is defined and data_stale %}
+        <div class="days-notice" style="background:#fff3cd;border-color:#ffc107;color:#856404;">
+            <i class="fas fa-exclamation-triangle"></i>
+            Data is {{ data_age_days }} day(s) old (last update: {{ latest_data_date }}). Some numbers may not reflect current operations.
+        </div>
+        {% endif %}
+
+        {% if data_gaps is defined and data_gaps|length > 0 %}
+        <div class="days-notice" style="background:#f8d7da;border-color:#f5c6cb;color:#721c24;">
+            <i class="fas fa-exclamation-circle"></i>
+            {{ data_gaps|length }} data gap(s) detected in this period. Totals may be incomplete.
+            {% for g in data_gaps[:3] %}{{ g.from }} to {{ g.to }} ({{ g.days }} days){% if not loop.last %}; {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+
+        {% if data_gaps %}
+        <div class="gap-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Data gaps detected:</strong>
+            {% for g in data_gaps %}
+            {{ g.from }} to {{ g.to }} ({{ g.days }} days missing){{ ", " if not loop.last else "" }}
+            {% endfor %}
+            — Trend and forecast accuracy may be affected.
+        </div>
+        {% endif %}
+
+        <!-- Breadcrumbs -->
+        <div class="breadcrumbs">
+            <a href="/report/2"><i class="fas fa-home"></i> Home</a>
+            {% if report_group %}<span class="sep">›</span> <span>{{ report_group }}</span>{% endif %}
+            {% if report_name %}<span class="sep">›</span> <strong>{{ report_name }}</strong>{% endif %}
+        </div>
+
+        <!-- Filter bar -->
+        {% include 'partials/filters.html' %}
+
+        <!-- Content area -->
+        <div class="content">
+            {% if error %}
+            <div class="panel error-panel">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>{{ error }}</p>
+                {% if error_detail %}<pre>{{ error_detail }}</pre>{% endif %}
+            </div>
+            {% else %}
+            {% block content %}{% endblock %}
+            {% endif %}
+        </div>
+    </main>
+
+<button id="back-to-top" title="Back to top"><i class="fas fa-arrow-up"></i></button>
+</div>
+
+<script src="{{ url_for('static', filename='js/filters.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script>
+// Persist sidebar collapsed state across page navigations
+(function() {
+    var sb = document.getElementById('sidebar');
+    if (!sb) return;
+    if (window.innerWidth > 768 && localStorage.getItem('sidebarCollapsed') === 'true') {
+        sb.classList.add('collapsed');
+    }
+    var orig = window.toggleSidebar;
+    if (orig) {
+        window.toggleSidebar = function() {
+            orig();
+            if (window.innerWidth > 768) {
+                localStorage.setItem('sidebarCollapsed', sb.classList.contains('collapsed'));
+            }
+        };
+    }
+})();
+</script>
+<script>
+// Set share-bar widths from data-width attributes
+(function() {
+    document.querySelectorAll('.share-bar-fill[data-width]').forEach(function(el) {
+        el.style.width = el.getAttribute('data-width') + '%';
+    });
+})();
+</script>
+<script>
+// Dark mode toggle — re-render charts on theme change
+function toggleTheme() {
+    document.body.classList.toggle('dark-theme');
+    var isDark = document.body.classList.contains('dark-theme');
+    localStorage.setItem('darkMode', isDark);
+    var icon = document.querySelector('#themeBtn i');
+    if (icon) icon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
+    // Re-dispose and re-init all charts so they pick up the dark theme
+    if (typeof echarts !== 'undefined') {
+        setTimeout(function() {
+            echarts.dispose(document.querySelectorAll('.chart-container'));
+            // Trigger chart re-render by dispatching a custom event
+            window.dispatchEvent(new CustomEvent('themeChanged', {detail: {dark: isDark}}));
+            // Also reload the page's chart scripts by re-running them
+            // Simplest approach: reload page to re-init charts with correct theme
+            window.location.reload();
+        }, 50);
+    }
+}
+(function() {
+    if (localStorage.getItem('darkMode') === 'true') {
+        document.body.classList.add('dark-theme');
+        var icon = document.querySelector('#themeBtn i');
+        if (icon) icon.className = 'fas fa-sun';
+    }
+})();
+
+// Page loading overlay on filter submit
+(function() {
+    var form = document.querySelector('.filter-bar form, form.filter-form');
+    if (form) {
+        form.addEventListener('submit', function() {
+            document.getElementById('pageLoader').classList.add('active');
+        });
+    }
+    // Also on sidebar link clicks
+    document.querySelectorAll('.menu-item').forEach(function(a) {
+        a.addEventListener('click', function() {
+            document.getElementById('pageLoader').classList.add('active');
+        });
+    });
+    // Hide on load
+    window.addEventListener('load', function() {
+        document.getElementById('pageLoader').classList.remove('active');
+    });
+})();
+
+// Report search in sidebar
+function filterReports(q) {
+    q = q.toLowerCase();
+    var groups = document.querySelectorAll('#report-menu .menu-group');
+    groups.forEach(function(g) {
+        var items = g.querySelectorAll('.menu-item');
+        var anyVisible = false;
+        items.forEach(function(item) {
+            var text = item.textContent.toLowerCase();
+            var match = !q || text.indexOf(q) >= 0;
+            item.style.display = match ? '' : 'none';
+            if (match) anyVisible = true;
+        });
+        g.style.display = anyVisible ? '' : 'none';
+        if (q && anyVisible) g.classList.remove('collapsed');
+    });
+}
+
+// Back to top button
+(function() {
+    var btn = document.getElementById('back-to-top');
+    if (!btn) return;
+    window.addEventListener('scroll', function() {
+        if (window.scrollY > 500) {
+            btn.classList.add('visible');
+        } else {
+            btn.classList.remove('visible');
+        }
+    });
+    btn.addEventListener('click', function() {
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    });
+})();
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

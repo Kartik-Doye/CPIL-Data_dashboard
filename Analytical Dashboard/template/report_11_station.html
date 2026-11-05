@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 11: Station-wise -->
+
+{% if station_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Stations</div>
+        <div class="sc-value">{{ station_summary.total_stations }}</div>
+        <div class="sc-sub">{{ station_summary.active_stations }} active, {{ station_summary.zero_stations }} zero</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ station_summary.total_sale_fmt }}</div>
+        <div class="sc-sub">all stations</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Avg Sale/Station</div>
+        <div class="sc-value">{{ station_summary.avg_sale_fmt }}</div>
+        <div class="sc-sub">network average</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Top Station</div>
+        <div class="sc-value">{{ station_summary.top_station }}</div>
+        <div class="sc-sub">{{ station_summary.top_sale_fmt }}</div>
+    </div>
+</div>
+{% endif %}
+
+{% if station_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Station Insights</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in station_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% if station_top10 %}
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-trophy"></i> Top 10 Stations</div>
+        </div>
+        <div id="chart-station-top10" class="chart-container"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-bar"></i> Bottom 10 Stations</div>
+        </div>
+        <div id="chart-station-bottom10" class="chart-container"></div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-store"></i> All Stations</div>
+        <div class="panel-actions">
+            <form method="get" style="display:flex;gap:4px;align-items:center;">
+                {% for k, v in request.args.items() %}{% if k not in ['q', 'page'] %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+                <input type="text" name="q" value="{{ station_search_q or '' }}" placeholder="Search station..." class="table-search">
+                <button type="submit" class="filter-btn apply" style="padding:4px 10px;"><i class="fas fa-search"></i></button>
+            </form>
+        </div>
+    </div>
+    {% if not station_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>{% if station_search_q %}No stations match "{{ station_search_q }}".{% else %}No data available for the selected filters.{% endif %}</p>
+    </div>
+    {% else %}
+    <p style="padding:8px 16px;color:var(--text-muted);font-size:12px;">
+        Showing {{ ((station_page - 1) * station_per_page) + 1 }}–{{ [station_page * station_per_page, station_total_count] | min }} of {{ format_int(station_total_count) }} stations
+    </p>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>ERP Code</th><th>Station Name</th><th>State</th><th>Coordinator</th><th>TM</th>
+                <th class="num">Sale (L)</th><th class="num">Collection</th><th class="num">Coll Rate (₹/L)</th><th class="num">Free Sale (L)</th><th class="num">Avg/Day (L)</th><th class="num">7-Day Trend</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in station_rows %}
+            <tr>
+                <td>{{ r.erp_code }}</td>
+                <td><a href="/station/{{ r.erp_code }}" class="station-link">{{ r.alds_name }}</a></td>
+                <td>{{ r.state }}</td>
+                <td>{{ r.coordinator }}</td>
+                <td>{{ r.tm }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.coll_fmt }}</td>
+                <td class="num">{{ r.coll_rate_fmt }}</td>
+                <td class="num">{{ format_indian(r.free_sale) }} L</td>
+                <td class="num">{{ format_indian(r.avg_per_day) }} L</td>
+                <td class="num {% if r.trend_pct is not none and r.trend_pct < -10 %}col-red{% elif r.trend_pct is not none and r.trend_pct > 0 %}col-green{% else %}col-muted{% endif %}">
+                    {% if r.trend_pct is not none %}
+                        {% if r.trend_pct > 0 %}▲ +{{ r.trend_pct }}%{% elif r.trend_pct < 0 %}▼ {{ r.trend_pct }}%{% else %}— 0%{% endif %}
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% if station_total_pages > 1 %}
+    <div class="pagination">
+        {% set ns = namespace(qs='') %}
+        {% for k, v in request.args.items() %}{% if k != 'page' %}{% set ns.qs = ns.qs ~ k ~ '=' ~ v ~ '&' %}{% endif %}{% endfor %}
+        {% if station_page > 1 %}
+        <a href="/report/11?{{ ns.qs }}page={{ station_page - 1 }}">« Prev</a>
+        {% else %}
+        <span class="disabled">« Prev</span>
+        {% endif %}
+        {% for p in range(1, station_total_pages + 1) %}
+            {% if p == station_page %}
+            <span class="current">{{ p }}</span>
+            {% else %}
+            <a href="/report/11?{{ ns.qs }}page={{ p }}">{{ p }}</a>
+            {% endif %}
+        {% endfor %}
+        {% if station_page < station_total_pages %}
+        <a href="/report/11?{{ ns.qs }}page={{ station_page + 1 }}">Next »</a>
+        {% else %}
+        <span class="disabled">Next »</span>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-station-top10">{{ station_top10|tojson }}</script>
+<script type="application/json" id="data-station-bottom10">{{ station_bottom10|tojson }}</script>
+<script>
+var top10 = JSON.parse(document.getElementById('data-station-top10').textContent);
+var bottom10 = JSON.parse(document.getElementById('data-station-bottom10').textContent);
+if (top10 && top10.length) {
+    makeBarChart('chart-station-top10',
+        top10.map(function(r){return r.alds_name || r.erp_code;}),
+        top10.map(function(r){return r.sale_qty||0;}),
+        {decimals:0, unit:' L'});
+}
+if (bottom10 && bottom10.length) {
+    makeBarChart('chart-station-bottom10',
+        bottom10.map(function(r){return r.alds_name || r.erp_code;}),
+        bottom10.map(function(r){return r.sale_qty||0;}),
+        {decimals:0, unit:' L'});
+}
+</script>
+{% endblock %}

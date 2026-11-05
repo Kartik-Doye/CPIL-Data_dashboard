@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> Quarterly Analysis (FY Apr–Mar)</div>
+    </div>
+    {% if not quarterly_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Financial Year</th><th>Quarter</th><th class="num">Sale (L)</th><th class="num">Collection (₹)</th></tr></thead>
+        <tbody>
+            {% for r in quarterly_rows %}
+            <tr>
+                <td>{{ r.financial_year }}</td>
+                <td>Q{{ r.quarter }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ format_rupees(r.collection) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% if quarterly_rows and quarterly_rows|length < 2 %}
+<p style="color:var(--text-muted);text-align:center;padding:16px;">
+    <i class="fas fa-info-circle"></i> Only {{ quarterly_rows|length }} quarter loaded. Quarterly comparison needs a full quarter.
+</p>
+{% endif %}
+{% endblock %}

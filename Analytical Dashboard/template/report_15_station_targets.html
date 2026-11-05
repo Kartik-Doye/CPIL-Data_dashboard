@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 15: Station Target Distribution (User Input) -->
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-bullseye"></i> Station Target Distribution</div>
+        <div class="panel-subtitle">Set targets at {{ target_grouping|title }} level and see distribution</div>
+    </div>
+    <div class="insights-box" style="border-left-color:var(--blue, #007bff);">
+        <p><i class="fas fa-info-circle" style="color:var(--blue, #007bff);"></i>
+            Enter targets in <a href="/report/14">Report 14 (Target vs Achievement)</a> first.
+            This report shows how each {{ target_grouping }}'s actual sale compares to the target you set.
+        </p>
+    </div>
+    {% if station_target_rows and target_summary %}
+    <div class="summary-cards">
+        <div class="summary-card">
+            <div class="sc-label">Overall Achievement</div>
+            <div class="sc-value {{ 'up' if target_summary.overall_pct >= 100 else 'down' }}">{{ "%.1f"|format(target_summary.overall_pct) }}%</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Achieved</div>
+            <div class="sc-value">{{ target_summary.achieved }}</div>
+            <div class="sc-sub">{{ target_grouping }}s</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Behind</div>
+            <div class="sc-value">{{ target_summary.behind }}</div>
+            <div class="sc-sub">{{ target_grouping }}s</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Total Gap</div>
+            <div class="sc-value">{{ "%.0f"|format(target_summary.total_target - target_summary.total_actual) }} L</div>
+            <div class="sc-sub">shortfall</div>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>{{ target_grouping|title }}</th>
+                <th class="num">Actual (L)</th>
+                <th class="num">Target (L)</th>
+                <th class="num">Achievement</th>
+                <th class="num">Gap (L)</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in station_target_rows %}
+            {% if r.target %}
+            <tr>
+                <td><strong>{{ r.dim }}</strong></td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.target_fmt }}</td>
+                <td class="num">
+                    <span class="share-bar"><span class="share-bar-fill" data-width="{{ r.achievement|int }}"></span></span>
+                    {{ "%.1f"|format(r.achievement) }}%
+                </td>
+                <td class="num {{ 'down' if r.shortfall < 0 else 'up' }}">{{ r.shortfall_fmt }}</td>
+                <td class="num">
+                    {% if r.status == 'achieved' %}
+                        <span class="badge badge-best">{{ r.status_label }}</span>
+                    {% elif r.status == 'on-track' %}
+                        <span class="badge" style="background:#28a745;color:white;">{{ r.status_label }}</span>
+                    {% elif r.status == 'at-risk' %}
+                        <span class="badge" style="background:#ffc107;color:white;">{{ r.status_label }}</span>
+                    {% elif r.status == 'behind' %}
+                        <span class="badge" style="background:#dc3545;color:white;">{{ r.status_label }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No targets entered yet. Go to <a href="/report/14">Report 14</a> to enter targets.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

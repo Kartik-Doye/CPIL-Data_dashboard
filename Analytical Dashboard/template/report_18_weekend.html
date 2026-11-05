@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-calendar-day"></i> Weekend-wise Analysis</div>
+    </div>
+    {% if not weekend_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Day Type</th><th class="num">Total Sale (L)</th><th class="num">Days</th><th class="num">Avg/Day (L)</th></tr></thead>
+        <tbody>
+            {% for r in weekend_rows %}
+            <tr>
+                <td>{% if r.is_weekend %}Weekend (Sat+Sun){% else %}Weekday{% endif %}</td>
+                <td class="num">{{ format_indian(r.sale_qty) }} L</td>
+                <td class="num">{{ format_int(r.days) }}</td>
+                <td class="num">{{ format_indian(r.avg_per_day if r.days else 0) }} L</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+    <p style="margin-top:12px;color:var(--text-muted);font-size:12px;">
+        <i class="fas fa-info-circle"></i> Weekend index (weekend avg ÷ weekday avg) will be meaningful with more data.
+    </p>
+</div>
+{% endblock %}

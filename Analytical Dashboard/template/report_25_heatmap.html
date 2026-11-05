@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Report 25: Station Heatmap -->
+{% if heatmap_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> So What? — Actionable Insights</div>
+    </div>
+    <div style="padding: 16px;">
+        <ul style="margin:0; padding-left: 20px; line-height: 1.8;">
+        {% for i in heatmap_insights %}
+            <li>{{ i }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-th"></i> Station Performance Heatmap</div>
+        <div class="panel-subtitle">{{ heatmap_station_count }} stations × {{ heatmap_date_count }} days</div>
+    </div>
+    {% if heatmap_available %}
+    <div id="chart-heatmap" class="chart-container" style="height:800px;"></div>
+    <div class="insights-box" style="border-left-color:var(--blue, #007bff); margin:8px 0;">
+        <p><i class="fas fa-info-circle" style="color:var(--blue, #007bff);"></i>
+            <strong>How to navigate:</strong> The chart shows the top 40 stations by default. Drag the <strong>right-side slider</strong> to scroll through all 316 stations. Drag the <strong>bottom slider</strong> to zoom into specific dates. Use your mouse wheel inside the chart to zoom.
+        </p>
+    </div>
+
+    <div class="insights-box" style="margin:12px;">
+        <p><i class="fas fa-info-circle"></i> <strong>How to read:</strong> Each cell shows daily sale (L) for a station. Dark red = zero sales, dark green = high sales. Stations are sorted by total sale (top = highest).</p>
+        {% if heatmap_zero_count > 0 %}
+        <p style="color:var(--red);"><i class="fas fa-exclamation-triangle"></i> <strong>{{ heatmap_zero_count }} stations</strong> have zero sales across all days — shown as solid red rows at the bottom.</p>
+        {% endif %}
+    </div>
+
+    {% if heatmap_zero_stations %}
+    <div class="panel-header" style="margin-top:16px;">
+        <div class="panel-title"><i class="fas fa-times-circle" style="color:var(--red);"></i> Zero-Sale Stations ({{ heatmap_zero_count }})</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>ERP Code</th><th>Station Name</th><th>State</th></tr></thead>
+        <tbody>
+            {% for s in heatmap_zero_stations %}
+            <tr>
+                <td>{{ s.erp }}</td>
+                <td><strong>{{ s.name }}</strong></td>
+                <td>{{ s.state }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state"><i class="fas fa-chart-area"></i><p>{{ heatmap_message }}</p></div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="application/json" id="data-heatmap">{{ heatmap_json|tojson }}</script>
+<script>
+var hmData = JSON.parse(document.getElementById('data-heatmap').textContent);
+var hm = hmData.data;
+var hmDates = hmData.dates;
+var hmStations = hmData.stations;
+var hmMax = hmData.max;
+
+if (hm.length && typeof echarts !== 'undefined') {
+    var el = document.getElementById('chart-heatmap');
+    if (el) {
+        var chart = echarts.init(el);
+        chart.setOption({
+            tooltip: {position: 'top', formatter: function(p) {
+                return hmStations[p.value[1]] + '<br/>' + hmDates[p.value[0]] + '<br/>Sale: ' + p.value[2] + ' L';
+            }},
+            grid: {left: 220, right: 30, top: 30, bottom: 100, containLabel: true},
+            xAxis: {type: 'category', data: hmDates, name: 'Date', nameLocation: 'middle', nameGap: 35, axisLabel: {rotate: 45, fontSize: 10}, splitArea: {show: true}},
+            yAxis: {type: 'category', data: hmStations, name: 'Station', nameLocation: 'middle', nameGap: 150, axisLabel: {fontSize: 9}, splitArea: {show: true}},
+            dataZoom: [
+                {type: 'slider', xAxisIndex: 0, start: 0, end: 100, bottom: 5, height: 20},
+                {type: 'slider', yAxisIndex: 0, start: 0, end: 12, right: 5, width: 22,
+                 showDetail: true, labelFormatter: ''},
+                {type: 'inside', xAxisIndex: 0},
+                {type: 'inside', yAxisIndex: 0}
+            ],
+            visualMap: {
+                min: 0, max: hmMax, calculable: true, orient: 'horizontal',
+                left: 'center', bottom: 55,
+                inRange: {color: ['#d73027', '#fee08b', '#1a9850']},
+                text: ['High', 'Zero']
+            },
+            series: [{
+                type: 'heatmap', data: hm,
+                label: {show: false},
+                emphasis: {itemStyle: {shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)'}}
+            }]
+        });
+        window.addEventListener('resize', function() { chart.resize(); });
+    }
+}
+</script>
+{% endblock %}

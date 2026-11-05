@@ -1,0 +1,190 @@
+<!-- Filter bar (PRD section 5.2: same bar everywhere, choices narrow each other) -->
+<div class="filter-bar">
+    <form method="get" id="filter-form" class="filter-form">
+        <!-- Time buttons -->
+        <div class="filter-group time-buttons">
+            <button type="button" class="time-btn {% if time_btn == 'latest' %}active{% endif %}"
+                    data-time="latest" onclick="setTime('latest')">Latest day</button>
+            <button type="button" class="time-btn {% if time_btn == '7' %}active{% endif %}"
+                    data-time="7" onclick="setTime('7')">7 Days</button>
+            <button type="button" class="time-btn {% if time_btn == '30' %}active{% endif %}"
+                    data-time="30" onclick="setTime('30')">30 Days</button>
+            <button type="button" class="time-btn {% if time_btn == 'month' %}active{% endif %}"
+                    data-time="month" onclick="setTime('month')">Month</button>
+            <button type="button" class="time-btn {% if time_btn == 'custom' %}active{% endif %}"
+                    data-time="custom" onclick="setTime('custom')">Custom</button>
+        </div>
+
+        {% if time_btn == 'custom' %}
+        <div class="filter-group custom-dates">
+            <input type="date" name="start" value="{{ custom_start }}" class="filter-input">
+            <span>to</span>
+            <input type="date" name="end" value="{{ custom_end }}" class="filter-input">
+        </div>
+        {% endif %}
+
+        <!-- Year + Month -->
+        <div class="filter-group">
+            <select name="year" class="filter-select" onchange="this.form.submit()">
+                <option value="">Year</option>
+                {% for y in choices.years %}
+                <option value="{{ y }}" {% if year|string == y|string %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <select name="month" class="filter-select" onchange="this.form.submit()">
+                <option value="">Month</option>
+                {% for m in choices.months %}
+                <option value="{{ m }}" {% if month|string == m|string %}selected{% endif %}>
+                    {{ ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m] }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- State -->
+        <div class="filter-group">
+            <select name="state" class="filter-select" onchange="this.form.submit()">
+                <option value="">State</option>
+                {% for s in choices.states %}
+                <option value="{{ s }}" {% if state == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- Coordinator -->
+        <div class="filter-group">
+            <select name="coordinator" class="filter-select" onchange="this.form.submit()">
+                <option value="">Coordinator</option>
+                {% for c in choices.coordinators %}
+                <option value="{{ c }}" {% if coordinator == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- TM (with No TM) -->
+        <div class="filter-group">
+            <select name="tm" class="filter-select" onchange="this.form.submit()">
+                <option value="">TM</option>
+                {% for t in choices.tms %}
+                <option value="{{ t }}" {% if tm == t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- Type -->
+        <div class="filter-group">
+            <select name="type" class="filter-select" onchange="this.form.submit()">
+                <option value="">Type</option>
+                {% for t in choices.types %}
+                <option value="{{ t }}" {% if type == t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- Station search -->
+        <div class="filter-group">
+            <input type="text" name="station" value="{{ station_search }}"
+                   placeholder="Search station..." class="filter-input">
+        </div>
+
+        <!-- Hidden time field -->
+        <input type="hidden" name="time" id="time-field" value="{{ time_btn }}">
+
+        <!-- Compare toggle -->
+        <div class="filter-group">
+            <label class="compare-toggle">
+                <input type="checkbox" name="compare" value="1" {% if compare_mode %}checked{% endif %} onchange="this.form.submit()">
+                <span>Compare</span>
+            </label>
+        </div>
+        {% if compare_mode %}
+        <div class="filter-group custom-dates">
+            <span class="compare-label">vs</span>
+            <input type="date" name="cmp_start" value="{{ compare_start }}" class="filter-input">
+            <span>to</span>
+            <input type="date" name="cmp_end" value="{{ compare_end }}" class="filter-input">
+        </div>
+        {% endif %}
+
+        <!-- Filter Presets (Phase 5) -->
+        <div class="filter-group preset-group">
+            <select id="filter-preset" class="filter-select" onchange="applyPreset(this.value)" title="Saved filter presets">
+                <option value="">📁 Presets...</option>
+            </select>
+            <button type="button" class="filter-btn preset-btn" onclick="savePreset()" title="Save current filters as preset"><i class="fas fa-save"></i></button>
+            <button type="button" class="filter-btn preset-btn" onclick="deletePreset()" title="Delete selected preset"><i class="fas fa-trash"></i></button>
+        </div>
+
+        <!-- Apply + Reset -->
+        <button type="submit" class="filter-btn apply"><i class="fas fa-filter"></i> Apply</button>
+        <a href="{% if report_id == 'data-check' %}/data-check{% else %}/report/{{ report_id }}{% endif %}" class="filter-btn reset"><i class="fas fa-undo"></i> Reset</a>
+    </form>
+</div>
+<script>
+// Filter Presets (Phase 5) — saved in localStorage
+function getPresets() {
+    try { return JSON.parse(localStorage.getItem('filterPresets') || '{}'); }
+    catch(e) { return {}; }
+}
+function setPresets(p) {
+    localStorage.setItem('filterPresets', JSON.stringify(p));
+}
+function loadPresetDropdown() {
+    var sel = document.getElementById('filter-preset');
+    if (!sel) return;
+    var presets = getPresets();
+    // Clear existing except first option
+    while (sel.options.length > 1) sel.remove(1);
+    Object.keys(presets).sort().forEach(function(name) {
+        var opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    });
+}
+function getCurrentFilters() {
+    var form = document.getElementById('filter-form');
+    var params = {};
+    var formData = new FormData(form);
+    formData.forEach(function(v, k) { if (v) params[k] = v; });
+    return params;
+}
+function savePreset() {
+    var name = prompt('Enter a name for this preset (e.g. "Last 7 days + Tamil Nadu"):');
+    if (!name) return;
+    var presets = getPresets();
+    presets[name] = getCurrentFilters();
+    setPresets(presets);
+    loadPresetDropdown();
+    var sel = document.getElementById('filter-preset');
+    sel.value = name;
+    alert('Preset "' + name + '" saved.');
+}
+function applyPreset(name) {
+    if (!name) return;
+    var presets = getPresets();
+    var preset = presets[name];
+    if (!preset) return;
+    // Build query string from preset params
+    var qs = Object.keys(preset).map(function(k) {
+        return encodeURIComponent(k) + '=' + encodeURIComponent(preset[k]);
+    }).join('&');
+    var rid = document.querySelector('input[name="report_id"]');
+    var base = window.location.pathname;
+    window.location.href = base + '?' + qs;
+}
+function deletePreset() {
+    var sel = document.getElementById('filter-preset');
+    var name = sel.value;
+    if (!name) { alert('Select a preset to delete.'); return; }
+    if (!confirm('Delete preset "' + name + '"?')) return;
+    var presets = getPresets();
+    delete presets[name];
+    setPresets(presets);
+    loadPresetDropdown();
+}
+// Load presets on page load
+loadPresetDropdown();
+</script>

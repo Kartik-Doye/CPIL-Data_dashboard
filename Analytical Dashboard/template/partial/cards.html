@@ -1,0 +1,15 @@
+<!-- Standard cards (PRD section 8.1) -->
+<div class="cards-row">
+    {% for card in cards %}
+    <div class="card card-{{ card.color }}" title="{{ card.tooltip|default(card.label) }}">
+        <div class="card-icon"><i class="fas {{ card.icon }}"></i></div>
+        <div class="card-body">
+            <div class="card-label">{{ card.label }}</div>
+            <div class="card-value">{{ card.value }}</div>
+            {% if card.change and card.change[1] %}
+            <div class="card-change change-{{ card.change[0] }}">{{ card.change[1] }}</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>

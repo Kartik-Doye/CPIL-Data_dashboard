@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+{% block title %}Daily Briefing{% endblock %}
+
+{% block content %}
+{% if not briefing_available %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-newspaper"></i> Daily Briefing</div>
+    </div>
+    <p class="empty-state">{{ briefing_message or "No data available for the selected filters." }}</p>
+</div>
+{% else %}
+
+<!-- ===== HEADER ===== -->
+<div class="panel" style="text-align:center;padding:24px;">
+    <div style="font-size:28px;font-weight:800;color:var(--blue, #007bff);">
+        <i class="fas fa-newspaper"></i> GO Gas Daily Briefing
+    </div>
+    <div style="font-size:14px;color:var(--text-muted);margin-top:4px;">
+        For {{ briefing_date }} &middot; Auto-generated from latest data
+    </div>
+</div>
+
+<!-- ===== LATEST DAY SNAPSHOT CARDS ===== -->
+<div class="cards-row">
+    <div class="card card-blue">
+        <div class="card-icon"><i class="fas fa-gas-pump"></i></div>
+        <div class="card-body">
+            <div class="card-label">Latest Day Sale ({{ briefing_date }})</div>
+            <div class="card-value">{{ briefing_yesterday.sale_fmt }}</div>
+            <div class="card-change {% if briefing_yesterday.delta_pct < 0 %}down{% elif briefing_yesterday.delta_pct > 0 %}up{% endif %}">
+                {{ briefing_yesterday.delta_arrow }} {{ "%.1f"|format(briefing_yesterday.delta_pct) }}% vs 7-day avg ({{ briefing_yesterday.avg7_fmt }})
+            </div>
+        </div>
+    </div>
+    <div class="card card-green">
+        <div class="card-icon"><i class="fas fa-rupee-sign"></i></div>
+        <div class="card-body">
+            <div class="card-label">Collection</div>
+            <div class="card-value">{{ briefing_yesterday.coll_fmt }}</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                Collection Rate: ₹{{ "%.1f"|format(briefing_yesterday.coll_eff_rsl) }}/L &middot; RSP: ₹{{ "%.1f"|format(briefing_yesterday.rsp) }}/L &middot; Effective RSP: ₹{{ "%.1f"|format(briefing_yesterday.eff_rsp) }}/L
+            </div>
+        </div>
+    </div>
+    <div class="card card-amber">
+        <div class="card-icon"><i class="fas fa-gift"></i></div>
+        <div class="card-body">
+            <div class="card-label">Free Sale</div>
+            <div class="card-value">{{ briefing_yesterday.free_fmt }}</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                Paytm: {{ briefing_yesterday.paytm_fmt }}
+            </div>
+        </div>
+    </div>
+    <div class="card {% if briefing_zero_count > 5 %}card-red{% else %}card-blue{% endif %}">
+        <div class="card-icon"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="card-body">
+            <div class="card-label">Zero-Sale Stations</div>
+            <div class="card-value">{{ briefing_zero_count }}</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                of {{ briefing_yesterday.stations }} total
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== ACTION ITEMS ===== -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-tasks" style="color:var(--red);"></i> Today's Action Items</div>
+        <div class="panel-subtitle">Auto-prioritized based on data analysis</div>
+    </div>
+    <div class="attention-list">
+        {% for a in briefing_actions %}
+        <div class="attention-item attention-{{ a.priority|lower }}">
+            <span class="attention-badge attention-badge-{{ a.priority|lower }}">{{ a.priority }}</span>
+            <div class="attention-body">
+                <div class="attention-title">{{ a.action }}</div>
+                <div class="attention-detail">{{ a.detail }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- ===== TODAY'S FORECAST ===== -->
+    {% if briefing_forecast %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-robot" style="color:var(--green);"></i> Today's Forecast</div>
+            <div class="panel-subtitle">AI prediction for next 7 days</div>
+        </div>
+        <div style="padding:16px;">
+            <div style="display:flex;justify-content:space-around;text-align:center;margin-bottom:16px;">
+                <div>
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Predicted Today</div>
+                    <div style="font-size:24px;font-weight:700;color:var(--green);">{{ briefing_forecast.predicted_fmt }}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Range</div>
+                    <div style="font-size:16px;font-weight:600;">{{ briefing_forecast.lower_fmt }} - {{ briefing_forecast.upper_fmt }}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">7-Day Total</div>
+                    <div style="font-size:20px;font-weight:700;">{{ briefing_forecast.week_total_fmt }}</div>
+                </div>
+            </div>
+            {% if briefing_forecast.mape %}
+            <div style="text-align:center;font-size:12px;color:var(--text-muted);">
+                Model accuracy: {{ "%.1f"|format(briefing_forecast.mape) }}% MAPE
+                {% if briefing_forecast.mape < 8 %} (High confidence){% elif briefing_forecast.mape < 12 %} (Moderate confidence){% else %} (Low confidence){% endif %}
+            </div>
+            {% endif %}
+        </div>
+        <div id="chart-briefing-forecast" style="height:200px;"></div>
+    </div>
+    {% endif %}
+
+    <!-- ===== STOCK-OUT ALERTS ===== -->
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-truck" style="color:var(--red);"></i> Stock-Out Warnings</div>
+            <div class="panel-subtitle">{{ briefing_stock_alert_count }} station(s) with &lt;3 days of stock</div>
+        </div>
+        {% if briefing_stock_alerts %}
+        <div class="table-wrap">
+        <table class="mini-table">
+            <thead><tr><th>Station</th><th>State</th><th class="num">Stock</th>
+            <th class="num">Daily Sale</th><th class="num">Days Left</th><th>Stock-out By</th></tr></thead>
+            <tbody>
+                {% for s in briefing_stock_alerts %}
+                <tr>
+                    <td><strong>{{ s.alds_name }}</strong></td>
+                    <td>{{ s.state }}</td>
+                    <td class="num">{{ s.stock_fmt }}</td>
+                    <td class="num">{{ s.daily_fmt }}</td>
+                    <td class="num down"><strong>{{ s.days_left }}</strong></td>
+                    <td>{{ s.stockout_date }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="empty-state">No stock-out risks detected. All stations have adequate inventory.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- ===== ZERO-SALE STATIONS ===== -->
+    {% if briefing_zero_count > 0 %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-power-off" style="color:var(--red);"></i> Zero-Sale Stations</div>
+            <div class="panel-subtitle">{{ briefing_zero_count }} station(s) with 0 sales — needs immediate attention</div>
+        </div>
+        <div class="table-wrap" style="max-height:300px;overflow-y:auto;">
+        <table class="mini-table">
+            <thead><tr><th>Station</th><th>State</th><th>TM</th><th>Remark</th></tr></thead>
+            <tbody>
+                {% for s in briefing_zero_stations %}
+                <tr>
+                    <td><strong>{{ s.alds_name }}</strong><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                    <td>{{ s.state }}</td>
+                    <td>{{ s.tm or '-' }}</td>
+                    <td>{{ s.remark or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ===== DECLINING STATIONS ===== -->
+    {% if briefing_declining %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-line" style="color:var(--amber, #ffc107);"></i> Declining Stations</div>
+            <div class="panel-subtitle">Declining trend (3 of last 4 days) — act before they hit zero</div>
+        </div>
+        <div class="table-wrap" style="max-height:300px;overflow-y:auto;">
+        <table class="mini-table">
+            <thead><tr><th>Station</th><th>State</th>
+            <th class="num">D-3</th><th class="num">Latest Day</th><th class="num">Drop</th></tr></thead>
+            <tbody>
+                {% for s in briefing_declining %}
+                <tr>
+                    <td><strong>{{ s.alds_name }}</strong></td>
+                    <td>{{ s.state }}</td>
+                    <td class="num">{{ format_indian(s.d3) }}</td>
+                    <td class="num down">{{ format_indian(s.today) }}</td>
+                    <td class="num down">{{ "%.0f"|format(s.drop_pct) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ===== STATE SUMMARY ===== -->
+{% if briefing_state_today %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map-marked-alt"></i> State Summary — {{ briefing_date }}</div>
+        <div class="panel-subtitle">Latest day performance by state</div>
+    </div>
+    <div class="table-wrap">
+    <table class="mini-table">
+        <thead><tr><th>State</th><th class="num">Sale</th><th class="num">Collection</th>
+        <th class="num">Coll Rate (₹/L)</th><th class="num">Stations</th><th class="num">Zero-Sale</th></tr></thead>
+        <tbody>
+            {% for s in briefing_state_today %}
+            <tr>
+                <td><strong>{{ s.state }}</strong></td>
+                <td class="num">{{ s.sale_fmt }}</td>
+                <td class="num">{{ s.coll_fmt }}</td>
+                <td class="num {% if s.coll_eff < 45 %}down{% endif %}">₹{{ "%.1f"|format(s.coll_eff) }}/L</td>
+                <td class="num">{{ s.stations }}</td>
+                <td class="num {% if s.zero_count > 0 %}down{% endif %}">{{ s.zero_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- ===== TOP PERFORMERS ===== -->
+{% if briefing_top_today %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-trophy" style="color:var(--green);"></i> Top 10 Performers — {{ briefing_date }}</div>
+        <div class="panel-subtitle">Highest-selling stations (latest day)</div>
+    </div>
+    <div class="table-wrap">
+    <table class="mini-table">
+        <thead><tr><th>#</th><th>Station</th><th>State</th><th class="num">Sale (L)</th><th class="num">Collection</th></tr></thead>
+        <tbody>
+            {% for s in briefing_top_today %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ s.alds_name }}</strong></td>
+                <td>{{ s.state }}</td>
+                <td class="num up">{{ format_indian(s.sale_qty) }}</td>
+                <td class="num">{{ format_indian(s.net_total_collection) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- ===== WHATSAPP / EMAIL FORMAT ===== -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-share-alt"></i> Copy-Paste Briefing (WhatsApp / Email)</div>
+        <div class="panel-subtitle">Complete briefing with all details — ready to send</div>
+    </div>
+    <div style="padding:8px 16px;display:flex;justify-content:flex-end;">
+        <button onclick="copyBriefing()" style="padding:6px 16px;border:1px solid var(--blue,#007bff);border-radius:6px;background:var(--blue,#007bff);color:white;cursor:pointer;font-size:13px;"><i class="fas fa-copy"></i> Copy to Clipboard</button>
+    </div>
+    <div id="briefing-text" style="padding:16px;background:var(--bg-card, #f8f9fa);border-radius:8px;font-family:monospace;font-size:13px;white-space:pre-wrap;line-height:1.7;max-height:600px;overflow-y:auto;border:1px solid var(--border,#e0e0e0);">
+═══════════════════════════════════
+   GO GAS DAILY BRIEFING
+   Date: {{ briefing_date }}
+═══════════════════════════════════
+
+📊 OVERALL SUMMARY
+───────────────────────────────────
+Latest Day Sale: {{ briefing_yesterday.sale_fmt }} ({{ briefing_yesterday.delta_arrow }}{{ "%.1f"|format(briefing_yesterday.delta_pct) }}% vs 7-day avg of {{ briefing_yesterday.avg7_fmt }})
+Collection: {{ briefing_yesterday.coll_fmt }} (rate: ₹{{ "%.1f"|format(briefing_yesterday.coll_eff_rsl) }}/L)
+RSP: ₹{{ "%.1f"|format(briefing_yesterday.rsp) }}/L
+Effective RSP: ₹{{ "%.1f"|format(briefing_yesterday.eff_rsp) }}/L
+Free Sale: {{ briefing_yesterday.free_fmt }}
+Paytm: {{ briefing_yesterday.paytm_fmt }}
+Total Stations: {{ briefing_yesterday.stations }}
+Zero-Sale Stations: {{ briefing_zero_count }}
+{% if briefing_forecast %}
+📈 FORECAST
+───────────────────────────────────
+Predicted Today: {{ briefing_forecast.predicted_fmt }}
+Range: {{ briefing_forecast.lower_fmt }} - {{ briefing_forecast.upper_fmt }}
+7-Day Forecast Total: {{ briefing_forecast.week_total_fmt }}
+{% if briefing_forecast.mape %}Model Accuracy: {{ "%.1f"|format(briefing_forecast.mape) }}% MAPE{% endif %}
+{% endif %}
+{% if briefing_state_today %}
+🗺️ STATE-WISE BREAKDOWN ({{ briefing_state_today|length }} states)
+┌────────┬────────────┬─────────────┬──────────┬───────┬──────┐
+│ State  │ Sale (L)   │ Coll (Rs)   │ Rate/L   │ Stns  │ Zero │
+├────────┼────────────┼─────────────┼──────────┼───────┼──────┤
+{% for s in briefing_state_today %}│ {{ "%-6s"|format(s.state) }} │ {{ "%10s"|format(s.sale_fmt) }} │ {{ "%11s"|format(s.coll_fmt) }} │ ₹{{ "%6.1f"|format(s.coll_eff) }} │ {{ "%5s"|format(s.stations) }} │ {{ "%4s"|format(s.zero_count) }} │
+{% endfor %}└────────┴────────────┴─────────────┴──────────┴───────┴──────┘
+{% endif %}
+{% if briefing_top_today %}
+🏆 TOP 10 PERFORMERS
+┌────┬──────────────────────────┬────────┬────────────┬─────────────┐
+│ #  │ Station                  │ State  │ Sale (L)   │ Coll (Rs)   │
+├────┼──────────────────────────┼────────┼────────────┼─────────────┤
+{% for s in briefing_top_today %}│ {{ "%2d"|format(loop.index) }} │ {{ "%-24s"|format(s.alds_name[:24]) }} │ {{ "%-6s"|format(s.state) }} │ {{ "%10s"|format(format_indian(s.sale_qty)) }} │ {{ "%11s"|format(format_indian(s.net_total_collection)) }} │
+{% endfor %}└────┴──────────────────────────┴────────┴────────────┴─────────────┘
+{% endif %}
+{% if briefing_zero_count > 0 %}
+⚠️ ZERO-SALE STATIONS ({{ briefing_zero_count }})
+┌────┬──────────────────────────┬────────┬────────────┬────────────────┐
+│ #  │ Station                  │ State  │ TM         │ Remark         │
+├────┼──────────────────────────┼────────┼────────────┼────────────────┤
+{% for s in briefing_zero_stations %}│ {{ "%2d"|format(loop.index) }} │ {{ "%-24s"|format(s.alds_name[:24]) }} │ {{ "%-6s"|format(s.state) }} │ {{ "%-10s"|format((s.tm or 'N/A')[:10]) }} │ {{ "%-14s"|format((s.remark or '-')[:14]) }} │
+{% endfor %}└────┴──────────────────────────┴────────┴────────────┴────────────────┘
+{% endif %}
+{% if briefing_stock_alerts %}
+🚨 STOCK-OUT WARNINGS ({{ briefing_stock_alert_count }} stations)
+┌────┬──────────────────────────┬────────┬──────────┬──────────┬────────────┐
+│ #  │ Station                  │ State  │ Stock    │ Days Left│ Stock-out  │
+├────┼──────────────────────────┼────────┼──────────┼──────────┼────────────┤
+{% for s in briefing_stock_alerts %}│ {{ "%2d"|format(loop.index) }} │ {{ "%-24s"|format(s.alds_name[:24]) }} │ {{ "%-6s"|format(s.state) }} │ {{ "%8s"|format(s.stock_fmt) }} │ {{ "%8s"|format(s.days_left) }} │ {{ "%-12s"|format(s.stockout_date) }} │
+{% endfor %}└────┴──────────────────────────┴────────┴──────────┴──────────┴────────────┘
+{% endif %}
+{% if briefing_declining %}
+📉 DECLINING STATIONS ({{ briefing_declining|length }} stations)
+┌────┬──────────────────────────┬────────┬────────────┬────────────┬────────┐
+│ #  │ Station                  │ State  │ D-3 (L)    │ Latest (L) │ Drop % │
+├────┼──────────────────────────┼────────┼────────────┼────────────┼────────┤
+{% for s in briefing_declining %}│ {{ "%2d"|format(loop.index) }} │ {{ "%-24s"|format(s.alds_name[:24]) }} │ {{ "%-6s"|format(s.state) }} │ {{ "%10s"|format(format_indian(s.d3)) }} │ {{ "%10s"|format(format_indian(s.today)) }} │ {{ "%5.0f"|format(s.drop_pct) }}% │
+{% endfor %}└────┴──────────────────────────┴────────┴────────────┴────────────┴────────┘
+{% endif %}
+📋 ACTION ITEMS
+───────────────────────────────────
+{% for a in briefing_actions %}[{{ a.priority }}] {{ a.action }}
+   → {{ a.detail }}
+{% endfor %}
+═══════════════════════════════════
+   Auto-generated from GO Gas data
+   Report: Briefing #28 | {{ briefing_date }}
+═══════════════════════════════════
+    </div>
+    <script>
+    function copyBriefing() {
+        var text = document.getElementById('briefing-text').innerText;
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(function() {
+                alert('Briefing copied! Paste in WhatsApp or Email.');
+            });
+        } else {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            alert('Briefing copied! Paste in WhatsApp or Email.');
+        }
+    }
+    </script>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if briefing_available and briefing_forecast and briefing_forecast_points %}
+<script type="application/json" id="data-briefing-forecast">{{ briefing_forecast_points|tojson }}</script>
+<script>
+var bfData = JSON.parse(document.getElementById('data-briefing-forecast').textContent);
+var el = document.getElementById('chart-briefing-forecast');
+if (el && bfData && bfData.length > 0 && typeof echarts !== 'undefined') {
+    var chart = echarts.init(el);
+    chart.setOption({
+        tooltip: {trigger: 'axis'},
+        grid: {left: 60, right: 30, top: 30, bottom: 50, containLabel: true},
+        xAxis: {
+            type: 'category',
+            data: bfData.map(function(d) { return d.date; }),
+            name: 'Date',
+            nameLocation: 'middle',
+            nameGap: 30,
+            axisLabel: {fontSize: 9, rotate: 30}
+        },
+        yAxis: {type: 'value',
+            name: 'Sale (L)',
+            nameLocation: 'middle',
+            nameGap: 40,
+            axisLabel: {fontSize: 9, formatter: function(v) { return formatIndian ? formatIndian(v, 0) : v; }}
+        },
+        series: [
+            {
+                name: 'Predicted', type: 'line', smooth: true,
+                data: bfData.map(function(d) { return d.predicted; }),
+                itemStyle: {color: '#28a745'}, lineStyle: {width: 3}
+            },
+            {
+                name: 'Upper', type: 'line', smooth: true,
+                data: bfData.map(function(d) { return d.upper; }),
+                itemStyle: {color: '#28a745'}, lineStyle: {type: 'dashed', width: 1, opacity: 0.4}
+            },
+            {
+                name: 'Lower', type: 'line', smooth: true,
+                data: bfData.map(function(d) { return d.lower; }),
+                itemStyle: {color: '#28a745'}, lineStyle: {type: 'dashed', width: 1, opacity: 0.4},
+                areaStyle: {color: 'rgba(40,167,69,0.1)'}
+            }
+        ]
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+</script>
+{% endif %}
+{% endblock %}

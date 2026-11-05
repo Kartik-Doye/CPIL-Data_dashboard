@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 5: Daily Sales Trend -->
+
+{% if daily_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ daily_summary.total_fmt }}</div>
+        <div class="sc-sub">{{ daily_summary.days }} days</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Daily Average</div>
+        <div class="sc-value">{{ daily_summary.avg_fmt }}</div>
+        <div class="sc-sub">per day</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Best Day</div>
+        <div class="sc-value">{{ daily_summary.best_val }}</div>
+        <div class="sc-sub">{{ daily_summary.best_day }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Worst Day</div>
+        <div class="sc-value">{{ daily_summary.worst_val }}</div>
+        <div class="sc-sub">{{ daily_summary.worst_day }}</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-area"></i> Daily Sales Trend</div>
+        <div class="panel-subtitle">Volume (L) &amp; Collection over time</div>
+    </div>
+    <div id="chart-daily-trend" class="chart-container-tall"></div>
+</div>
+
+{% if daily_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in daily_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> Daily Breakdown</div>
+    </div>
+    {% if not daily_rows %}
+    <div class="empty-state"><i class="fas fa-inbox"></i><p>No data available.</p></div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th><th>Day</th>
+                <th class="num">Sale (L)</th><th class="num">Collection</th>
+                <th class="num">Change</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in daily_rows %}
+            <tr>
+                <td>{{ r.sale_date.isoformat() }}</td>
+                <td>{{ r.weekday }}{% if r.is_weekend %} <span class="badge badge-base">WE</span>{% endif %}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.coll_fmt }}</td>
+                <td class="num {% if r.dod_change and r.dod_change > 0 %}up{% elif r.dod_change and r.dod_change < 0 %}down{% endif %}">
+                    {{ r.dod_change_fmt if r.dod_change is not none else '—' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-daily-rows">{{ daily_rows|tojson }}</script>
+<script>
+var dailyData = JSON.parse(document.getElementById('data-daily-rows').textContent);
+makeDualAxisChart('chart-daily-trend',
+    dailyData.map(function(r){return r.sale_date;}),
+    dailyData.map(function(r){return r.sale_qty||0;}),
+    dailyData.map(function(r){return r.collection||0;}));
+</script>
+{% endblock %}

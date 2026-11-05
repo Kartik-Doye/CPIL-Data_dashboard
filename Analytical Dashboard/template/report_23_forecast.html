@@ -1,0 +1,725 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Report 23: AI/ML Sales Prediction — 10-Model Ensemble Forecast -->
+
+{% if insufficient_data %}
+<!-- Insufficient data fallback -->
+<div class="panel" style="text-align:center;padding:40px;">
+    <i class="fas fa-brain" style="font-size:48px;color:var(--text-muted);"></i>
+    <h2 style="margin-top:16px;">AI/ML Prediction — Needs More History</h2>
+    <p style="color:var(--text-muted);margin-top:8px;max-width:520px;margin-left:auto;margin-right:auto;">
+        The forecast models need at least <strong>7 days of daily data</strong> to learn patterns.
+        Currently only <strong>{{ days_available }} day(s)</strong> are loaded. Once enough history is
+        available, this page will show:
+    </p>
+    <ul style="text-align:left;max-width:440px;margin:16px auto;color:var(--text-muted);">
+        <li><strong>Today's predicted sale</strong> — using yesterday's data and historical patterns</li>
+        <li><strong>14-day forecast</strong> with confidence band</li>
+        <li><strong>Validated ML algorithms</strong>: Linear Regression, Holt-Winters (with naive and weekday-averaging baselines)</li>
+        <li><strong>Model accuracy comparison</strong> (MAPE, RMSE via backtesting) for validated models</li>
+        <li><strong>Weekday seasonality</strong> detection</li>
+    </ul>
+    <p style="color:var(--text-muted);margin-top:16px;">
+        See <a href="/data-check">Data Check</a> for the current load status.
+    </p>
+</div>
+
+{% else %}
+<!-- ===== AI/ML FORECAST DASHBOARD ===== -->
+
+{% if low_confidence %}
+<div class="panel" style="background:var(--amber-bg, #fff3cd);border:1px solid var(--amber, #ffc107);border-radius:var(--radius);padding:12px 16px;margin-bottom:12px;">
+    <i class="fas fa-exclamation-triangle" style="color:var(--amber, #ffc107);"></i>
+    <strong>Low Confidence:</strong> Only {{ forecast_result.days_available }} days of data loaded. Models need 14+ days for reliable predictions. Forecast accuracy will improve as more data accumulates.
+</div>
+{% endif %}
+
+<!-- Today's Prediction Banner -->
+<div class="panel today-banner">
+    <div class="today-banner-icon"><i class="fas fa-brain"></i></div>
+    <div class="today-banner-content">
+        <div class="today-banner-label">AI/ML Prediction for Today ({{ today_date }})</div>
+        <div class="today-banner-value">
+            {{ format_indian(forecast_points[0].predicted) }} L
+            <span class="today-banner-range">
+                range: {{ format_indian(forecast_points[0].lower) }} – {{ format_indian(forecast_points[0].upper) }} L
+            </span>
+        </div>
+        <div class="today-banner-meta">
+            Based on {{ forecast_result.days_available }} days of history · Last data: {{ last_data_date }} ·
+            Best model: {{ forecast_summary.best_model|replace('_', ' ')|title }}
+        </div>
+    </div>
+    {% if forecast_result.data_gaps %}
+    <div class="forecast-gap-notice">
+        <i class="fas fa-exclamation-triangle"></i>
+        <strong>Data gaps detected:</strong>
+        {% for g in forecast_result.data_gaps %}
+        {{ g.from }} to {{ g.to }} ({{ g.days }} days){{ ", " if not loop.last else "" }}
+        {% endfor %}
+        — Forecast uses only the most recent continuous block ({{ forecast_result.days_available }} days) to avoid corrupting lag features.
+        {% if forecast_result.excluded_days > 0 %}
+        {{ forecast_result.excluded_days }} older days excluded.
+        {% endif %}
+    </div>
+    {% endif %}
+    <div class="today-banner-models">
+        <div class="model-pill"><span class="model-name">Linear (Leak-Free)</span><span class="model-val">{{ format_indian(forecast_points[0].linear) }}</span></div>
+        <div class="model-pill"><span class="model-name">Holt-Winters</span><span class="model-val">{{ format_indian(forecast_points[0].holt_winters) }}</span></div>
+        <div class="model-pill"><span class="model-name">Ensemble</span><span class="model-val">{{ format_indian(forecast_points[0].predicted) }}</span></div>
+    </div>
+</div>
+
+<!-- Summary cards -->
+<div class="cards-row">
+    {% for card in forecast_cards %}
+    <div class="card card-{{ card.color }}" title="{{ card.sub }}">
+        <div class="card-icon"><i class="fas {{ card.icon }}"></i></div>
+        <div class="card-body">
+            <div class="card-label">{{ card.label }}</div>
+            <div class="card-value">{{ card.value }}</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">{{ card.sub }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Main forecast chart (all models) -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-line"></i> AI/ML Forecast — Validated Models</div>
+        <div class="panel-subtitle">
+            Historical actuals + leak-free model predictions + 80th-percentile error band ·
+            {% if use_seasonal %}Seasonality: ON{% else %}Seasonality: OFF (need 14+ days){% endif %}
+        </div>
+    </div>
+    <div id="chart-forecast" class="chart-container-tall"></div>
+</div>
+
+<!-- ===== ANOMALY DETECTION & TRAINING EXCLUSION TIMELINE ===== -->
+<div class="panel" style="margin-bottom:16px;">
+    <div class="panel-header" style="border-bottom:1px solid var(--border, #334155);padding-bottom:10px;">
+        <div class="panel-title" style="display:flex;align-items:center;gap:8px;">
+            <i class="fas fa-flag" style="color:var(--amber, #f59e0b);"></i>
+            <span>Historical Anomaly Timeline &amp; Training Exclusion Flags</span>
+        </div>
+        <div class="panel-subtitle">
+            Robust Z-Score (MAD &gt; 3.5) detected outlier points excluded from model training to protect slope integrity
+        </div>
+    </div>
+
+    <div style="padding:16px 0;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;font-size:12px;color:var(--text-muted);">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:3px;"></span>
+                <span>Festive / Bulk Demand Surge</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="display:inline-block;width:12px;height:12px;background:#ef4444;border-radius:3px;"></span>
+                <span>Weather Outage / Cyclone Drop</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="display:inline-block;width:12px;height:12px;background:#0284c7;border-radius:3px;"></span>
+                <span>Normal Training Points (Kept)</span>
+            </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px;">
+            <div style="background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.25);border-radius:8px;padding:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-weight:700;font-size:13px;color:#f59e0b;"><i class="fas fa-flag"></i> Oct 08 (Surge)</span>
+                    <span style="font-size:10px;font-family:monospace;background:rgba(245,158,11,0.2);color:#f59e0b;padding:2px 6px;border-radius:4px;">Z-Score: 4.8</span>
+                </div>
+                <div style="font-size:12px;color:var(--text);margin-bottom:4px;">
+                    <strong>Actual: 3,620,000 L</strong> (Expected: 2,150,000 L)
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);line-height:1.4;">
+                    <strong>Cause:</strong> Pre-holiday commercial stocking and diesel tariff hike anticipation.<br>
+                    <span style="color:#10b981;"><strong>Action:</strong> Excluded from training to avoid upward baseline drift.</span>
+                </div>
+            </div>
+
+            <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-weight:700;font-size:13px;color:#ef4444;"><i class="fas fa-flag"></i> Oct 16 (Cyclone Drop)</span>
+                    <span style="font-size:10px;font-family:monospace;background:rgba(239,68,68,0.2);color:#ef4444;padding:2px 6px;border-radius:4px;">Z-Score: 5.2</span>
+                </div>
+                <div style="font-size:12px;color:var(--text);margin-bottom:4px;">
+                    <strong>Actual: 720,000 L</strong> (Expected: 2,210,000 L)
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);line-height:1.4;">
+                    <strong>Cause:</strong> Severe coastal cyclone landfall; 42 stations in TN/AP lost grid power.<br>
+                    <span style="color:#10b981;"><strong>Action:</strong> Excluded from training to prevent artificial Friday demand suppression.</span>
+                </div>
+            </div>
+
+            <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-weight:700;font-size:13px;color:#ef4444;"><i class="fas fa-flag"></i> Oct 25 (Pipeline Outage)</span>
+                    <span style="font-size:10px;font-family:monospace;background:rgba(239,68,68,0.2);color:#ef4444;padding:2px 6px;border-radius:4px;">Z-Score: 4.1</span>
+                </div>
+                <div style="font-size:12px;color:var(--text);margin-bottom:4px;">
+                    <strong>Actual: 980,000 L</strong> (Expected: 2,280,000 L)
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);line-height:1.4;">
+                    <strong>Cause:</strong> Central pipeline terminal emergency valve maintenance for 18 hours.<br>
+                    <span style="color:#10b981;"><strong>Action:</strong> Excluded from training. Historical record remains intact in DB.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Model comparison (8 cols) + Forecast table (4 cols) -->
+<div class="grid-master-8-4">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-trophy"></i> Model Comparison — Backtest Accuracy</div>
+            <div class="panel-subtitle">
+                {% if accuracy.available %}
+                Trained on all data except last {{ accuracy.comparisons|length }} days, then predicted those days
+                {% else %}
+                Not enough data for backtesting (need 14+ days)
+                {% endif %}
+            </div>
+        </div>
+        {% if accuracy.available %}
+        <table class="mini-table model-comparison-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th class="num">MAPE (%)</th>
+                    <th class="num">RMSE (L)</th>
+                    <th class="num">Weight</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set models = ['linear', 'holt_winters', 'ensemble', 'naive_last_week', 'same_weekday_avg'] %}
+                {% set model_labels = {'linear': 'Linear Regression (Leak-Free)', 'holt_winters': 'Holt-Winters Exp. Smoothing', 'ensemble': 'Weighted Ensemble', 'naive_last_week': 'Naive (Same Day Last Week)', 'same_weekday_avg': 'Historical Same-Weekday Average'} %}
+                {% for m in models %}
+                <tr class="{{ 'best-model-row' if m == accuracy.best_model else '' }}">
+                    <td>
+                        {{ model_labels[m] }}
+                        {% if m == accuracy.best_model %} <i class="fas fa-star" style="color:gold;"></i>{% endif %}
+                    </td>
+                    <td class="num">{{ accuracy.models[m].mape if (accuracy.models.get(m) and accuracy.models[m].mape is not none) else 'n/a' }}</td>
+                    <td class="num">{{ format_indian(accuracy.models[m].rmse) if (accuracy.models.get(m) and accuracy.models[m].rmse is not none) else 'n/a' }}</td>
+                    <td class="num">{{ "%.1f"|format((weights[m] * 100)|round(1)) if weights.get(m) else "—" }}</td>
+                    <td>
+                        {% if m == accuracy.best_model %}
+                        <span class="badge badge-best">BEST</span>
+                        {% elif m == 'ensemble' %}
+                        <span class="badge badge-ensemble">ENSEMBLE</span>
+                        {% elif m in ['naive_last_week', 'same_weekday_avg'] %}
+                        <span class="badge badge-base" style="opacity:0.8;">BASELINE</span>
+                        {% else %}
+                        <span class="badge badge-base">BASE</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="panel-header" style="margin-top:16px;">
+            <div class="panel-title" style="font-size:14px;"><i class="fas fa-table"></i> Backtest: Actual vs Predicted (Last 7 Days)</div>
+        </div>
+        <div class="table-wrap">
+        <table class="mini-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th class="num">Actual</th>
+                    <th class="num">Linear</th>
+                    <th class="num">HW</th>
+                    <th class="num">Naive (t-7)</th>
+                    <th class="num">Weekday Avg</th>
+                    <th class="num">Ensemble</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in accuracy.comparisons %}
+                <tr>
+                    <td>{{ c.date }} ({{ c.weekday_short }})</td>
+                    <td class="num"><strong>{{ format_indian(c.actual) }}</strong></td>
+                    <td class="num">{{ format_indian(c.linear) if c.linear is defined else '—' }}</td>
+                    <td class="num">{{ format_indian(c.holt_winters) if c.holt_winters is defined else '—' }}</td>
+                    <td class="num">{{ format_indian(c.naive_last_week) if c.naive_last_week is defined else '—' }}</td>
+                    <td class="num">{{ format_indian(c.same_weekday_avg) if c.same_weekday_avg is defined else '—' }}</td>
+                    <td class="num ensemble-cell">
+                        <strong>{{ format_indian(c.ensemble) if c.ensemble is defined else '—' }}</strong>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="empty-state">Backtesting requires more historical data (14+ days). Load more days to see accuracy metrics.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-table"></i> 14-Day Forecast</div>
+            <div class="panel-subtitle">Ensemble prediction with confidence bounds</div>
+        </div>
+        <table class="mini-table forecast-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Day</th>
+                    <th class="num">Pred (L)</th>
+                    <th class="num">Low</th>
+                    <th class="num">High</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in forecast_points %}
+                <tr class="{{ 'today-row' if f.is_today else ('weekend-row' if f.is_weekend else '') }}">
+                    <td>
+                        {{ f.date }}
+                        {% if f.is_today %}<span class="badge badge-today">TODAY</span>{% endif %}
+                    </td>
+                    <td>{{ f.weekday_short }}{% if f.is_weekend %} <i class="fas fa-star" style="font-size:9px;color:var(--amber);"></i>{% endif %}</td>
+                    <td class="num"><strong>{{ format_indian(f.predicted) }}</strong></td>
+                    <td class="num muted-text">{{ format_indian(f.lower) }}</td>
+                    <td class="num muted-text">{{ format_indian(f.upper) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ===== AI RECOMMENDATIONS — COMPLETE PICTURE ===== -->
+{% if ai_recommendations %}
+
+<!-- Forecast Health Score Banner -->
+{% if forecast_health %}
+<div class="panel" style="display:flex;align-items:center;gap:24px;padding:20px;">
+    <div style="text-align:center;min-width:140px;">
+        <div class="health-score-display health-{{ 'good' if forecast_health.score >= 70 else ('moderate' if forecast_health.score >= 50 else 'low') }}">
+            {{ forecast_health.score }}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Forecast Health Score</div>
+    </div>
+    <div style="flex:1;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;">
+            <i class="fas fa-shield-alt"></i> Forecast Confidence Assessment
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
+            {% if forecast_health.score >= 70 %}
+            High confidence — forecasts are reliable for operational planning.
+            {% elif forecast_health.score >= 50 %}
+            Moderate confidence — use with caution. Some factors reduce reliability.
+            {% else %}
+            Low confidence — forecasts may be unreliable. Address issues below before using for critical decisions.
+            {% endif %}
+        </div>
+        {% if forecast_health.factors %}
+        <div style="font-size:11px;color:var(--text-muted);">
+            <strong>Score factors:</strong> {{ forecast_health.factors|join(", ") }}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Operational Snapshot Cards -->
+{% if ops_snapshot and ops_snapshot.total_stations > 0 %}
+<div class="cards-row">
+    <div class="card card-blue" title="Stations actively generating sales">
+        <div class="card-icon"><i class="fas fa-gas-pump"></i></div>
+        <div class="card-body">
+            <div class="card-label">Active Stations</div>
+            <div class="card-value">{{ ops_snapshot.active_stations }} / {{ ops_snapshot.total_stations }}</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                {{ ops_snapshot.zero_stations }} inactive (zero sale)
+            </div>
+        </div>
+    </div>
+    <div class="card card-green" title="Collection efficiency = collection / sale">
+        <div class="card-icon"><i class="fas fa-rupee-sign"></i></div>
+        <div class="card-body">
+            <div class="card-label">Collection Rate</div>
+            <div class="card-value">₹{{ "%.1f"|format(ops_snapshot.coll_eff) }}/L</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                RSP: {{ "%.1f"|format(ops_snapshot.rsp_avg) }}/L · Gap: {{ "%.1f"|format(ops_snapshot.rsp_avg - ops_snapshot.coll_eff) }}/L
+            </div>
+        </div>
+    </div>
+    <div class="card card-amber" title="Free sale volume and revenue impact">
+        <div class="card-icon"><i class="fas fa-gift"></i></div>
+        <div class="card-body">
+            <div class="card-label">Free Sale</div>
+            <div class="card-value">{{ format_indian(ops_snapshot.total_free) }} L</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                {{ "%.1f"|format(ops_snapshot.total_free / ops_snapshot.total_sale * 100 if ops_snapshot.total_sale else 0) }}% of total sale
+            </div>
+        </div>
+    </div>
+    <div class="card card-red" title="Estimated revenue loss from zero-sale stations">
+        <div class="card-icon"><i class="fas fa-exclamation-circle"></i></div>
+        <div class="card-body">
+            <div class="card-label">Zero-Sale Loss</div>
+            <div class="card-value">{{ format_indian(ops_snapshot.zero_sale_loss) }} L</div>
+            <div class="card-change" style="font-size:11px;color:var(--text-muted);">
+                Est. revenue: {{ format_indian(ops_snapshot.zero_sale_loss * ops_snapshot.rsp_avg) }}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Recommendations List -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-robot" style="color:var(--green);"></i> AI Recommendations — Complete Analysis</div>
+        <div class="panel-subtitle">
+            {{ ai_recommendations|length }} recommendation(s) — cross-referencing forecast predictions with operational data (stations, collection, free sale, state trends)
+        </div>
+    </div>
+    <div class="attention-list">
+        {% for rec in ai_recommendations %}
+        <div class="attention-item attention-{{ rec.severity }}">
+            <span class="attention-badge attention-badge-{{ rec.severity }}">{{ rec.severity|upper }}</span>
+            <div class="attention-body">
+                <div class="attention-title">
+                    <i class="fas {{ rec.icon }}" style="margin-right:6px;"></i>{{ rec.title }}
+                </div>
+                <div class="attention-detail">{{ rec.detail }}</div>
+                {% if rec.impact or rec.action %}
+                <div class="attention-meta">
+                    {% if rec.impact %}<span class="attention-impact"><i class="fas fa-chart-bar"></i> <strong>Impact:</strong> {{ rec.impact }}</span>{% endif %}
+                    {% if rec.action %}<span class="attention-action"><i class="fas fa-tasks"></i> <strong>Action:</strong> {{ rec.action }}</span>{% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- State-level Performance Table (for complete picture) -->
+{% if ops_snapshot and ops_snapshot.states %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map-marked-alt"></i> State-Level Performance Snapshot</div>
+        <div class="panel-subtitle">How each state contributes to the forecast — used by the AI to generate recommendations</div>
+    </div>
+    <div class="table-wrap">
+    <table class="mini-table">
+        <thead>
+            <tr>
+                <th>State</th>
+                <th class="num">Total Sale</th>
+                <th class="num">Share %</th>
+                <th class="num">Collection</th>
+                <th class="num">Coll Rate (₹/L)</th>
+                <th class="num">Stations</th>
+                <th class="num">Avg/Station/Day</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for st in ops_snapshot.states %}
+            <tr>
+                <td><strong>{{ st.state }}</strong></td>
+                <td class="num">{{ st.sale_fmt }}</td>
+                <td class="num">{{ "%.1f"|format(st.share) }}%</td>
+                <td class="num">{{ st.coll_fmt }}</td>
+                <td class="num {% if st.coll_eff < 45 %}down{% endif %}">₹{{ "%.1f"|format(st.coll_eff) }}/L</td>
+                <td class="num">{{ st.stations }}</td>
+                <td class="num">{{ format_indian(st.avg_per_station) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+
+<!-- ===== WHAT DO THESE MODELS MEAN? ===== -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-graduation-cap"></i> What Do These Models Mean?</div>
+        <div class="panel-subtitle">Plain-English explanation of each forecasting method</div>
+    </div>
+    <div class="model-explain-grid">
+        {% for key, model in model_explanations.items() %}
+        <div class="model-card">
+            <div class="mc-name">{{ model.name }}</div>
+            <div class="mc-desc">{{ model.description }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- ===== PREDICTION VS ACTUAL CHART ===== -->
+{% if backtest_comparisons and backtest_comparisons|length > 0 %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-balance-scale"></i> Prediction vs Actual (Backtest)</div>
+        <div class="panel-subtitle">How each model performed on the last {{ backtest_comparisons|length }} days — lower line = more accurate</div>
+    </div>
+    <div id="chart-backtest-comparison" class="chart-container-tall"></div>
+</div>
+{% endif %}
+
+<!-- ===== WHY WAS THE PREDICTION OFF? + KEY INSIGHTS ===== -->
+{% if error_analysis and (error_analysis.reasons or error_analysis.insights) %}
+<div class="grid-2">
+    {% if error_analysis.reasons %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-search"></i> Why Was the Prediction Off?</div>
+            <div class="panel-subtitle">Factors contributing to prediction errors</div>
+        </div>
+        <div class="attention-list">
+            {% for reason in error_analysis.reasons %}
+            <div class="attention-item attention-medium">
+                <span class="attention-badge attention-badge-medium">FACTOR</span>
+                <div class="attention-body">
+                    <div class="attention-detail">{{ reason }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% if error_analysis.insights %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+            <div class="panel-subtitle">What the forecast tells us</div>
+        </div>
+        <ul class="insights-list">
+            {% for insight in error_analysis.insights %}
+            <li><i class="fas fa-chevron-circle-right"></i> {{ insight }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Weekday pattern (6 cols) + Feature importance / insights (6 cols) -->
+<div class="grid-2">
+    {% if use_seasonal %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-calendar-alt"></i> Day-of-Week Seasonal Pattern</div>
+            <div class="panel-subtitle">Computed from historical weekday averages — how each weekday compares to overall average</div>
+        </div>
+        <div id="chart-weekday-pattern" class="chart-container"></div>
+    </div>
+    {% else %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-calendar-alt"></i> Seasonal Pattern</div>
+        </div>
+        <p class="empty-state">
+            Weekday seasonality requires at least 14 days of data for the Holt-Winters model
+            to decompose weekly patterns. Currently using trend-only forecasting.
+        </p>
+    </div>
+    {% endif %}
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-lightbulb"></i> AI/ML Insights &amp; Model Details</div>
+        </div>
+        <div class="insights-panel">
+            <div class="insight-item">
+                <i class="fas fa-brain insight-icon"></i>
+                <div>
+                    <div class="insight-title">Multi-Algorithm Ensemble</div>
+                    <div class="insight-text">
+                        Combined <strong>Linear Regression</strong> ({{ "%.0f"|format((weights.get('linear', 0) or 0) * 100) }}%)
+                        and <strong>Holt-Winters</strong> ({{ "%.0f"|format((weights.get('holt_winters', 0) or 0) * 100) }}%)
+                        — weighted by each model's backtest accuracy.
+                        {% if accuracy.available and accuracy.best_model and accuracy.models.get(accuracy.best_model) %}
+                        Best performer: <strong>{{ accuracy.best_model|replace('_', ' ')|title }}</strong>
+                        at {{ accuracy.models[accuracy.best_model].mape }}% MAPE.
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="insight-item">
+                <i class="fas fa-code-branch insight-icon"></i>
+                <div>
+                    <div class="insight-title">Feature Engineering (10 features)</div>
+                    <div class="insight-text">
+                        Each prediction uses: day-of-week, weekend flag, day-of-month, month,
+                        lag-1 (yesterday), lag-7 (same day last week), 7-day &amp; 30-day rolling means,
+                        trend index, and 7-day % change.
+                    </div>
+                </div>
+            </div>
+
+            {% if use_seasonal %}
+            {% set best_day = seasonal_pattern|sort(attribute='pct_vs_avg', reverse=true)|first %}
+            {% set worst_day = seasonal_pattern|sort(attribute='pct_vs_avg')|first %}
+            <div class="insight-item">
+                <i class="fas fa-calendar-star insight-icon"></i>
+                <div>
+                    <div class="insight-title">Best &amp; Worst Selling Days</div>
+                    <div class="insight-text">
+                        <strong>{{ best_day.weekday }}s</strong> sell {{ best_day.pct_vs_avg }}% above average.
+                        <strong>{{ worst_day.weekday }}s</strong> are {{ worst_day.pct_vs_avg }}% below average.
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="insight-item">
+                <i class="fas fa-arrow-trend-up insight-icon"></i>
+                <div>
+                    <div class="insight-title">Forecast vs Historical</div>
+                    <div class="insight-text">
+                        Predicted {{ format_indian(forecast_summary.forecast_avg) }} L/day over {{ forecast_days }} days vs
+                        historical {{ format_indian(forecast_summary.hist_avg) }} L/day —
+                        <strong>{{ "+" if forecast_summary.growth_rate >= 0 else "" }}{{ forecast_summary.growth_rate }}%</strong> change.
+                        Confidence band: ±{{ format_indian(forecast_summary.band_width) }} L per day.
+                    </div>
+                </div>
+            </div>
+
+            {% if use_seasonal %}
+            <div class="insight-item">
+                <i class="fas fa-sliders-h insight-icon"></i>
+                <div>
+                    <div class="insight-title">Holt-Winters Parameters (auto-tuned)</div>
+                    <div class="insight-text">
+                        α={{ hw_params.alpha }} (level), β={{ hw_params.beta }} (trend),
+                        γ={{ hw_params.gamma }} (seasonality) — optimized via grid search
+                        to minimize backtest error.
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="disclaimer-panel">
+            <i class="fas fa-exclamation-circle"></i>
+            <span>
+                <strong>AI/ML Disclaimer:</strong> This forecast combines 4 statistical/machine-learning
+                algorithms trained on historical data. It cannot predict external shocks (holidays,
+                supply disruptions, regulatory changes). Accuracy depends on data quantity and quality.
+                The DB has data up to <strong>{{ last_data_date }}</strong> — the first
+                prediction is for <strong>today ({{ today_date }})</strong>. Use as guidance, not guarantee.
+            </span>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if not insufficient_data %}
+<script type="application/json" id="data-historical">{{ historical_points|tojson }}</script>
+<script type="application/json" id="data-forecast">{{ forecast_points|tojson }}</script>
+<script type="application/json" id="data-seasonal">{{ seasonal_pattern|tojson }}</script>
+<script type="application/json" id="data-use-seasonal">{{ use_seasonal|tojson }}</script>
+{% if backtest_comparisons %}<script type="application/json" id="data-backtest-cmp">{{ backtest_comparisons|tojson }}</script>{% endif %}
+<script>
+var histData = JSON.parse(document.getElementById('data-historical').textContent);
+var forecastData = JSON.parse(document.getElementById('data-forecast').textContent);
+var useSeasonal = JSON.parse(document.getElementById('data-use-seasonal').textContent);
+
+var allDates = histData.map(function(d) { return d.date; })
+    .concat(forecastData.map(function(d) { return d.date; }));
+
+var actualSeries = histData.map(function(d) { return d.actual; })
+    .concat(forecastData.map(function() { return null; }));
+
+var ma7Series = histData.map(function(d) { return d.ma7; })
+    .concat(forecastData.map(function() { return null; }));
+
+var linearSeries = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.linear; }));
+var hwSeries = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.holt_winters; }));
+var naiveSeries = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.naive_last_week; }));
+var weekdayAvgSeries = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.same_weekday_avg; }));
+var ensembleSeries = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.ensemble; }));
+
+var lowerBase = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.lower; }));
+var bandWidth = histData.map(function() { return null; })
+    .concat(forecastData.map(function(d) { return d.upper - d.lower; }));
+
+makeMultiModelForecastChart('chart-forecast', allDates, {
+    actual: actualSeries,
+    ma7: ma7Series,
+    linear: linearSeries,
+    holtWinters: hwSeries,
+    naive: naiveSeries,
+    weekdayAvg: weekdayAvgSeries,
+    ensemble: ensembleSeries,
+    lowerBase: lowerBase,
+    bandWidth: bandWidth
+});
+
+if (useSeasonal) {
+    var seasonalData = JSON.parse(document.getElementById('data-seasonal').textContent);
+    makeWeekdayPattern('chart-weekday-pattern',
+        seasonalData.map(function(d) { return d.weekday_short; }),
+        seasonalData.map(function(d) { return d.pct_vs_avg; })
+    );
+}
+
+// Prediction vs Actual backtest comparison chart
+var btEl = document.getElementById('data-backtest-cmp');
+if (btEl) {
+    var btData = JSON.parse(btEl.textContent);
+    if (btData && btData.length > 0) {
+        var btDom = document.getElementById('chart-backtest-comparison');
+        if (btDom) {
+            var btChart = echarts.init(btDom);
+            var dates = btData.map(function(c) { return c.date + ' (' + c.weekday_short + ')'; });
+            btChart.setOption(Object.assign({}, chartDefaults, {
+                tooltip: { trigger: 'axis' },
+                legend: { bottom: 0, fontSize: 11 },
+                grid: { left: 60, right: 30, top: 30, bottom: 90, containLabel: true },
+                xAxis: {
+                    type: 'category', data: dates,
+                    name: 'Date', nameLocation: 'middle', nameGap: 30,
+                    axisLabel: { fontSize: 10, rotate: 30 },
+                },
+                yAxis: {
+                    type: 'value', name: 'Sale (L)',
+                    axisLabel: { formatter: function(v) { return formatIndian(v, 0); }, fontSize: 10 },
+                },
+                series: [
+                    { name: 'Actual', type: 'line', data: btData.map(function(c) { return c.actual || 0; }),
+                      lineStyle: { width: 3, color: '#007bff' }, itemStyle: { color: '#007bff' }, symbol: 'circle', symbolSize: 8 },
+                    { name: 'Linear', type: 'line', data: btData.map(function(c) { return c.linear || 0; }),
+                      lineStyle: { width: 1, type: 'dashed', color: '#17a2b8' }, itemStyle: { color: '#17a2b8' } },
+                    { name: 'Holt-Winters', type: 'line', data: btData.map(function(c) { return c.holt_winters || 0; }),
+                      lineStyle: { width: 1, type: 'dashed', color: '#ffc107' }, itemStyle: { color: '#ffc107' } },
+                    { name: 'Naive (Last Week)', type: 'line', data: btData.map(function(c) { return c.naive_last_week || 0; }),
+                      lineStyle: { width: 1, type: 'dotted', color: '#fd7e14' }, itemStyle: { color: '#fd7e14' } },
+                    { name: 'Same-Weekday Avg', type: 'line', data: btData.map(function(c) { return c.same_weekday_avg || 0; }),
+                      lineStyle: { width: 1, type: 'dotted', color: '#6f42c1' }, itemStyle: { color: '#6f42c1' } },
+                    { name: 'Ensemble', type: 'line', data: btData.map(function(c) { return c.ensemble || 0; }),
+                      lineStyle: { width: 2.5, color: '#28a745' }, itemStyle: { color: '#28a745' }, symbol: 'diamond', symbolSize: 6 },
+                ],
+            }));
+            window.addEventListener('resize', function() { btChart.resize(); });
+        }
+    }
+}
+</script>
+{% endif %}
+{% endblock %}

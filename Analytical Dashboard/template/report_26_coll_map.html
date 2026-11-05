@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Report 26: Collection Rate Map -->
+{% if collmap_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> So What? — Actionable Insights</div>
+    </div>
+    <div style="padding: 16px;">
+        <ul style="margin:0; padding-left: 20px; line-height: 1.8;">
+        {% for i in collmap_insights %}
+            <li>{{ i }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map-marked-alt"></i> Collection Rate by State</div>
+        <div class="panel-subtitle">Revenue collection performance across states (₹/L)</div>
+    </div>
+    {% if collmap_available %}
+    <div class="summary-cards">
+        <div class="summary-card">
+            <div class="sc-label">Total Sale</div>
+            <div class="sc-value">{{ format_indian(collmap_total_sale) }} L</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Total Collection</div>
+            <div class="sc-value">₹{{ format_indian(collmap_total_coll) }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Overall Collection Rate</div>
+            <div class="sc-value">₹{{ "%.1f"|format(collmap_overall_eff) }}/L</div>
+        </div>
+        <div class="summary-card" style="border-top-color:var(--red);">
+            <div class="sc-label">Revenue at Risk</div>
+            <div class="sc-value" style="color:var(--red);">₹{{ format_indian(collmap_total_gap) }}</div>
+        </div>
+    </div>
+
+    <div id="chart-collmap" class="chart-container" style="height:500px;"></div>
+
+    <div class="table-wrap" style="margin-top:16px;">
+    <table>
+        <thead><tr><th>State</th><th class="num">Stations</th><th class="num">Sale (L)</th>
+        <th class="num">Collection (₹)</th><th class="num">RSP (₹/L)</th><th class="num">Coll Eff (₹/L)</th>
+        <th class="num">Gap (₹/L)</th><th class="num">Revenue at Risk</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for s in collmap_states %}
+            <tr>
+                <td><strong>{{ s.state }}</strong></td>
+                <td class="num">{{ s.stations }}</td>
+                <td class="num">{{ format_indian(s.sale) }}</td>
+                <td class="num">{{ format_indian(s.coll) }}</td>
+                <td class="num">{{ "%.2f"|format(s.rsp_per_l) }}</td>
+                <td class="num">{{ "%.2f"|format(s.coll / s.sale if s.sale else 0) }}</td>
+                <td class="num down">{{ "%.2f"|format(s.gap) }}</td>
+                <td class="num">{{ format_indian(s.gap_revenue) }}</td>
+                <td>
+                    {% if s.status == 'good' %}<span class="badge badge-best">Good</span>
+                    {% elif s.status == 'warn' %}<span class="badge badge-mid">Warning</span>
+                    {% else %}<span class="badge badge-high">Critical</span>{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="fas fa-map"></i><p>{{ collmap_message }}</p></div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="application/json" id="data-collmap">{% if collmap_available %}{{ collmap_states|tojson }}{% else %}[]{% endif %}</script>
+<script>
+var cmRaw = JSON.parse(document.getElementById('data-collmap').textContent);
+var cmStates = cmRaw.map(function(s) { return s.state; });
+var cmEff = cmRaw.map(function(s) { return s.coll_eff; });
+var cmGap = cmRaw.map(function(s) { return s.gap_revenue; });
+
+if (cmStates.length && typeof echarts !== 'undefined') {
+    var el = document.getElementById('chart-collmap');
+    if (el) {
+        echarts.init(el).setOption({
+            tooltip: {trigger: 'axis', axisPointer: {type: 'shadow'},
+                formatter: function(p) {
+                    var i = p[0].dataIndex;
+                    return cmStates[i] + '<br/>Collection Rate: ₹' + cmEff[i].toFixed(1) + '/L<br/>Revenue at Risk: ₹' + Math.round(cmGap[i]).toLocaleString('en-IN');
+                }},
+            grid: {left: 120, right: 40, top: 30, bottom: 50, containLabel: true},
+            xAxis: {type: 'value', name: 'Collection Rate (₹/L)', nameLocation: 'middle', nameGap: 30},
+            yAxis: {type: 'category', data: cmStates, name: 'State', nameLocation: 'middle', nameGap: 80, axisLabel: {fontSize: 11}},
+            series: [{
+                type: 'bar', data: cmEff, barMaxWidth: 30,
+                itemStyle: {
+                    color: function(p) {
+                        var v = p.value;
+                        if (v >= 45) return '#28a745';
+                        if (v >= 40) return '#ffc107';
+                        return '#dc3545';
+                    }
+                },
+                label: {show: true, position: 'right', fontSize: 10, formatter: '₹{c}/L'}
+            }]
+        });
+    }
+}
+</script>
+{% endblock %}

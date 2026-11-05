@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not gap_rows %}
+<div class="empty-state">
+    <i class="fas fa-inbox"></i>
+    <p>No data available for the selected filters.</p>
+    <p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+</div>
+{% else %}
+
+<!-- Summary Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Revenue at Risk</div>
+        <div class="sc-value" style="color: #dc3545;">₹{{ gap_summary.total_revenue_lost_fmt }}</div>
+        <div class="sc-sub">Collection gap × volume sold</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">PAN India Gap</div>
+        <div class="sc-value">₹{{ "%.1f"|format(gap_summary.avg_gap) }}/L</div>
+        <div class="sc-sub">RSP ₹{{ "%.1f"|format(gap_summary.avg_rsp) }} − Coll ₹{{ "%.1f"|format(gap_summary.avg_coll_rate) }}/L</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Stations with Gap > ₹1/L</div>
+        <div class="sc-value">{{ gap_summary.stations_with_gap }} / {{ gap_summary.total_stations }}</div>
+        <div class="sc-sub">{{ "%.1f"|format(gap_summary.stations_with_gap / gap_summary.total_stations * 100 if gap_summary.total_stations else 0) }}% of stations</div>
+    </div>
+</div>
+
+<!-- Insights -->
+{% if gap_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div style="padding: 16px;">
+        <ul style="margin:0; padding-left: 20px; line-height: 1.8;">
+        {% for i in gap_insights %}
+            <li>{{ i }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<!-- Station Gap Table -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-search-dollar"></i> Collection Gap by Station (Ranked by Revenue Lost)</div>
+        <div class="panel-subtitle">Showing top {{ gap_rows|length }} of {{ gap_total }} stations</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Station</th>
+                <th>State</th>
+                <th>Coordinator</th>
+                <th>TM</th>
+                <th class="num">Sale (L)</th>
+                <th class="num">RSP (₹/L)</th>
+                <th class="num">Eff. RSP (₹/L)</th>
+                <th class="num">Coll Rate (₹/L)</th>
+                <th class="num">Gap (₹/L)</th>
+                <th class="num">Gap %</th>
+                <th class="num">Revenue Lost</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in gap_rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/station/{{ r.erp_code }}" class="station-link">{{ r.alds_name }}</a></td>
+                <td>{{ r.state }}</td>
+                <td>{{ r.coordinator }}</td>
+                <td>{{ r.tm or '—' }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.rsp_fmt }}</td>
+                <td class="num">{{ r.eff_rsp_fmt }}</td>
+                <td class="num">{{ r.coll_rate_fmt }}</td>
+                <td class="num {% if r.gap > 1 %}col-red{% elif r.gap > 0.5 %}col-yellow{% else %}col-green{% endif %}">{{ r.gap_fmt }}</td>
+                <td class="num">{{ "%.1f"|format(r.gap_pct) }}%</td>
+                <td class="num col-red">₹{{ r.revenue_lost_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if fs_daily %}
+{% endif %}
+{% endblock %}

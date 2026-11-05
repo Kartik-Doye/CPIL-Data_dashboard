@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-database"></i> Data Load Status</div>
+    </div>
+    {% if not data_status %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data loaded yet. Run <code>python load_sales.py</code> to load sales data.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Sale Date</th>
+                <th class="num">Rows Loaded</th>
+                <th class="num">Distinct Stations</th>
+                <th class="num">Empty TM Count</th>
+                <th class="num">Blank ERP Count</th>
+                <th class="num">Sum Sale Qty (L)</th>
+                <th class="num">Sum Collection (₹)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in data_status %}
+            <tr>
+                <td>{{ r.sale_date }}</td>
+                <td class="num">{{ format_int(r.rows_loaded) }}</td>
+                <td class="num">{{ format_int(r.distinct_stations) }}</td>
+                <td class="num">{{ format_int(r.empty_tm_count) }}</td>
+                <td class="num">{{ format_int(r.blank_erp_count) }}</td>
+                <td class="num">{{ format_indian(r.sum_sale_qty) }}</td>
+                <td class="num">{{ format_indian(r.sum_collection) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-info-circle"></i> Summary</div>
+    </div>
+    <p><strong>Loaded days:</strong> {{ total_loaded_days }}</p>
+    <p><strong>Latest date:</strong> {{ latest_date }}</p>
+    <p><strong>Rows with empty TM:</strong> {% for r in data_status %}{{ r.empty_tm_count }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    <p><strong>Targets:</strong> Not loaded yet — reports 14, 15, 9 will show "targets not loaded".</p>
+    <p><strong>Station master:</strong> Not loaded yet — report 12 (dispenser) and report 16 (sub-state) will show "not loaded".</p>
+    <p><strong>Competitor RSP:</strong> Not loaded yet — report 22 will show "not loaded".</p>
+</div>
+{% endblock %}

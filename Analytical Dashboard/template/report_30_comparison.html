@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not cmp_available %}
+<div class="empty-state">
+    <i class="fas fa-inbox"></i>
+    <p>{{ cmp_message or "No data available." }}</p>
+    <p class="empty-hint">Try changing the date range above.</p>
+</div>
+{% else %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exchange-alt"></i> Period Comparison</div>
+        <div class="panel-subtitle">Current: {{ cmp_curr_label }} &middot; Previous: {{ cmp_prev_label }}</div>
+    </div>
+</div>
+
+<!-- Summary Cards: Current vs Previous vs Delta -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ cmp_curr.sale_fmt }}</div>
+        <div class="sc-sub">Prev: {{ cmp_prev.sale_fmt if cmp_prev else '—' }} &middot;
+            {% if cmp_deltas.sale is defined %}
+            <span class="{{ 'col-green' if cmp_deltas.sale > 0 else 'col-red' }}">{{ '▲' if cmp_deltas.sale > 0 else '▼' }} {{ '%.1f'|format(cmp_deltas.sale) }}%</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Collection</div>
+        <div class="sc-value">{{ cmp_curr.coll_fmt }}</div>
+        <div class="sc-sub">Prev: {{ cmp_prev.coll_fmt if cmp_prev else '—' }} &middot;
+            {% if cmp_deltas.coll is defined %}
+            <span class="{{ 'col-green' if cmp_deltas.coll > 0 else 'col-red' }}">{{ '▲' if cmp_deltas.coll > 0 else '▼' }} {{ '%.1f'|format(cmp_deltas.coll) }}%</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">RSP</div>
+        <div class="sc-value">{{ cmp_curr.rsp_fmt }}</div>
+        <div class="sc-sub">Prev: {{ cmp_prev.rsp_fmt if cmp_prev else '—' }} &middot;
+            {% if cmp_deltas.rsp is defined %}
+            <span class="{{ 'col-green' if cmp_deltas.rsp > 0 else 'col-muted' }}">{{ '▲' if cmp_deltas.rsp > 0 else '▼' }} {{ '%.1f'|format(cmp_deltas.rsp) }}%</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Free Sale ₹</div>
+        <div class="sc-value">{{ cmp_curr.free_rs_fmt }}</div>
+        <div class="sc-sub">Prev: {{ cmp_prev.free_rs_fmt if cmp_prev else '—' }} &middot;
+            {% if cmp_deltas.free_rs is defined %}
+            <span class="{{ 'col-green' if cmp_deltas.free_rs < 0 else 'col-red' }}">{{ '▼' if cmp_deltas.free_rs < 0 else '▲' }} {{ '%.1f'|format(cmp_deltas.free_rs) }}%</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Zero-Sale Stations</div>
+        <div class="sc-value {{ 'col-red' if cmp_curr.zero_stations > (cmp_prev.zero_stations if cmp_prev else 0) else 'col-green' }}">{{ cmp_curr.zero_stations }}</div>
+        <div class="sc-sub">Prev: {{ cmp_prev.zero_stations if cmp_prev else '—' }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Active Stations</div>
+        <div class="sc-value">{{ cmp_curr.stations }}</div>
+        <div class="sc-sub">Prev: {{ cmp_prev.stations if cmp_prev else '—' }}</div>
+    </div>
+</div>
+
+<!-- Insights -->
+{% if cmp_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div style="padding: 16px;">
+        <ul style="margin:0; padding-left: 20px; line-height: 1.8;">
+        {% for i in cmp_insights %}
+            <li>{{ i }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<!-- State Comparison Chart -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> State-wise Sale: Current vs Previous</div>
+    </div>
+    <div id="chart-cmp-states" style="height: 400px;"></div>
+</div>
+
+<!-- State Comparison Table -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> State-wise Comparison</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>State</th>
+                <th class="num">Current Sale (L)</th>
+                <th class="num">Previous Sale (L)</th>
+                <th class="num">Δ %</th>
+                <th class="num">Current Collection</th>
+                <th class="num">Previous Collection</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in cmp_states %}
+            <tr>
+                <td>{{ r.state }}</td>
+                <td class="num">{{ r.curr_sale_fmt }}</td>
+                <td class="num">{{ r.prev_sale_fmt }}</td>
+                <td class="num {% if r.delta_pct > 5 %}col-green{% elif r.delta_pct < -5 %}col-red{% else %}col-muted{% endif %}">
+                    {{ '▲' if r.delta_pct > 0 else '▼' if r.delta_pct < 0 else '—' }} {{ '%.1f'|format(r.delta_pct) }}%
+                </td>
+                <td class="num">{{ r.curr_coll_fmt }}</td>
+                <td class="num">{{ r.prev_coll_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if cmp_available and cmp_states %}
+<script type="application/json" id="data-cmp-states">{{ cmp_states|tojson }}</script>
+<script>
+var cmpStates = JSON.parse(document.getElementById('data-cmp-states').textContent);
+var el = document.getElementById('chart-cmp-states');
+if (el && cmpStates.length > 0) {
+    var chart = echarts.init(el);
+    chart.setOption(Object.assign({}, chartDefaults, {
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { data: ['Current', 'Previous'] },
+        xAxis: { type: 'category', data: cmpStates.map(function(s){return s.state;}) },
+        yAxis: { type: 'value', name: 'Litres' },
+        series: [
+            { name: 'Current', type: 'bar', data: cmpStates.map(function(s){return s.curr_sale;}),
+              itemStyle: { color: '#2563eb' } },
+            { name: 'Previous', type: 'bar', data: cmpStates.map(function(s){return s.prev_sale;}),
+              itemStyle: { color: '#9ca3af' } },
+        ],
+    }));
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+</script>
+{% endif %}
+{% endblock %}

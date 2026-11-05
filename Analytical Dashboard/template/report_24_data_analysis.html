@@ -1,0 +1,945 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 24: Data Analysis — Descriptive / Diagnostic / Predictive / Prescriptive -->
+
+{% if not analysis_available %}
+<div class="panel" style="text-align:center;padding:40px;">
+    <i class="fas fa-chart-line" style="font-size:48px;color:var(--text-muted);"></i>
+    <h2 style="margin-top:16px;">Data Analysis</h2>
+    <p style="color:var(--text-muted);">{{ analysis_message or "No data available for the selected filters." }}</p>
+</div>
+{% else %}
+
+<!-- ================================================================ -->
+<!-- OVERVIEW BANNER -->
+<!-- ================================================================ -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-microscope"></i> Data Analysis Overview</div>
+        <div class="panel-subtitle">Descriptive · Diagnostic · Predictive · Prescriptive</div>
+    </div>
+    <div class="insights-box" style="border-left-color:var(--blue,#007bff);">
+        <p><i class="fas fa-info-circle" style="color:var(--blue,#007bff);"></i>
+            <strong>{{ analysis.data_shape.rows }} rows</strong> across
+            <strong>{{ analysis.data_shape.stations }} stations</strong> and
+            <strong>{{ analysis.data_shape.days }} days</strong> analyzed using
+            pandas, numpy, and scikit-learn.
+            This report answers four questions: <em>What happened? Why? What's next? What should we do?</em>
+        </p>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- SECTION 1: DESCRIPTIVE — "What happened?" -->
+<!-- ================================================================ -->
+<div class="analytics-section-header">
+    <i class="fas fa-chart-bar"></i>
+    <h3>1. Descriptive Analytics — "What Happened?"</h3>
+    <span class="analytics-sub">Summarising the data to understand what occurred</span>
+</div>
+
+{% if analysis.descriptive.available %}
+<!-- KPI Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ analysis.descriptive.kpi.total_sale_fmt }}</div>
+        <div class="sc-sub">{{ analysis.descriptive.kpi.n_days }} days</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Collection</div>
+        <div class="sc-value">{{ analysis.descriptive.kpi.total_collection_fmt }}</div>
+        <div class="sc-sub">Coll. rate: ₹{{ "%.1f"|format(analysis.descriptive.kpi.coll_eff) }}/L</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Avg / Day</div>
+        <div class="sc-value">{{ analysis.descriptive.kpi.avg_per_day_fmt }}</div>
+        <div class="sc-sub">{{ analysis.descriptive.kpi.n_stations }} stations</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Growth Rate</div>
+        <div class="sc-value {{ 'up' if analysis.descriptive.kpi.growth_rate > 0 else 'down' }}">
+            {{ "%+.1f"|format(analysis.descriptive.kpi.growth_rate) }}%
+        </div>
+        <div class="sc-sub">first vs last day</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Free Sale</div>
+        <div class="sc-value">{{ analysis.descriptive.kpi.free_pct }}%</div>
+        <div class="sc-sub">{{ analysis.descriptive.kpi.total_free_fmt }} L</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Paytm Adoption</div>
+        <div class="sc-value">{{ analysis.descriptive.kpi.paytm_pct }}%</div>
+        <div class="sc-sub">of collections</div>
+    </div>
+</div>
+
+<!-- Statistical Summary + Daily Trend -->
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-calculator"></i> Statistical Summary (numpy)</div>
+        </div>
+        <div class="table-wrap">
+        <table class="stats-table">
+            <thead>
+                <tr><th>Metric</th><th class="num">Value</th><th>What it means</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Mean (Average)</td><td class="num">{{ analysis.descriptive.stats_fmt.mean }} L</td>
+                    <td>Average sale per station-day</td></tr>
+                <tr><td>Median</td><td class="num">{{ analysis.descriptive.stats_fmt.median }} L</td>
+                    <td>Middle value — less affected by outliers</td></tr>
+                <tr><td>Std Deviation</td><td class="num">{{ analysis.descriptive.stats_fmt.std }} L</td>
+                    <td>How spread out the data is</td></tr>
+                <tr><td>Min</td><td class="num">{{ analysis.descriptive.stats_fmt.min }} L</td>
+                    <td>Lowest sale recorded</td></tr>
+                <tr><td>Max</td><td class="num">{{ analysis.descriptive.stats_fmt.max }} L</td>
+                    <td>Highest sale recorded</td></tr>
+                <tr><td>Q1 (25th pct)</td><td class="num">{{ analysis.descriptive.stats_fmt.q1 }} L</td>
+                    <td>25% of stations sell below this</td></tr>
+                <tr><td>Q3 (75th pct)</td><td class="num">{{ analysis.descriptive.stats_fmt.q3 }} L</td>
+                    <td>75% of stations sell below this</td></tr>
+                <tr><td>IQR</td><td class="num">{{ analysis.descriptive.stats_fmt.iqr }} L</td>
+                    <td>Inter-quartile range (middle 50%)</td></tr>
+                <tr><td>Skewness</td><td class="num">{{ "%.2f"|format(analysis.descriptive.stats.skewness) }}</td>
+                    <td>{{ "Right-skewed (few high sellers)" if analysis.descriptive.stats.skewness > 0.5 else "Left-skewed (few low sellers)" if analysis.descriptive.stats.skewness < -0.5 else " roughly symmetrical" }}</td></tr>
+                <tr><td>Kurtosis</td><td class="num">{{ "%.2f"|format(analysis.descriptive.stats.kurtosis) }}</td>
+                    <td>{{ "Heavy tails (extreme values)" if analysis.descriptive.stats.kurtosis > 3 else "Light tails" if analysis.descriptive.stats.kurtosis < 0 else "Normal-ish distribution" }}</td></tr>
+                <tr><td>CV (Coeff. of Variation)</td><td class="num">{{ "%.1f"|format(analysis.descriptive.stats.cv) }}%</td>
+                    <td>{{ "High variability" if analysis.descriptive.stats.cv > 50 else "Moderate variability" if analysis.descriptive.stats.cv > 25 else "Low variability (consistent)" }}</td></tr>
+            </tbody>
+        </table>
+        </div>
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-area"></i> Daily Sales Trend</div>
+        </div>
+        <div id="chart-da-daily" class="chart-container"></div>
+    </div>
+</div>
+
+<!-- Distribution + Weekday/Weekend -->
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-bar"></i> Sale Distribution (Histogram)</div>
+        </div>
+        <div id="chart-da-histogram" class="chart-container"></div>
+        {% if analysis.descriptive.distribution_analysis %}
+        <div class="insights-box" style="margin:12px;">
+            {% for da in analysis.descriptive.distribution_analysis %}
+            <p><i class="fas fa-chevron-circle-right"></i> {{ da }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-calendar-alt"></i> Weekday vs Weekend</div>
+        </div>
+        <div id="chart-da-weekday" class="chart-container"></div>
+        {% if analysis.descriptive.weekday_weekend %}
+        <div class="insights-box" style="margin:12px;">
+            <p><i class="fas fa-chevron-circle-right"></i>
+                Weekday avg: <strong>{{ format_indian(analysis.descriptive.weekday_weekend.weekday_avg) }} L</strong> |
+                Weekend avg: <strong>{{ format_indian(analysis.descriptive.weekday_weekend.weekend_avg) }} L</strong> |
+                Gap: <strong>{{ "%.1f"|format(analysis.descriptive.weekday_weekend.gap_pct) }}%</strong>
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Top/Bottom States -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map-marked-alt"></i> Top 10 &amp; Bottom 5 States by Sale</div>
+    </div>
+    <div id="chart-da-states" class="chart-container"></div>
+</div>
+{% endif %}
+
+<!-- ================================================================ -->
+<!-- SECTION 2: DIAGNOSTIC — "Why did it happen?" -->
+<!-- ================================================================ -->
+<div class="analytics-section-header">
+    <i class="fas fa-search"></i>
+    <h3>2. Diagnostic Analytics — "Why Did It Happen?"</h3>
+    <span class="analytics-sub">Finding root causes and correlations</span>
+</div>
+
+{% if analysis.diagnostic.available %}
+<!-- Correlation Heatmap -->
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-project-diagram"></i> Correlation Matrix (pandas)</div>
+        </div>
+        {% if analysis.diagnostic.correlation %}
+        <div id="chart-da-correlation" class="chart-container"></div>
+        <div class="insights-box" style="margin:12px;">
+            <p><i class="fas fa-info-circle"></i> Values close to <strong>1</strong> = strong positive correlation,
+               <strong>-1</strong> = strong negative, <strong>0</strong> = no relationship.</p>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>Not enough data for correlation analysis.</p></div>
+        {% endif %}
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-exclamation-triangle"></i> Anomaly Detection (z-score)</div>
+        </div>
+        {% if analysis.diagnostic.anomalies %}
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Date</th><th>Day</th><th class="num">Sale</th><th class="num">vs Mean</th><th class="num">Z</th><th>Type</th><th class="num">Stations</th><th class="num">Prev Day</th><th>Reason</th></tr></thead>
+            <tbody>
+                {% for a in analysis.diagnostic.anomalies %}
+                <tr>
+                    <td><strong>{{ a.date }}</strong></td>
+                    <td>{{ a.weekday }}{% if a.is_weekend %} <span class="badge badge-base">WE</span>{% endif %}</td>
+                    <td class="num">{{ a.sale_fmt }}</td>
+                    <td class="num down">{{ a.deviation }} L {{ 'above' if a.type == 'spike' else 'below' }}</td>
+                    <td class="num {{ 'up' if a.z_score > 0 else 'down' }}">{{ "%+.2f"|format(a.z_score) }}</td>
+                    <td><span class="badge {{ 'badge-best' if a.type == 'spike' else 'badge-high' }}">{{ a.type|upper }}</span></td>
+                    <td class="num">{{ a.stations }}</td>
+                    <td class="num">{{ a.prev_sale }}{% if a.prev_change_pct is not none %} ({{ "%+.1f"|format(a.prev_change_pct) }}%){% endif %}</td>
+                    <td style="max-width:400px;font-size:12px;">
+                        {% for reason in a.reasons %}
+                        <div style="margin-bottom:4px;"><i class="fas fa-chevron-circle-right" style="color:var(--blue,#007bff);"></i> {{ reason }}</div>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>No anomalies detected (all days within ±1.8σ).</p></div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Root Cause Analysis -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-bug"></i> Root Cause Analysis</div>
+    </div>
+    <div class="insights-box">
+        {% for cause in analysis.diagnostic.root_causes %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ cause }}</p>
+        {% endfor %}
+        {% if not analysis.diagnostic.root_causes %}
+        <p><i class="fas fa-check-circle" style="color:#28a745;"></i> No significant root cause issues detected.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Significant Changes -->
+{% if analysis.diagnostic.significant_changes %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exchange-alt"></i> Significant Day-over-Day Changes (&gt;15%)</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Date</th><th class="num">Previous</th><th class="num">Current</th><th class="num">Change</th><th>Direction</th></tr></thead>
+        <tbody>
+            {% for c in analysis.diagnostic.significant_changes %}
+            <tr>
+                <td>{{ c.date }}</td>
+                <td class="num">{{ c.prev_sale }}</td>
+                <td class="num">{{ c.curr_sale }}</td>
+                <td class="num {{ 'up' if c.direction == 'up' else 'down' }}">{{ "%+.1f"|format(c.change_pct) }}%</td>
+                <td>{{ c.direction|upper }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Station Problems -->
+{% if analysis.diagnostic.station_problems %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-tools"></i> Station-Level Problems (Top 20)</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>ERP Code</th><th>Station</th><th>State</th><th>TM</th><th>Coordinator</th><th class="num">Total Sale</th><th>Period</th><th>Problems</th></tr></thead>
+        <tbody>
+            {% for s in analysis.diagnostic.station_problems %}
+            <tr>
+                <td>{{ s.erp_code }}</td>
+                <td><strong>{{ s.name }}</strong></td>
+                <td>{{ s.state }}</td>
+                <td>{{ s.tm or '-' }}</td>
+                <td>{{ s.coordinator or '-' }}</td>
+                <td class="num">{{ s.sale }}</td>
+                <td style="font-size:11px;">{{ s.period }}</td>
+                <td>
+                    {% for p in s.problems %}
+                    <span class="badge badge-base">{{ p }}</span>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- ================================================================ -->
+<!-- SECTION 3: PREDICTIVE — "What's likely next?" -->
+<!-- ================================================================ -->
+<div class="analytics-section-header">
+    <i class="fas fa-brain"></i>
+    <h3>3. Predictive Analytics — "What Is Likely To Happen Next?"</h3>
+    <span class="analytics-sub">Forecasting and ML-based predictions</span>
+</div>
+
+{% if analysis.predictive.available %}
+<!-- Trend Projection + Forecast -->
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-line"></i> 7-Day Forecast (Ensemble ML)</div>
+        </div>
+        {% if analysis.predictive.forecast and not analysis.predictive.forecast.error %}
+        <div id="chart-da-forecast" class="chart-container"></div>
+        {% if analysis.predictive.forecast.summary %}
+        <div class="insights-box" style="margin:12px;">
+            <p><i class="fas fa-chevron-circle-right"></i>
+                Forecast avg: <strong>{{ format_indian(analysis.predictive.forecast.summary.forecast_avg) }} L/day</strong> |
+                Hist avg: <strong>{{ format_indian(analysis.predictive.forecast.summary.hist_avg) }} L/day</strong> |
+                Growth: <strong>{{ "%.1f"|format(analysis.predictive.forecast.summary.growth_rate) }}%</strong>
+            </p>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="empty-state"><p>Forecast unavailable: {{ analysis.predictive.forecast.error or "insufficient data" }}</p></div>
+        {% endif %}
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-trending-up"></i> Linear Trend Projection (scikit-learn)</div>
+        </div>
+        {% if analysis.predictive.trend_projection and analysis.predictive.trend_projection.available != false %}
+        <div id="chart-da-projection" class="chart-container"></div>
+        <div class="insights-box" style="margin:12px;">
+            <p><i class="fas fa-chevron-circle-right"></i>
+                Trend: <strong>{{ analysis.predictive.trend_projection.direction }}</strong> |
+                Slope: <strong>{{ analysis.predictive.trend_projection.slope_fmt }} L/day</strong> |
+                R²: <strong>{{ "%.2f"|format(analysis.predictive.trend_projection.r_squared) }}</strong>
+                ({{ "strong fit" if analysis.predictive.trend_projection.r_squared > 0.5 else "moderate fit" if analysis.predictive.trend_projection.r_squared > 0.2 else "weak fit" }})
+            </p>
+            <p><i class="fas fa-chevron-circle-right"></i>
+                Projected 7-day total: <strong>{{ analysis.predictive.trend_projection.projection_total_fmt }}</strong>
+            </p>
+        </div>
+        {% else %}
+        <div class="empty-state"><p>Trend projection unavailable.</p></div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Station Clustering -->
+{% if analysis.predictive.clusters %}
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-layer-group"></i> Station Clustering (KMeans)</div>
+            <div class="panel-subtitle">Stations grouped into performance tiers</div>
+        </div>
+        <div id="chart-da-clusters" class="chart-container"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-trophy"></i> Performance Tiers</div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Tier</th><th>Label</th><th class="num">Stations</th><th class="num">Avg Sale</th><th class="num">Free %</th><th class="num">Coll Eff</th></tr></thead>
+            <tbody>
+                {% for c in analysis.predictive.clusters %}
+                <tr>
+                    <td><strong>Tier {{ c.tier }}</strong></td>
+                    <td>{{ c.label }}</td>
+                    <td class="num">{{ c.count }}</td>
+                    <td class="num">{{ c.avg_sale_fmt }}</td>
+                    <td class="num">{{ c.avg_free_pct }}%</td>
+                    <td class="num">Rs.{{ c.avg_coll_eff }}/L</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Declining Stations -->
+{% if analysis.predictive.declining_stations %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-arrow-down"></i> Declining Stations (Negative Trend)</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>ERP Code</th><th>Station</th><th>State</th><th class="num">Total Sale</th><th class="num">Trend (L/day)</th></tr></thead>
+        <tbody>
+            {% for s in analysis.predictive.declining_stations %}
+            <tr>
+                <td>{{ s.erp_code }}</td>
+                <td>{{ s.name }}</td>
+                <td>{{ s.state }}</td>
+                <td class="num">{{ s.total_sale }}</td>
+                <td class="num down">{{ s.slope_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- ================================================================ -->
+<!-- SECTION 4: PRESCRIPTIVE — "What should we do?" -->
+<!-- ================================================================ -->
+<div class="analytics-section-header">
+    <i class="fas fa-clipboard-check"></i>
+    <h3>4. Prescriptive Analytics — "What Should We Do About It?"</h3>
+    <span class="analytics-sub">Actionable recommendations</span>
+</div>
+
+{% if analysis.prescriptive.available %}
+<!-- Findings -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Findings</div>
+    </div>
+    <div class="insights-box">
+        {% for f in analysis.prescriptive.findings %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ f }}</p>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Problems -->
+{% if analysis.prescriptive.problems %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exclamation-circle"></i> Problems Identified</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Severity</th><th>Problem</th><th>Details (Stations / TMs / Dates)</th></tr></thead>
+        <tbody>
+            {% for p in analysis.prescriptive.problems %}
+            <tr>
+                <td><span class="badge badge-{{ p.severity|lower }}">{{ p.severity }}</span></td>
+                <td><strong>{{ p.problem }}</strong></td>
+                <td style="font-size:12px;">{{ p.details or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Recommendations -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-clipboard-check"></i> Recommendations</div>
+    </div>
+    {% for r in analysis.prescriptive.recommendations %}
+    <div class="recommendation-card priority-{{ r.priority|lower }}">
+        <div class="rec-header">
+            <span class="badge badge-{{ r.priority|lower }}">{{ r.priority }}</span>
+            <span class="rec-category">{{ r.category }}</span>
+            {% if r.timeline %}<span class="badge badge-base" style="margin-left:auto;"><i class="fas fa-clock"></i> {{ r.timeline }}</span>{% endif %}
+        </div>
+        <div class="rec-body">
+            <p><strong>Problem:</strong> {{ r.problem }}</p>
+            <p><strong>Action Plan:</strong></p>
+            <div style="margin-left:16px;white-space:pre-line;font-size:13px;">{{ r.recommendation }}</div>
+            {% if r.affected_stations %}
+            <p style="margin-top:8px;"><strong>Affected Stations:</strong></p>
+            <div style="margin-left:16px;font-size:12px;color:var(--text-muted);white-space:pre-line;">{{ r.affected_stations }}</div>
+            {% endif %}
+            {% if r.expected_impact %}<p style="margin-top:8px;"><strong>Expected Impact:</strong> {{ r.expected_impact }}</p>{% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% if not analysis.prescriptive.recommendations %}
+    <div class="empty-state"><p>No specific recommendations — data looks healthy!</p></div>
+    {% endif %}
+</div>
+
+<!-- Profit / Loss Factors -->
+<div class="grid-3">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-arrow-up" style="color:#28a745;"></i> Revenue Drivers</div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Factor</th><th>Value</th></tr></thead>
+            <tbody>
+                {% for f in analysis.prescriptive.profit_loss.revenue_drivers %}
+                <tr><td>{{ f.factor }}</td><td class="num">{{ f.value }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% for f in analysis.prescriptive.profit_loss.revenue_drivers %}
+        <p style="font-size:11px;color:var(--text-muted);padding:2px 12px;">{{ f.impact }}</p>
+        {% endfor %}
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-arrow-down" style="color:#dc3545;"></i> Cost Leakage</div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Factor</th><th>Value</th></tr></thead>
+            <tbody>
+                {% for f in analysis.prescriptive.profit_loss.cost_leakage %}
+                <tr><td>{{ f.factor }}</td><td class="num">{{ f.value }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% for f in analysis.prescriptive.profit_loss.cost_leakage %}
+        <p style="font-size:11px;color:var(--text-muted);padding:2px 12px;">{{ f.impact }}</p>
+        {% endfor %}
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-clock" style="color:#ffc107;"></i> Opportunity Cost</div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Factor</th><th>Value</th></tr></thead>
+            <tbody>
+                {% for f in analysis.prescriptive.profit_loss.opportunity_cost %}
+                <tr><td>{{ f.factor }}</td><td class="num">{{ f.value }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% for f in analysis.prescriptive.profit_loss.opportunity_cost %}
+        <p style="font-size:11px;color:var(--text-muted);padding:2px 12px;">{{ f.impact }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ================================================================ -->
+<!-- SECTION 5: PANDAS PROFILE -->
+<!-- ================================================================ -->
+<div class="analytics-section-header">
+    <i class="fas fa-file-alt"></i>
+    <h3>5. Pandas Profile Report (ydata-profiling)</h3>
+    <span class="analytics-sub">Automated exploratory data analysis</span>
+</div>
+
+{% if analysis.profile and analysis.profile.available %}
+<!-- Overview cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Dataset Size</div>
+        <div class="sc-value">{{ format_indian(analysis.profile.overview.n_rows) }}</div>
+        <div class="sc-sub">rows x {{ analysis.profile.overview.n_cols }} columns</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Missing Values</div>
+        <div class="sc-value">{{ analysis.profile.overview.missing_pct }}%</div>
+        <div class="sc-sub">{{ analysis.profile.overview.missing_cells }} cells</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Duplicate Rows</div>
+        <div class="sc-value">{{ analysis.profile.overview.duplicate_pct }}%</div>
+        <div class="sc-sub">{{ analysis.profile.overview.n_duplicates }} rows</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Memory Usage</div>
+        <div class="sc-value">{{ analysis.profile.overview.memory_kb }} KB</div>
+        <div class="sc-sub">in memory</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Data Quality Score</div>
+        <div class="sc-value {{ 'down' if analysis.profile.quality_score < 70 else '' }}">{{ analysis.profile.quality_score }}/100</div>
+        <div class="sc-sub">{{ 'Needs attention' if analysis.profile.quality_score < 70 else 'Good quality' }}</div>
+    </div>
+</div>
+
+<!-- Quality issues -->
+{% if analysis.profile.quality_issues %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exclamation-triangle" style="color:#ffc107;"></i> Data Quality Issues</div>
+    </div>
+    <div class="insights-box">
+        {% for issue in analysis.profile.quality_issues %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ issue }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Column-by-column profile -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-columns"></i> Column-by-Column Profile ({{ analysis.profile.overview.n_cols }} columns)</div>
+    </div>
+    <div class="table-wrap">
+    <table class="profile-table">
+        <thead>
+            <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th class="num">Missing</th>
+                <th class="num">Unique</th>
+                {% if analysis.profile.columns[0].is_numeric is defined %}
+                <th class="num">Mean</th>
+                <th class="num">Median</th>
+                <th class="num">Min</th>
+                <th class="num">Max</th>
+                <th class="num">Std Dev</th>
+                <th class="num">Zeros</th>
+                {% else %}
+                <th>Top Values</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for col in analysis.profile.columns %}
+            <tr>
+                <td><strong>{{ col.name }}</strong></td>
+                <td><span class="badge badge-base">{{ col.dtype }}</span></td>
+                <td class="num">{{ col.missing }} ({{ col.missing_pct }}%)</td>
+                <td class="num">{{ col.unique }} ({{ col.unique_pct }}%)</td>
+                {% if col.is_numeric %}
+                    <td class="num">{{ col.mean or '-' }}</td>
+                    <td class="num">{{ col.median or '-' }}</td>
+                    <td class="num">{{ col.min or '-' }}</td>
+                    <td class="num">{{ col.max or '-' }}</td>
+                    <td class="num">{{ col.std or '-' }}</td>
+                    <td class="num {{ 'down' if col.zeros_pct > 30 else '' }}">{{ col.zeros }} ({{ col.zeros_pct }}%)</td>
+                {% elif col.top_values %}
+                    <td colspan="6" style="font-size:12px;">
+                        {% for tv in col.top_values %}
+                        <span class="badge badge-base" title="{{ tv.pct }}%">{{ tv.value }} ({{ tv.count }})</span>
+                        {% endfor %}
+                    </td>
+                {% else %}
+                    <td colspan="6" style="color:var(--text-muted);">All values missing</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Full ydata-profiling report -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-file-medical-alt"></i> Full Automated Profile (ydata-profiling)</div>
+        <div class="panel-actions">
+            <a href="/report/24/profile{% if current_query_string() %}{{ current_query_string() }}&force=1{% else %}?force=1{% endif %}" target="_blank" class="filter-btn apply">
+                <i class="fas fa-external-link-alt"></i> Open Full Report (new tab)
+            </a>
+        </div>
+    </div>
+    <div class="insights-box" style="border-left-color:var(--blue,#007bff);">
+        <p><i class="fas fa-info-circle" style="color:var(--blue,#007bff);"></i>
+            The summary above is generated with <strong>pandas + numpy</strong> in the dashboard's own design.
+            For the complete ydata-profiling report (with interactive plots, correlation matrices, and sample data),
+            click <strong>"Open Full Report"</strong> — it opens in a new tab.
+        </p>
+    </div>
+</div>
+
+{% else %}
+<div class="panel">
+    <div class="empty-state">
+        <p>Profile data not available.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- ===== WHAT-IF SIMULATOR (Phase 15) ===== -->
+{% if whatif_baseline %}
+<div class="panel" id="whatif-panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-flask"></i> What-If Simulator — Revenue Impact Projection</div>
+        <div class="panel-subtitle">Adjust the sliders to see how operational changes affect projected revenue</div>
+    </div>
+    <div class="whatif-container">
+        <div class="whatif-controls">
+            <div class="whatif-control">
+                <label>Reduce Free Sale by: <strong id="wf-free-val">0%</strong></label>
+                <input type="range" id="wf-free" min="0" max="100" value="0" step="5" oninput="updateWhatIf()">
+                <div class="whatif-hint">Free sale currently: {{ whatif_baseline.total_free_fmt }} L (₹{{ whatif_baseline.total_free_rs_fmt }})</div>
+            </div>
+            <div class="whatif-control">
+                <label>Reopen Zero-Sale Stations: <strong id="wf-zero-val">0</strong> of {{ whatif_baseline.zero_stations }}</label>
+                <input type="range" id="wf-zero" min="0" max="{{ whatif_baseline.zero_stations }}" value="0" step="1" oninput="updateWhatIf()">
+                <div class="whatif-hint">Each station adds ~{{ whatif_baseline.avg_per_station_fmt }} at network average</div>
+            </div>
+            <div class="whatif-control">
+                <label>Improve Collection Efficiency by: <strong id="wf-coll-val">0%</strong></label>
+                <input type="range" id="wf-coll" min="0" max="100" value="0" step="5" oninput="updateWhatIf()">
+                <div class="whatif-hint">Current efficiency: ₹{{ "%.1f"|format(whatif_baseline.coll_eff) }}/L vs RSP ₹{{ "%.1f"|format(whatif_baseline.rsp_per_l) }}/L</div>
+            </div>
+            <div class="whatif-control">
+                <label>Demand Growth: <strong id="wf-growth-val">0%</strong></label>
+                <input type="range" id="wf-growth" min="-20" max="50" value="0" step="5" oninput="updateWhatIf()">
+                <div class="whatif-hint">Adjust for seasonal demand, marketing, or market expansion</div>
+            </div>
+        </div>
+        <div class="whatif-results">
+            <div class="whatif-baseline">
+                <h4>Current Baseline</h4>
+                <div class="whatif-metric"><span>Total Sale:</span> <strong>{{ whatif_baseline.total_sale_fmt }}</strong></div>
+                <div class="whatif-metric"><span>Collection:</span> <strong>₹{{ whatif_baseline.total_coll_fmt }}</strong></div>
+                <div class="whatif-metric"><span>Free Sale:</span> <strong>{{ whatif_baseline.total_free_fmt }}</strong></div>
+            </div>
+            <div class="whatif-projected">
+                <h4 style="color:var(--green);">Projected (After Changes)</h4>
+                <div class="whatif-metric"><span>Total Sale:</span> <strong id="wf-proj-sale">{{ whatif_baseline.total_sale_fmt }}</strong></div>
+                <div class="whatif-metric"><span>Collection:</span> <strong id="wf-proj-coll">₹{{ whatif_baseline.total_coll_fmt }}</strong></div>
+                <div class="whatif-metric"><span>Free Sale:</span> <strong id="wf-proj-free">{{ whatif_baseline.total_free_fmt }}</strong></div>
+                <div class="whatif-impact" id="wf-impact">
+                    <span>Revenue Impact:</span> <strong id="wf-impact-val">₹0</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="whatif-scenarios">
+        <button class="filter-btn" onclick="resetWhatIf()">Reset</button>
+        <button class="filter-btn" onclick="presetWhatIf('optimistic')">Optimistic</button>
+        <button class="filter-btn" onclick="presetWhatIf('moderate')">Moderate</button>
+        <button class="filter-btn" onclick="presetWhatIf('conservative')">Conservative</button>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script type="application/json" id="data-da">{{ analysis|tojson }}</script>
+<script>
+var da = JSON.parse(document.getElementById('data-da').textContent);
+
+// --- Daily trend chart ---
+if (da && da.descriptive && da.descriptive.daily_trend) {
+    var dt = da.descriptive.daily_trend;
+    makeDualAxisChart('chart-da-daily',
+        dt.map(function(r){return r.date;}),
+        dt.map(function(r){return r.sale;}),
+        dt.map(function(r){return r.collection;}));
+}
+
+// --- Histogram (detailed with statistics overlay) ---
+if (da && da.descriptive && da.descriptive.histogram) {
+    var h = da.descriptive.histogram;
+    var labels = h.bin_labels || h.bins.slice(0, -1).map(function(b){return Math.round(b)+'+';});
+    var el = document.getElementById('chart-da-histogram');
+    if (el && typeof echarts !== 'undefined') {
+        var maxCount = Math.max.apply(null, h.counts);
+        var markLines = [];
+        if (h.mean_line) markLines.push({xAxis: h.mean_line, name: 'Mean', label: {formatter: 'Mean'}});
+        if (h.median_line) markLines.push({xAxis: h.median_line, name: 'Median', label: {formatter: 'Median'}});
+        if (h.p25_line) markLines.push({xAxis: h.p25_line, name: 'P25', label: {formatter: 'P25'}});
+        if (h.p75_line) markLines.push({xAxis: h.p75_line, name: 'P75', label: {formatter: 'P75'}});
+        if (h.p95_line) markLines.push({xAxis: h.p95_line, name: 'P95', label: {formatter: 'P95'}});
+        echarts.init(el).setOption({
+            tooltip: {trigger: 'axis', formatter: function(p){
+                return p[0].name + '<br/>Stations: ' + p[0].value + ' (' + (h.bin_pct[p[0].dataIndex]||0) + '%)';
+            }},
+            grid: {left: 60, right: 30, top: 40, bottom: 60},
+            xAxis: {type: 'category', data: labels, axisLabel: {rotate: 45, fontSize: 10}, name: 'Sale Range (L)'},
+            yAxis: {type: 'value', name: 'Station Count'},
+            series: [{
+                type: 'bar', data: h.counts, barMaxWidth: 40,
+                itemStyle: {color: '#007bff'},
+                label: {show: true, position: 'top', fontSize: 10, formatter: function(p){return p.value;}},
+                markLine: {symbol: 'none', data: markLines.map(function(m){return {xAxis: m.name, label: m.label, lineStyle: {color: '#dc3545', type: 'dashed'}};}), animation: false}
+            }]
+        });
+    }
+}
+
+// --- Weekday vs weekend ---
+if (da && da.descriptive && da.descriptive.weekday_weekend) {
+    var ww = da.descriptive.weekday_weekend;
+    makeBarChart('chart-da-weekday',
+        ['Weekday (avg)', 'Weekend (avg)'],
+        [ww.weekday_avg, ww.weekend_avg],
+        {decimals:0, unit:' L'});
+}
+
+// --- States ---
+if (da && da.descriptive && da.descriptive.top_states) {
+    var states = da.descriptive.top_states;
+    makeBarChart('chart-da-states',
+        states.map(function(s){return s.name;}),
+        states.map(function(s){return s.sale;}),
+        {decimals:0, unit:' L'});
+}
+
+// --- Correlation heatmap ---
+if (da && da.diagnostic && da.diagnostic.correlation) {
+    var corr = da.diagnostic.correlation;
+    makeHeatmap('chart-da-correlation', corr.labels, corr.matrix);
+}
+
+// --- Forecast ---
+if (da && da.predictive && da.predictive.forecast && da.predictive.forecast.points) {
+    var fp = da.predictive.forecast.points;
+    makeLineChart('chart-da-forecast',
+        fp.map(function(p){return p.date;}),
+        fp.map(function(p){return p.ensemble || p.predicted;}),
+        {decimals:0, unit:' L'});
+}
+
+// --- Trend projection ---
+if (da && da.predictive && da.predictive.trend_projection && da.predictive.trend_projection.projection_7d) {
+    var tp = da.predictive.trend_projection;
+    var labels = ['Day 1','Day 2','Day 3','Day 4','Day 5','Day 6','Day 7'];
+    makeLineChart('chart-da-projection', labels, tp.projection_7d, {decimals:0, unit:' L'});
+}
+
+// --- Clusters scatter ---
+if (da && da.predictive && da.predictive.scatter_data && da.predictive.scatter_data.length) {
+    var sd = da.predictive.scatter_data;
+    var dom = document.getElementById('chart-da-clusters');
+    if (dom) {
+        var chart = echarts.init(dom);
+        var tiers = {};
+        sd.forEach(function(r){
+            if (!tiers[r.tier]) tiers[r.tier] = [];
+            tiers[r.tier].push([r.x, r.y, r.erp]);
+        });
+        var colors = {1:'#28a745', 2:'#17a2b8', 3:'#ffc107', 4:'#dc3545'};
+        var series = Object.keys(tiers).map(function(t){
+            return {
+                name: 'Tier ' + t,
+                type: 'scatter',
+                data: tiers[t],
+                itemStyle: {color: colors[t] || '#999'},
+                symbolSize: 8,
+            };
+        });
+        chart.setOption({
+            tooltip: {trigger: 'item', formatter: function(p){return p.data[2] + '<br/>Avg: ' + p.data[0] + '<br/>Total: ' + p.data[1];}},
+            legend: {top: 5},
+            grid: {left: 60, right: 20, top: 40, bottom: 40},
+            xAxis: {name: 'Avg Sale', type: 'value'},
+            yAxis: {name: 'Total Sale', type: 'value'},
+            series: series,
+        });
+    }
+}
+
+// ===== WHAT-IF SIMULATOR (Phase 15) =====
+</script>
+<script type="application/json" id="data-whatif">{{ whatif_baseline|tojson if whatif_baseline else 'null' }}</script>
+<script>
+var wfBaseline = JSON.parse(document.getElementById('data-whatif').textContent);
+
+function fmtL(v) { return Math.round(v).toLocaleString('en-IN') + ' L'; }
+function fmtR(v) { return '₹' + Math.round(v).toLocaleString('en-IN'); }
+
+function updateWhatIf() {
+    if (!wfBaseline) return;
+    var freePct = parseInt(document.getElementById('wf-free').value);
+    var zeroN = parseInt(document.getElementById('wf-zero').value);
+    var collPct = parseInt(document.getElementById('wf-coll').value);
+    var growthPct = parseInt(document.getElementById('wf-growth').value);
+
+    document.getElementById('wf-free-val').textContent = freePct + '%';
+    document.getElementById('wf-zero-val').textContent = zeroN;
+    document.getElementById('wf-coll-val').textContent = collPct + '%';
+    document.getElementById('wf-growth-val').textContent = (growthPct >= 0 ? '+' : '') + growthPct + '%';
+
+    var baseSale = wfBaseline.total_sale;
+    var baseColl = wfBaseline.total_coll;
+    var baseFree = wfBaseline.total_free;
+    var baseFreeRs = wfBaseline.total_free_rs;
+    var collEff = wfBaseline.coll_eff;
+    var rsp = wfBaseline.rsp_per_l;
+    var avgPerStation = wfBaseline.avg_per_station;
+
+    // 1. Free sale reduction: reduces free volume, recovers free revenue
+    var newFree = baseFree * (1 - freePct / 100);
+    var recoveredFreeRs = baseFreeRs * (freePct / 100);
+
+    // 2. Reopen zero-sale stations: adds volume at network avg
+    var addedSale = zeroN * avgPerStation;
+
+    // 3. Demand growth: scales total sale
+    var growthMult = 1 + growthPct / 100;
+
+    // Projected total sale = (base sale + added station sale) × growth
+    var projSale = (baseSale + addedSale) * growthMult;
+    // Projected free sale scales with growth too (unless reduced)
+    projSale = projSale - (baseFree - newFree) * growthMult;  // subtract reduced free volume
+    projSale = Math.max(projSale, 0);
+
+    // Projected collection: improve efficiency toward RSP
+    var targetEff = collEff + (rsp - collEff) * (collPct / 100);
+    // Base collection on projected sale, plus recovered free revenue
+    var projColl = projSale * targetEff + recoveredFreeRs * growthMult;
+
+    // Impact
+    var impact = projColl - baseColl;
+    var impactPct = baseColl > 0 ? (impact / baseColl * 100) : 0;
+
+    document.getElementById('wf-proj-sale').textContent = fmtL(projSale);
+    document.getElementById('wf-proj-coll').textContent = fmtR(projColl);
+    document.getElementById('wf-proj-free').textContent = fmtL(newFree * growthMult);
+    var impactEl = document.getElementById('wf-impact-val');
+    impactEl.textContent = (impact >= 0 ? '+' : '') + fmtR(impact) + ' (' + (impactPct >= 0 ? '+' : '') + impactPct.toFixed(1) + '%)';
+    impactEl.style.color = impact >= 0 ? 'var(--green)' : 'var(--red)';
+}
+
+function resetWhatIf() {
+    document.getElementById('wf-free').value = 0;
+    document.getElementById('wf-zero').value = 0;
+    document.getElementById('wf-coll').value = 0;
+    document.getElementById('wf-growth').value = 0;
+    updateWhatIf();
+}
+
+function presetWhatIf(type) {
+    var presets = {
+        optimistic:   {free: 80, zero: wfBaseline.zero_stations, coll: 80, growth: 15},
+        moderate:     {free: 50, zero: Math.ceil(wfBaseline.zero_stations/2), coll: 50, growth: 5},
+        conservative: {free: 20, zero: Math.ceil(wfBaseline.zero_stations/4), coll: 20, growth: 0},
+    };
+    var p = presets[type];
+    document.getElementById('wf-free').value = p.free;
+    document.getElementById('wf-zero').value = p.zero;
+    document.getElementById('wf-coll').value = p.coll;
+    document.getElementById('wf-growth').value = p.growth;
+    updateWhatIf();
+}
+
+// Initialize
+if (wfBaseline) updateWhatIf();
+</script>
+{% endblock %}

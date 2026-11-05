@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not exec_available %}
+<div class="empty-state">
+    <i class="fas fa-inbox"></i>
+    <p>{{ exec_message or "No data available." }}</p>
+    <p class="empty-hint">Try changing the date range above.</p>
+</div>
+{% else %}
+
+<div class="panel" style="border-top: 4px solid #2563eb;">
+    <div class="panel-header">
+        <div class="panel-title" style="font-size: 24px;"><i class="fas fa-clipboard"></i> ALDS EXECUTIVE SUMMARY</div>
+        <div class="panel-subtitle">Sales &amp; Marketing Department &middot; {{ date_start|default('') }} to {{ date_end|default('') }}</div>
+    </div>
+    <div style="text-align: right; margin-top: 8px;">
+        <button onclick="window.print()" class="btn btn-export"><i class="fas fa-print"></i> Print / Save PDF</button>
+    </div>
+</div>
+
+<!-- Top KPIs -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-simple"></i> Key Performance Indicators</div>
+    </div>
+    <div class="summary-cards">
+        <div class="summary-card">
+            <div class="sc-label">Total Sale</div>
+            <div class="sc-value">{{ exec_kpi.sale_fmt }}</div>
+            <div class="sc-sub">{{ exec_kpi.avg_per_day_fmt }}/day avg</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Total Collection</div>
+            <div class="sc-value">{{ exec_kpi.coll_fmt }}</div>
+            <div class="sc-sub">Rate: {{ exec_kpi.coll_rate_fmt }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">RSP / Effective RSP</div>
+            <div class="sc-value">{{ exec_kpi.rsp_fmt }}</div>
+            <div class="sc-sub">Eff: {{ exec_kpi.eff_rsp_fmt }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Revenue at Risk</div>
+            <div class="sc-value col-red">₹{{ exec_kpi.revenue_lost_fmt }}</div>
+            <div class="sc-sub">Gap: {{ exec_kpi.gap_fmt }}/L</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Free Sale Cost</div>
+            <div class="sc-value">₹{{ exec_kpi.free_rs_fmt }}</div>
+            <div class="sc-sub">{{ exec_kpi.free_pct_fmt }} of collection</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Zero-Sale Stations</div>
+            <div class="sc-value {{ 'col-red' if exec_kpi.zero_stations > 0 else 'col-green' }}">{{ exec_kpi.zero_stations }}</div>
+            <div class="sc-sub">of {{ exec_kpi.stations }} total</div>
+        </div>
+    </div>
+</div>
+
+<!-- Top 3 Risks -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title" style="color: #dc3545;"><i class="fas fa-exclamation-circle"></i> Top 3 Risks</div>
+        <div class="panel-subtitle">Highest revenue gap — closing these recovers the most money</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>#</th><th>Station</th><th>State</th><th>Coordinator</th><th class="num">Gap (₹/L)</th><th class="num">Revenue Lost</th></tr>
+        </thead>
+        <tbody>
+            {% for r in exec_risks %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/station/{{ r.erp_code }}">{{ r.alds_name }}</a></td>
+                <td>{{ r.state }}</td>
+                <td>{{ r.coordinator or '—' }}</td>
+                <td class="num col-red">{{ r.gap_fmt }}</td>
+                <td class="num">₹{{ r.revenue_lost_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Top 3 Opportunities -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title" style="color: #28a745;"><i class="fas fa-check-circle"></i> Top 3 Opportunities</div>
+        <div class="panel-subtitle">Best collection efficiency — replicate what's working here</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>#</th><th>Station</th><th>State</th><th>Coordinator</th><th class="num">Gap (₹/L)</th><th class="num">Revenue Lost</th></tr>
+        </thead>
+        <tbody>
+            {% for r in exec_opportunities %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/station/{{ r.erp_code }}">{{ r.alds_name }}</a></td>
+                <td>{{ r.state }}</td>
+                <td>{{ r.coordinator or '—' }}</td>
+                <td class="num col-green">{{ r.gap_fmt }}</td>
+                <td class="num">₹{{ r.revenue_lost_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- State Snapshot -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map"></i> State Performance Snapshot</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>State</th><th class="num">Sale (L)</th><th class="num">Share %</th><th class="num">Collection</th><th class="num">Stations</th></tr>
+        </thead>
+        <tbody>
+            {% for s in exec_states %}
+            <tr>
+                <td>{{ s.state }}</td>
+                <td class="num">{{ s.sale_fmt }}</td>
+                <td class="num">{{ '%.1f'|format(s.share) }}%</td>
+                <td class="num">{{ s.coll_fmt }}</td>
+                <td class="num">{{ s.stations }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Action Items -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-tasks"></i> Action Items for VP</div>
+    </div>
+    <div style="padding: 16px;">
+        <ol style="margin:0; padding-left: 24px; line-height: 2;">
+        {% for a in exec_actions %}
+            <li>{{ a }}</li>
+        {% endfor %}
+        </ol>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}

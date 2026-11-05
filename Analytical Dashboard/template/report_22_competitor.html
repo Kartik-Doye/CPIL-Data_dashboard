@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 22: Competitor RSP (User Input) -->
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-balance-scale"></i> Competitor RSP Comparison</div>
+    </div>
+    <div class="insights-box" style="border-left-color:var(--blue, #007bff);">
+        <p><i class="fas fa-info-circle" style="color:var(--blue, #007bff);"></i>
+            <strong>How to use:</strong> Enter the current RSP (Rs/L) for each competitor below,
+            then click "Compare" to see how GO Gas compares. GO Gas RSP is calculated automatically from your sales data.
+        </p>
+    </div>
+
+    <form method="get">
+        {% for k, v in request.args.items() %}{% if not k.startswith('rsp_') %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+        <div class="summary-cards" style="margin-bottom:16px;">
+            <div class="summary-card">
+                <div class="sc-label">GO Gas RSP</div>
+                <div class="sc-value">{{ go_rsp_fmt }}</div>
+                <div class="sc-sub">from actual data</div>
+            </div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Competitor</th>
+                    <th>RSP (Rs/L) -- Enter Here</th>
+                    <th class="num">GO Gas RSP</th>
+                    <th class="num">Difference</th>
+                    <th class="num">Diff %</th>
+                    <th>Position</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in competitor_rows %}
+                <tr>
+                    <td><strong>{{ c.name }}</strong></td>
+                    <td>
+                        <input type="number" step="0.01" class="filter-input"
+                               name="rsp_{{ c.name|lower }}"
+                               value="{{ c.rsp if c.rsp else '' }}"
+                               placeholder="Enter RSP..."
+                               style="width:100px; padding:4px 8px;">
+                    </td>
+                    <td class="num">{{ go_rsp_fmt }}</td>
+                    <td class="num {{ 'up' if c.diff and c.diff > 0 else ('down' if c.diff and c.diff < 0 else '') }}">
+                        {{ c.diff_fmt if c.diff is not none else '—' }}
+                    </td>
+                    <td class="num">{{ "%.1f"|format(c.diff_pct) if c.diff_pct is not none else '—' }}%</td>
+                    <td>
+                        {% if c.position == 'cheap' %}
+                            <span class="badge badge-best">GO Gas Cheaper</span>
+                        {% elif c.position == 'expensive' %}
+                            <span class="badge" style="background:#dc3545;color:white;">GO Gas Costlier</span>
+                        {% elif c.position == 'same' %}
+                            <span class="badge badge-base">Same Price</span>
+                        {% else %}
+                            <span class="badge badge-base">No Data</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <div style="padding:12px 16px;">
+            <button type="submit" class="filter-btn apply"><i class="fas fa-balance-scale"></i> Compare</button>
+        </div>
+    </form>
+</div>
+
+{% if competitor_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights &amp; Competitive Analysis</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in competitor_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> RSP Comparison Chart</div>
+    </div>
+    <div id="chart-competitor" class="chart-container"></div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-comp-rows">{{ competitor_rows|tojson }}</script>
+<script type="application/json" id="data-go-rsp">{{ go_rsp|tojson }}</script>
+<script>
+var compData = JSON.parse(document.getElementById('data-comp-rows').textContent);
+var goRsp = JSON.parse(document.getElementById('data-go-rsp').textContent);
+var hasComp = compData.filter(function(c){return c.rsp && c.rsp > 0;});
+if (hasComp.length) {
+    var allNames = ['GO Gas'].concat(hasComp.map(function(c){return c.name;}));
+    var allVals = [goRsp].concat(hasComp.map(function(c){return c.rsp;}));
+    makeBarChart('chart-competitor', allNames, allVals, {decimals:2, unit: ' Rs/L'});
+}
+</script>
+{% endblock %}

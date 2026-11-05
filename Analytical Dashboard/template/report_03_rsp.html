@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if rsp_summary and rsp_summary.avg_rsp %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Average RSP</div>
+        <div class="sc-value">₹{{ format_indian(rsp_summary.avg_rsp) }}</div>
+        <div class="sc-sub">PAN India weighted</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Latest RSP</div>
+        <div class="sc-value">₹{{ format_indian(rsp_summary.latest_rsp or 0) }}</div>
+        <div class="sc-sub">{{ rsp_summary.latest_date }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Avg Effective RSP</div>
+        <div class="sc-value">₹{{ format_indian(rsp_summary.avg_eff_rsp or 0) }}</div>
+        <div class="sc-sub">PAN India weighted</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Latest Eff. RSP</div>
+        <div class="sc-value">₹{{ format_indian(rsp_summary.latest_eff_rsp or 0) }}</div>
+        <div class="sc-sub">{{ rsp_summary.latest_date }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Highest RSP State</div>
+        <div class="sc-value">{% if rsp_summary.max_state %}{{ rsp_summary.max_state }}{% else %}n/a{% endif %}</div>
+        <div class="sc-sub">{% if rsp_summary.max_rsp %}₹{{ format_indian(rsp_summary.max_rsp) }}{% else %}—{% endif %}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Lowest RSP State</div>
+        <div class="sc-value">{% if rsp_summary.min_state %}{{ rsp_summary.min_state }}{% else %}n/a{% endif %}</div>
+        <div class="sc-sub">{% if rsp_summary.min_rsp %}₹{{ format_indian(rsp_summary.min_rsp) }}{% else %}—{% endif %}</div>
+    </div>
+</div>
+{% endif %}
+
+{% if rsp_trend_chart and rsp_trend_chart|length > 0 %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-line"></i> RSP &amp; Daily Sales Trend</div>
+        <div class="panel-subtitle">PAN India weighted RSP (line) vs Daily Sale volume (bars)</div>
+    </div>
+    <div id="chart-rsp-trend" class="chart-container-tall"></div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-tags"></i> RSP by State (₹/L, weighted average)</div>
+        <div class="panel-actions">
+            <span class="chip"><i class="fas fa-info-circle"></i> Weighted = SUM(rate×qty) ÷ SUM(qty)</span>
+        </div>
+    </div>
+    {% if not rsp_dates %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Sale Date</th>
+                {% for s in rsp_states %}<th class="num">{{ s }}</th>{% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in rsp_dates %}
+            <tr>
+                <td>{{ d }}</td>
+                {% for s in rsp_states %}
+                <td class="num {% if rsp_pivot[d][s] is none %}na{% endif %}">
+                    {{ format_indian(rsp_pivot[d][s]) }}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% if eff_rsp_pivot %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-tags"></i> Effective RSP by State (₹/L, weighted average)</div>
+        <div class="panel-subtitle">Effective RSP = the rate after free sale / HO pricing adjustments</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Sale Date</th>
+                {% for s in rsp_states %}<th class="num">{{ s }}</th>{% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in rsp_dates %}
+            <tr>
+                <td>{{ d }}</td>
+                {% for s in rsp_states %}
+                <td class="num {% if eff_rsp_pivot[d][s] is none %}na{% endif %}">
+                    {{ format_indian(eff_rsp_pivot[d][s]) }}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-rsp-trend">{{ rsp_trend_chart|tojson }}</script>
+<script>
+var rspTrend = JSON.parse(document.getElementById('data-rsp-trend').textContent);
+if (rspTrend && rspTrend.length > 0) {
+    var dom = document.getElementById('chart-rsp-trend');
+    if (dom) {
+        var chart = echarts.init(dom);
+        chart.setOption(Object.assign({}, chartDefaults, {
+            tooltip: {
+                trigger: 'axis',
+                formatter: function(params) {
+                    var html = params[0].axisValueLabel + '<br/>';
+                    params.forEach(function(p) {
+                        var val = formatIndian(p.value, 2);
+                        var unit = p.seriesName === 'RSP (₹/L)' ? ' ₹/L' : ' L';
+                        html += p.marker + ' ' + p.seriesName + ': ' + val + unit + '<br/>';
+                    });
+                    return html;
+                }
+            },
+            legend: { bottom: 0, fontSize: 11 },
+            grid: { left: 60, right: 60, top: 30, bottom: 80, containLabel: true },
+            xAxis: {
+                type: 'category',
+                data: rspTrend.map(function(d) { return d.sale_date; }),
+                name: 'Date',
+                nameLocation: 'middle',
+                nameGap: 30,
+                axisLabel: { fontSize: 10, rotate: rspTrend.length > 10 ? 35 : 0 },
+            },
+            yAxis: [
+                {
+                    type: 'value', name: 'Sale (L)', position: 'left',
+                    axisLabel: { formatter: function(v) { return formatIndian(v, 0); }, fontSize: 10 },
+                    splitLine: { lineStyle: { type: 'dashed', opacity: 0.3 } },
+                },
+                {
+                    type: 'value', name: 'RSP (₹/L)', position: 'right',
+                    axisLabel: { formatter: function(v) { return '₹' + v.toFixed(1); }, fontSize: 10 },
+                    splitLine: { show: false },
+                }
+            ],
+            series: [
+                {
+                    name: 'Sale Volume', type: 'bar',
+                    data: rspTrend.map(function(d) { return d.sale_qty || 0; }),
+                    barMaxWidth: 30,
+                    itemStyle: { color: '#17a2b8', borderRadius: [4, 4, 0, 0] },
+                },
+                {
+                    name: 'RSP (₹/L)', type: 'line',
+                    data: rspTrend.map(function(d) { return d.rsp || 0; }),
+                    smooth: true, symbol: 'circle', symbolSize: 6,
+                    lineStyle: { width: 2.5, color: '#dc3545' },
+                    itemStyle: { color: '#dc3545' },
+                    yAxisIndex: 1,
+                },
+            ],
+        }));
+        window.addEventListener('resize', function() { chart.resize(); });
+    }
+}
+</script>
+{% endblock %}

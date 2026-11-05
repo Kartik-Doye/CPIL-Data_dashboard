@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+{% include 'partials/cards.html' %}
+
+{% if cmd_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ cmd_summary.total_sale_fmt }}</div>
+        <div class="sc-sub">{{ cmd_summary.total_states }} states · {{ cmd_summary.days_loaded }} days</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Collection</div>
+        <div class="sc-value">{{ cmd_summary.total_coll_fmt }}</div>
+        <div class="sc-sub">Collection Rate: ₹{{ "%.1f"|format(cmd_summary.coll_eff) }}/L</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Stations</div>
+        <div class="sc-value">{{ format_int(cmd_summary.total_stations) }}</div>
+        <div class="sc-sub">Across all states</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Avg Sale/Station/Day</div>
+        <div class="sc-value">{{ cmd_summary.avg_per_station_day_fmt }}</div>
+        <div class="sc-sub">Per station per day</div>
+    </div>
+</div>
+{% endif %}
+
+{% if cmd_states %}
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-bar"></i> State-wise Sale</div>
+            <div class="panel-subtitle">Volume comparison across states</div>
+        </div>
+        <div id="chart-cmd-bar" class="chart-container"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-pie"></i> State Share</div>
+            <div class="panel-subtitle">Percentage distribution</div>
+        </div>
+        <div id="chart-cmd-pie" class="chart-container"></div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-file-alt"></i> CMD MIS — State-wise Summary</div>
+    </div>
+    {% if not cmd_states %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>State</th><th class="num">Stations</th>
+                <th class="num">Sale (L)</th><th class="num">Share</th>
+                <th class="num">Avg/Stn/Day</th><th class="num">Coll Rate (₹/L)</th>
+                <th class="num">Target</th><th class="num">Achv %</th><th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in cmd_states %}
+            <tr>
+                <td>{{ s.state }}</td>
+                <td class="num">{{ format_int(s.stations) }}</td>
+                <td class="num">{{ s.sale_fmt }}</td>
+                <td class="num">
+                    <span class="share-bar"><span class="share-bar-fill" data-width="{{ s.share|int }}"></span></span>
+                    {{ format_pct(s.share) }}
+                </td>
+                <td class="num">{{ s.avg_per_station_day_fmt }}</td>
+                <td class="num">₹{{ "%.1f"|format(s.coll_eff) }}/L</td>
+                <td class="num na">targets not loaded</td>
+                <td class="num na">—</td>
+                <td class="na">—</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr class="totals-row">
+                <td>TOTAL</td>
+                <td class="num">{{ format_int(cmd_summary.total_stations) }}</td>
+                <td class="num">{{ cmd_summary.total_sale_fmt }}</td>
+                <td class="num">100%</td>
+                <td class="num">{{ cmd_summary.avg_per_station_day_fmt }}</td>
+                <td class="num">₹{{ "%.1f"|format(cmd_summary.coll_eff) }}/L</td>
+                <td class="num na">—</td>
+                <td class="num na">—</td>
+                <td class="na">—</td>
+            </tr>
+        </tfoot>
+    </table>
+    </div>
+    {% endif %}
+    {% if not targets_loaded %}
+    <p style="margin-top:16px;color:var(--text-muted);font-size:13px;">
+        <i class="fas fa-info-circle"></i> Targets are not loaded yet. Upload a target file to see achievement % and status bands.
+    </p>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-cmd-chart">{{ cmd_chart_data|tojson }}</script>
+<script>
+var cmdData = JSON.parse(document.getElementById('data-cmd-chart').textContent);
+if (cmdData && cmdData.length > 0) {
+  makeBarChart('chart-cmd-bar',
+    cmdData.map(function(d){return d.state;}),
+    cmdData.map(function(d){return d.sale_qty||0;}),
+    {decimals:0, unit:' L'});
+  makeDonutChart('chart-cmd-pie',
+    cmdData.map(function(d){return d.state;}),
+    cmdData.map(function(d){return d.sale_qty||0;}),
+    {unit:' L'});
+}
+</script>
+{% endblock %}

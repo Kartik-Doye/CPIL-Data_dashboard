@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not station_detail_available %}
+<div class="empty-state">
+    <i class="fas fa-search"></i>
+    <p>{{ station_detail_message or "Station not found." }}</p>
+    <p class="empty-hint">The station may not have reported in the selected period.</p>
+</div>
+{% else %}
+
+<!-- Station Header -->
+<div class="panel">
+    <div class="panel-header">
+        <div>
+            <div class="panel-title"><i class="fas fa-gas-pump"></i> {{ station_info.alds_name }}</div>
+            <div class="panel-subtitle">ERP: {{ station_info.erp_code }} &middot; {{ station_info.state }} &middot; {{ station_info.type or '—' }}</div>
+        </div>
+        <div style="text-align: right;">
+            <div style="font-size: 13px; color: var(--text-muted);">Coordinator: <strong>{{ station_info.coordinator or '—' }}</strong></div>
+            <div style="font-size: 13px; color: var(--text-muted);">TM: <strong>{{ station_info.tm or '—' }}</strong></div>
+        </div>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Avg Sale / Day</div>
+        <div class="sc-value">{{ sd_kpi.avg_sale_fmt }}</div>
+        <div class="sc-sub">Over {{ sd_kpi.n_days }} days</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">7-Day Avg vs Period Avg</div>
+        <div class="sc-value {{ 'col-green' if sd_kpi.trend_pct > 0 else 'col-red' if sd_kpi.trend_pct < 0 else 'col-muted' }}">{{ sd_kpi.avg7_fmt }}</div>
+        <div class="sc-sub">{{ '▲' if sd_kpi.trend_pct > 0 else '▼' if sd_kpi.trend_pct < 0 else '—' }} {{ '%.1f'|format(sd_kpi.trend_pct) }}% vs period avg</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Collection Rate</div>
+        <div class="sc-value">{{ sd_kpi.avg_coll_rate_fmt }}</div>
+        <div class="sc-sub">RSP: {{ sd_kpi.avg_rsp_fmt }} &middot; Gap: {{ sd_kpi.avg_gap_fmt }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Revenue at Risk</div>
+        <div class="sc-value col-red">₹{{ sd_kpi.revenue_lost_fmt }}</div>
+        <div class="sc-sub">Gap × volume sold</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Free Sale</div>
+        <div class="sc-value">₹{{ sd_kpi.total_free_fmt }}</div>
+        <div class="sc-sub">{{ sd_kpi.free_pct_fmt }} of collection</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Zero-Sale Days</div>
+        <div class="sc-value {{ 'col-red' if sd_kpi.zero_days > 0 else 'col-green' }}">{{ sd_kpi.zero_days }}</div>
+        <div class="sc-sub">Out of {{ sd_kpi.n_days }} days</div>
+    </div>
+</div>
+
+<!-- Sale Trend Chart -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-line"></i> Daily Sale Trend</div>
+        <div class="panel-subtitle">Sale (L) over the selected period</div>
+    </div>
+    <div id="chart-sd-sale" style="height: 300px;"></div>
+</div>
+
+<!-- Collection Rate vs RSP Chart -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-balance-scale"></i> Collection Rate vs RSP vs Effective RSP</div>
+        <div class="panel-subtitle">Gap = RSP − Collection Rate (higher gap = more revenue lost)</div>
+    </div>
+    <div id="chart-sd-gap" style="height: 300px;"></div>
+</div>
+
+<!-- Free Sale Chart -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-gift"></i> Free Sale History</div>
+        <div class="panel-subtitle">Free litres and free sale rupees over time</div>
+    </div>
+    <div id="chart-sd-free" style="height: 250px;"></div>
+</div>
+
+<!-- Stock + Exceptions Side by Side -->
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    {% if sd_stock %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-database"></i> Latest Stock Level</div>
+        </div>
+        <div style="padding: 16px;">
+            <table style="width: 100%;">
+                <tr><td>Stock:</td><td style="text-align: right; font-weight: bold;">{{ sd_stock.stock_fmt }}</td></tr>
+                <tr><td>Daily Sale:</td><td style="text-align: right;">{{ sd_stock.today_sale_fmt }}</td></tr>
+                <tr><td>Days Left:</td><td style="text-align: right; font-weight: bold;" class="{% if sd_stock.days_left and sd_stock.days_left < 3 %}col-red{% else %}col-green{% endif %}">{{ sd_stock.days_left if sd_stock.days_left else '—' }}</td></tr>
+                <tr><td>As of:</td><td style="text-align: right;">{{ sd_stock.date }}</td></tr>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if sd_exceptions %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-exclamation-triangle"></i> Exception History (Last 20)</div>
+        </div>
+        <div class="table-wrap" style="max-height: 300px; overflow-y: auto;">
+        <table>
+            <thead><tr><th>Date</th><th>Type</th><th>Remark</th></tr></thead>
+            <tbody>
+                {% for e in sd_exceptions %}
+                <tr><td>{{ e.sale_date }}</td><td>{{ e.exception_type }}</td><td>{{ e.remark or '—' }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Daily Data Table -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> Daily Breakdown</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th class="num">Sale (L)</th>
+                <th class="num">Collection</th>
+                <th class="num">Coll Rate (₹/L)</th>
+                <th class="num">RSP (₹/L)</th>
+                <th class="num">Gap (₹/L)</th>
+                <th class="num">Free (L)</th>
+                <th class="num">Free ₹</th>
+                <th class="num">Paytm</th>
+                <th class="num">Cash</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in sd_daily %}
+            <tr>
+                <td>{{ r.sale_date }}</td>
+                <td class="num">{{ format_indian(r.sale_qty) }}</td>
+                <td class="num">{{ format_indian(r.coll) }}</td>
+                <td class="num">{{ '₹%.1f'|format(r.coll_rate) if r.coll_rate else '—' }}</td>
+                <td class="num">{{ '₹%.1f'|format(r.rsp) if r.rsp else '—' }}</td>
+                <td class="num {% if r.gap > 1 %}col-red{% elif r.gap > 0.5 %}col-yellow{% else %}col-green{% endif %}">{{ '₹%.1f'|format(r.gap) if r.gap else '—' }}</td>
+                <td class="num">{{ format_indian(r.free_l) }}</td>
+                <td class="num">{{ format_indian(r.free_rs) }}</td>
+                <td class="num">{{ format_indian(r.paytm) }}</td>
+                <td class="num">{{ format_indian(r.cash) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if station_detail_available %}
+<script type="application/json" id="data-sd-daily">{{ sd_daily|tojson }}</script>
+<script>
+var sd = JSON.parse(document.getElementById('data-sd-daily').textContent);
+var dates = sd.map(function(d){return d.sale_date;});
+var sales = sd.map(function(d){return d.sale_qty;});
+var collRates = sd.map(function(d){return d.coll_rate;});
+var rsps = sd.map(function(d){return d.rsp;});
+var effRsps = sd.map(function(d){return d.eff_rsp;});
+var gaps = sd.map(function(d){return d.gap;});
+var freeL = sd.map(function(d){return d.free_l;});
+var freeRs = sd.map(function(d){return d.free_rs;});
+
+// Sale trend
+var c1 = document.getElementById('chart-sd-sale');
+if (c1) {
+    var ch1 = echarts.init(c1);
+    ch1.setOption(Object.assign({}, chartDefaults, {
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: dates },
+        yAxis: { type: 'value', name: 'Litres' },
+        series: [{ name: 'Sale (L)', type: 'line', data: sales, smooth: true,
+                   itemStyle: { color: '#2563eb' }, areaStyle: { opacity: 0.1 } }],
+    }));
+    window.addEventListener('resize', function() { ch1.resize(); });
+}
+
+// Collection vs RSP
+var c2 = document.getElementById('chart-sd-gap');
+if (c2) {
+    var ch2 = echarts.init(c2);
+    ch2.setOption(Object.assign({}, chartDefaults, {
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['Collection Rate', 'RSP', 'Effective RSP', 'Gap'] },
+        xAxis: { type: 'category', data: dates },
+        yAxis: { type: 'value', name: '₹/L' },
+        series: [
+            { name: 'Collection Rate', type: 'line', data: collRates, itemStyle: { color: '#28a745' }, smooth: true },
+            { name: 'RSP', type: 'line', data: rsps, itemStyle: { color: '#2563eb' }, smooth: true },
+            { name: 'Effective RSP', type: 'line', data: effRsps, itemStyle: { color: '#6366f1' }, smooth: true, lineStyle: { type: 'dashed' } },
+            { name: 'Gap', type: 'bar', data: gaps, itemStyle: { color: '#dc3545' } },
+        ],
+    }));
+    window.addEventListener('resize', function() { ch2.resize(); });
+}
+
+// Free sale
+var c3 = document.getElementById('chart-sd-free');
+if (c3) {
+    var ch3 = echarts.init(c3);
+    ch3.setOption(Object.assign({}, chartDefaults, {
+        tooltip: { trigger: 'axis' },
+        legend: { data: ['Free ₹', 'Free Litres'] },
+        xAxis: { type: 'category', data: dates },
+        yAxis: [{ type: 'value', name: '₹', position: 'left' }, { type: 'value', name: 'L', position: 'right' }],
+        series: [
+            { name: 'Free ₹', type: 'bar', data: freeRs, itemStyle: { color: '#dc3545' }, yAxisIndex: 0 },
+            { name: 'Free Litres', type: 'line', data: freeL, itemStyle: { color: '#ffc107' }, yAxisIndex: 1, smooth: true },
+        ],
+    }));
+    window.addEventListener('resize', function() { ch3.resize(); });
+}
+</script>
+{% endif %}
+{% endblock %}

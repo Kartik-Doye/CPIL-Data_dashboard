@@ -1,0 +1,6 @@
+.env
+logs/*.log
+archive/
+sale.xlsx
+__pycache__/
+*.pyc

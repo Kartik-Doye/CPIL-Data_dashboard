@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Report 27: Station Ranking with Trends -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-trophy"></i> Station Ranking with Trends</div>
+        <div class="panel-subtitle">{{ ranking_count }} stations ranked by total sale, with trend direction</div>
+    </div>
+    {% if ranking_available %}
+
+    <!-- Top 10 and Bottom 10 side by side -->
+    <div class="grid-2">
+        <div>
+            <div class="panel-header"><div class="panel-title" style="color:var(--green);"><i class="fas fa-arrow-up"></i> Top 10 Performers</div></div>
+            <div class="table-wrap">
+            <table>
+                <thead><tr><th>#</th><th>Station</th><th>State</th><th class="num">Sale (L)</th><th>Trend</th></tr></thead>
+                <tbody>
+                    {% for s in ranking_top10 %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td><a href="/station/{{ s.erp_code }}" class="station-link"><strong>{{ s.alds_name }}</strong></a><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                        <td>{{ s.state }}</td>
+                        <td class="num">{{ format_indian(s.sale) }}</td>
+                        <td>
+                            {% if s.trend == 'up' %}<span class="up"><i class="fas fa-arrow-up"></i> {{ s.slope_fmt }}/day</span>
+                            {% elif s.trend == 'down' %}<span class="down"><i class="fas fa-arrow-down"></i> {{ s.slope_fmt }}/day</span>
+                            {% else %}<span class="muted-text"><i class="fas fa-minus"></i> Flat</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+        <div>
+            <div class="panel-header"><div class="panel-title" style="color:var(--red);"><i class="fas fa-arrow-down"></i> Bottom 10 Performers</div></div>
+            <div class="table-wrap">
+            <table>
+                <thead><tr><th>#</th><th>Station</th><th>State</th><th class="num">Sale (L)</th><th>Trend</th></tr></thead>
+                <tbody>
+                    {% for s in ranking_bottom10 %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td><a href="/station/{{ s.erp_code }}" class="station-link"><strong>{{ s.alds_name }}</strong></a><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                        <td>{{ s.state }}</td>
+                        <td class="num">{{ format_indian(s.sale) }}</td>
+                        <td>
+                            {% if s.trend == 'up' %}<span class="up"><i class="fas fa-arrow-up"></i> {{ s.slope_fmt }}/day</span>
+                            {% elif s.trend == 'down' %}<span class="down"><i class="fas fa-arrow-down"></i> {{ s.slope_fmt }}/day</span>
+                            {% else %}<span class="muted-text"><i class="fas fa-minus"></i> Flat</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+
+    {% if ranking_declining %}
+    <div class="panel-header" style="margin-top:16px;">
+        <div class="panel-title" style="color:var(--red);"><i class="fas fa-exclamation-triangle"></i> Declining Stations (Urgent Attention)</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Station</th><th>State</th><th>TM</th><th class="num">Total Sale</th>
+        <th class="num">Avg/Day</th><th class="num">Decline Rate</th><th class="num">Coll Rate (₹/L)</th></tr></thead>
+        <tbody>
+            {% for s in ranking_declining %}
+            <tr>
+                <td><a href="/station/{{ s.erp_code }}" class="station-link"><strong>{{ s.alds_name }}</strong></a><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                <td>{{ s.state }}</td>
+                <td>{{ s.tm or '-' }}</td>
+                <td class="num">{{ format_indian(s.sale) }}</td>
+                <td class="num">{{ format_indian(s.avg_day) }}</td>
+                <td class="num down"><i class="fas fa-arrow-down"></i> {{ s.slope_fmt }} L/day</td>
+                <td class="num">₹{{ "%.1f"|format(s.coll_eff) }}/L</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+
+    <!-- Full ranking table -->
+    <div class="panel-header" style="margin-top:16px;">
+        <div class="panel-title"><i class="fas fa-list-ol"></i> Full Ranking (All {{ ranking_count }} Stations)</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Rank</th><th>Station</th><th>State</th><th>TM</th>
+        <th class="num">Total Sale (L)</th><th class="num">Avg/Day</th>
+        <th class="num">Collection (₹)</th><th class="num">Coll Rate (₹/L)</th>
+        <th class="num">Free Sale (L)</th><th>Trend</th></tr></thead>
+        <tbody>
+            {% for s in ranking_rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/station/{{ s.erp_code }}" class="station-link"><strong>{{ s.alds_name }}</strong></a><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                <td>{{ s.state }}</td>
+                <td>{{ s.tm or '-' }}</td>
+                <td class="num">{{ format_indian(s.sale) }}</td>
+                <td class="num">{{ format_indian(s.avg_day) }}</td>
+                <td class="num">{{ format_indian(s.coll) }}</td>
+                <td class="num">₹{{ "%.1f"|format(s.coll_eff) }}/L</td>
+                <td class="num">{{ format_indian(s.free) }}</td>
+                <td>
+                    {% if s.trend == 'up' %}<span class="up"><i class="fas fa-arrow-up"></i></span>
+                    {% elif s.trend == 'down' %}<span class="down"><i class="fas fa-arrow-down"></i></span>
+                    {% else %}<span class="muted-text"><i class="fas fa-minus"></i></span>{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="fas fa-trophy"></i><p>{{ ranking_message }}</p></div>
+    {% endif %}
+</div>
+{% endblock %}

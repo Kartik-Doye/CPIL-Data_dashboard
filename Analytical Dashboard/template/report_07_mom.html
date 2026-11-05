@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-calendar-alt"></i> Month on Month</div>
+        <div class="panel-subtitle">Monthly comparison with per-day normalization for partial months</div>
+    </div>
+    {% if not mom_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr>
+            <th>Month</th>
+            <th class="num">Sale (L)</th>
+            <th class="num">Avg/Day (L)</th>
+            <th class="num">MoM Δ%</th>
+            <th class="num">Collection (₹)</th>
+            <th class="num">Stations</th>
+            <th class="num">Loaded Days</th>
+            <th>Status</th>
+        </tr></thead>
+        <tbody>
+            {% for r in mom_rows %}
+            <tr>
+                <td>{{ r.month|format_month }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ format_int(r.avg_per_day) }}</td>
+                <td class="num {% if r.mom_pct > 0 %}up{% elif r.mom_pct < 0 %}down{% endif %}">
+                    {% if r.mom_pct %}{{ "%.1f"|format(r.mom_pct) }}%{% else %}—{% endif %}
+                </td>
+                <td class="num">{{ format_rupees(r.collection) }}</td>
+                <td class="num">{{ format_int(r.stations) }}</td>
+                <td class="num">{{ format_int(r.loaded_days) }}{% if r.month_calendar_days %}/{{ r.month_calendar_days }}{% endif %}</td>
+                <td>
+                    {% if r.is_partial %}
+                    <span class="badge" style="background:#ffc107;color:#856404;" title="Only {{ r.loaded_days }} of {{ r.month_calendar_days }} days loaded">⚠ Partial</span>
+                    {% else %}
+                    <span class="badge badge-base">Complete</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% if mom_rows and mom_rows|length < 2 %}
+<p style="color:var(--text-muted);text-align:center;padding:16px;">
+    <i class="fas fa-info-circle"></i> Only {{ mom_rows|length }} month loaded. Month-on-month comparison needs 2+ months.
+</p>
+{% endif %}
+{% if mom_rows %}
+<div style="padding:8px 16px;color:var(--text-muted);font-size:12px;">
+    <i class="fas fa-info-circle"></i> "Avg/Day" normalizes for partial months — use this for fair comparison. "MoM Δ%" compares per-day averages.
+</div>
+{% endif %}
+{% endblock %}

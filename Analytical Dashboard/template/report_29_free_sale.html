@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not fs_summary %}
+<div class="empty-state">
+    <i class="fas fa-inbox"></i>
+    <p>No data available for the selected filters.</p>
+    <p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+</div>
+{% else %}
+
+<!-- Summary Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Free Sale Cost</div>
+        <div class="sc-value" style="color: #dc3545;">₹{{ fs_summary.total_free_rs_fmt }}</div>
+        <div class="sc-sub">Value of free gas given away</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Free Sale %</div>
+        <div class="sc-value">{{ fs_summary.free_pct_fmt }}</div>
+        <div class="sc-sub">Of total collection (rupees-based)</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Free Litres %</div>
+        <div class="sc-value">{{ fs_summary.free_litres_pct_fmt }}</div>
+        <div class="sc-sub">Of total volume (litres-based)</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Free Litres</div>
+        <div class="sc-value">{{ fs_summary.total_free_l_fmt }}</div>
+        <div class="sc-sub">Total free gas dispensed</div>
+    </div>
+</div>
+
+<!-- Insights -->
+{% if fs_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div style="padding: 16px;">
+        <ul style="margin:0; padding-left: 20px; line-height: 1.8;">
+        {% for i in fs_insights %}
+            <li>{{ i }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<!-- Daily Trend Chart -->
+{% if fs_daily %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-line"></i> Daily Free Sale Trend</div>
+    </div>
+    <div id="chart-fs-trend" style="height: 300px;"></div>
+</div>
+{% endif %}
+
+<!-- Top 10 Stations by Free Sale -->
+{% if fs_top_stations %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-gift"></i> Top 10 Stations by Free Sale Cost</div>
+        <div class="panel-subtitle">Stations giving away the most gas by value</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Station</th>
+                <th>State</th>
+                <th>TM</th>
+                <th>Coordinator</th>
+                <th class="num">Free Litres</th>
+                <th class="num">Free Sale ₹</th>
+                <th class="num">Free % of Coll</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in fs_top_stations %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ r.alds_name }}</td>
+                <td>{{ r.state }}</td>
+                <td>{{ r.tm or '—' }}</td>
+                <td>{{ r.coordinator or '—' }}</td>
+                <td class="num">{{ r.free_l_fmt }}</td>
+                <td class="num col-red">₹{{ r.free_rs_fmt }}</td>
+                <td class="num {% if r.station_free_pct > 2 %}col-red{% elif r.station_free_pct > 0.5 %}col-yellow{% else %}col-green{% endif %}">{{ r.station_free_pct_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- State-wise Free Sale -->
+{% if fs_state_rows %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map-marked-alt"></i> State-wise Free Sale Summary</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>State</th>
+                <th class="num">Free Litres</th>
+                <th class="num">Free Sale ₹</th>
+                <th class="num">Free % of Collection</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in fs_state_rows %}
+            <tr>
+                <td>{{ r.state }}</td>
+                <td class="num">{{ r.free_l_fmt }}</td>
+                <td class="num">₹{{ r.free_rs_fmt }}</td>
+                <td class="num">{{ r.free_pct_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if fs_daily %}
+<script type="application/json" id="data-fs-daily">{{ fs_daily|tojson }}</script>
+<script>
+var fsDaily = JSON.parse(document.getElementById('data-fs-daily').textContent);
+if (fsDaily && fsDaily.length > 0) {
+    var dom = document.getElementById('chart-fs-trend');
+    if (dom) {
+        var chart = echarts.init(dom);
+        chart.setOption(Object.assign({}, chartDefaults, {
+            tooltip: { trigger: 'axis' },
+            legend: { data: ['Free Sale ₹', 'Free Litres'] },
+            xAxis: { type: 'category', data: fsDaily.map(function(d){return d.sale_date;}) },
+            yAxis: [
+                { type: 'value', name: '₹', position: 'left' },
+                { type: 'value', name: 'Litres', position: 'right' },
+            ],
+            series: [
+                { name: 'Free Sale ₹', type: 'bar', data: fsDaily.map(function(d){return d.free_rs;}),
+                  itemStyle: { color: '#dc3545' }, yAxisIndex: 0 },
+                { name: 'Free Litres', type: 'line', data: fsDaily.map(function(d){return d.free_l;}),
+                  itemStyle: { color: '#ffc107' }, yAxisIndex: 1, smooth: true },
+            ],
+        }));
+        window.addEventListener('resize', function() { chart.resize(); });
+    }
+}
+</script>
+{% endif %}
+{% endblock %}

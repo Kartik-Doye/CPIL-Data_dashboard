@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not coord_rows %}
+<div class="empty-state">
+    <i class="fas fa-inbox"></i>
+    <p>No data available for the selected filters.</p>
+    <p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+</div>
+{% else %}
+
+<!-- Summary Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Coordinators</div>
+        <div class="sc-value">{{ coord_summary.total_coordinators }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Best Collection Rate</div>
+        <div class="sc-value col-green">{% if coord_summary.best %}{{ coord_summary.best.coordinator }}{% else %}—{% endif %}</div>
+        <div class="sc-sub">{% if coord_summary.best %}₹{{ "%.1f"|format(coord_summary.best.coll_rate) }}/L{% endif %}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Worst Collection Rate</div>
+        <div class="sc-value col-red">{% if coord_summary.worst %}{{ coord_summary.worst.coordinator }}{% else %}—{% endif %}</div>
+        <div class="sc-sub">{% if coord_summary.worst %}₹{{ "%.1f"|format(coord_summary.worst.coll_rate) }}/L{% endif %}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Revenue at Risk</div>
+        <div class="sc-value col-red">₹{{ coord_summary.total_gap_fmt }}</div>
+        <div class="sc-sub">Across all coordinators</div>
+    </div>
+</div>
+
+{% if coord_trend_data %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-line"></i> 4-Week Collection Rate Trend</div>
+        <div class="panel-subtitle">Is each coordinator improving or declining?</div>
+    </div>
+    <div id="chart-coord-trend" style="height: 350px;"></div>
+</div>
+{% endif %}
+
+<!-- Insights -->
+{% if coord_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div style="padding: 16px;">
+        <ul style="margin:0; padding-left: 20px; line-height: 1.8;">
+        {% for i in coord_insights %}
+            <li>{{ i }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<!-- Coordinator Table -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-users-cog"></i> Coordinator Performance (Ranked by Collection Rate)</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Coordinator</th>
+                <th class="num">Stations</th>
+                <th class="num">Total Sale (L)</th>
+                <th class="num">Collection</th>
+                <th class="num">Avg/Station (L)</th>
+                <th class="num">RSP (₹/L)</th>
+                <th class="num">Coll Rate (₹/L)</th>
+                <th class="num">Gap (₹/L)</th>
+                <th class="num">Revenue Lost</th>
+                <th class="num">Free Sale ₹</th>
+                <th class="num">Free %</th>
+                <th class="num">Zero-Sale %</th>
+                <th class="num">4-Wk Trend</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in coord_rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ r.coordinator }}</td>
+                <td class="num">{{ r.stations }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.coll_fmt }}</td>
+                <td class="num">{{ r.avg_per_station_fmt }}</td>
+                <td class="num">{{ r.rsp_fmt }}</td>
+                <td class="num {% if r.coll_rate > 45 %}col-green{% elif r.coll_rate > 40 %}col-yellow{% else %}col-red{% endif %}">{{ r.coll_rate_fmt }}</td>
+                <td class="num">{{ r.gap_fmt }}</td>
+                <td class="num">₹{{ r.revenue_lost_fmt }}</td>
+                <td class="num">₹{{ r.free_rs_fmt }}</td>
+                <td class="num">{{ r.free_pct_fmt }}</td>
+                <td class="num {% if r.zero_pct > 10 %}col-red{% elif r.zero_pct > 5 %}col-yellow{% else %}col-green{% endif %}">{{ r.zero_pct_fmt }}</td>
+                <td class="num {% if r.trend_dir is not none and r.trend_dir > 5 %}col-green{% elif r.trend_dir is not none and r.trend_dir < -5 %}col-red{% else %}col-muted{% endif %}">
+                    {% if r.trend_dir is not none %}
+                        {% if r.trend_dir > 0 %}up +{{ '%.1f'|format(r.trend_dir) }}%{% elif r.trend_dir < 0 %}down {{ '%.1f'|format(r.trend_dir) }}%{% else %}-- 0%{% endif %}
+                    {% else %}--{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if coord_trend_data %}
+<script type="application/json" id="data-coord-trend">{{ coord_trend_data|tojson }}</script>
+<script>
+var ctData = JSON.parse(document.getElementById('data-coord-trend').textContent);
+var el = document.getElementById('chart-coord-trend');
+if (el && ctData) {
+    var coordinators = Object.keys(ctData);
+    var weeks = ['Week -3', 'Week -2', 'Week -1', 'This Week'];
+    var series = coordinators.map(function(name) {
+        var d = ctData[name];
+        return { name: name, type: 'line', data: [d.w3, d.w2, d.w1, d.w0], smooth: true };
+    });
+    var chart = echarts.init(el);
+    chart.setOption(Object.assign({}, chartDefaults, {
+        tooltip: { trigger: 'axis' },
+        legend: { data: coordinators, top: 0 },
+        grid: { top: 60 },
+        xAxis: { type: 'category', data: weeks },
+        yAxis: { type: 'value', name: 'Rs/L' },
+        series: series,
+    }));
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+</script>
+{% endif %}
+{% endblock %}

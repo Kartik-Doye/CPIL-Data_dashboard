@@ -1,0 +1,591 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Report 2: Master Dashboard — 7 Professional Analytics -->
+
+<!-- ===== ANALYTIC 1: Executive KPI Summary ===== -->
+{% include 'partials/cards.html' %}
+
+<!-- ===== CRITICAL ALERTS QUICK VIEW ===== -->
+{% if attention_items %}
+{% set high_alerts = attention_items|selectattr('severity', 'equalto', 'high')|list %}
+{% if high_alerts %}
+<div class="panel" style="margin-bottom:16px;">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-bell" style="color:var(--red);"></i> Critical Alerts ({{ high_alerts|length }})</div>
+        <div class="panel-subtitle">Items requiring immediate action</div>
+    </div>
+    <div class="alerts-panel">
+        {% for item in high_alerts[:6] %}
+        <div class="alert-card high">
+            <div class="alert-title">{{ item.title }}</div>
+            <div class="alert-detail">{{ item.detail[:200] }}{% if item.detail|length > 200 %}...{% endif %}</div>
+            {% if item.impact %}<div class="alert-impact">{{ item.impact }}</div>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% if compare_mode and cmp_summary %}
+<!-- ===== COMPARISON VIEW ===== -->
+<div class="panel" style="margin-bottom:16px;">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-balance-scale"></i> Period Comparison</div>
+        <div class="panel-subtitle">Current: {{ date_start }} to {{ date_end }} vs Compare: {{ compare_start }} to {{ compare_end }}</div>
+    </div>
+    <div class="summary-cards">
+        {% for kpi in cmp_summary %}
+        <div class="summary-card">
+            <div class="sc-label">{{ kpi.label }}</div>
+            <div class="sc-value">{{ kpi.current_fmt }}</div>
+            <div class="sc-sub">
+                vs {{ kpi.compare_fmt }}
+                <span class="{{ 'up' if kpi.delta > 0 else 'down' }}">
+                    {{ "%+.1f"|format(kpi.delta_pct) }}%
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ===== KEY INSIGHTS + WHAT NEEDS ATTENTION ===== -->
+{% if key_insights or attention_items %}
+<div class="grid-2">
+    {% if key_insights %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+            <div class="panel-subtitle">Auto-generated summary of the selected period</div>
+        </div>
+        <ul class="insights-list">
+            {% for insight in key_insights %}
+            <li><i class="fas fa-chevron-circle-right"></i> {{ insight }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+    {% if attention_items %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-exclamation-triangle"></i> What Needs Attention -- Complete Picture</div>
+            <div class="panel-subtitle">{{ attention_items|length }} item(s) requiring action -- sorted by severity</div>
+        </div>
+        {% if health_score is defined %}
+        <div class="health-score-bar">
+            <div class="health-score-label">Network Health Score:</div>
+            <div class="health-score-value {{ 'health-good' if health_score >= 80 else ('health-warn' if health_score >= 50 else 'health-bad') }}">
+                {{ health_score }}/100
+            </div>
+            <div class="health-score-desc">
+                {% if health_score >= 80 %}Network is healthy with minor issues{% elif health_score >= 50 %}Network has several issues needing attention{% else %}Network has critical issues -- immediate action needed{% endif %}
+            </div>
+        </div>
+        {% endif %}
+        <div class="attention-list">
+            {% for item in attention_items %}
+            <div class="attention-item attention-{{ item.severity }}">
+                <span class="attention-badge attention-badge-{{ item.severity }}">{{ item.severity|upper }}</span>
+                <div class="attention-body">
+                    <div class="attention-title">{{ item.title }}</div>
+                    <div class="attention-detail">{{ item.detail }}</div>
+                    {% if item.impact or item.action %}
+                    <div class="attention-meta">
+                        {% if item.impact %}<span class="attention-impact"><i class="fas fa-chart-bar"></i> Impact: {{ item.impact }}</span>{% endif %}
+                        {% if item.action %}<span class="attention-action"><i class="fas fa-tasks"></i> Action: {{ item.action }}</span>{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- ===== DAILY NET COLLECTION SUMMARY ===== -->
+{% if daily_coll_stats %}
+<div class="panel" style="margin-bottom:12px;">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-indian-rupee-sign"></i> Daily Net Collection Summary</div>
+        <div class="panel-subtitle">Total, average, min &amp; max daily collection across {{ daily_coll_stats.days }} day(s)</div>
+    </div>
+    <div class="collection-stats-grid">
+        <div class="coll-stat-card coll-stat-total">
+            <div class="coll-stat-card-label">Total Collection</div>
+            <div class="coll-stat-card-value">₹{{ format_indian(daily_coll_stats.total) }}</div>
+            <div class="coll-stat-card-sub">across {{ daily_coll_stats.days }} day(s)</div>
+        </div>
+        <div class="coll-stat-card coll-stat-avg">
+            <div class="coll-stat-card-label">Average / Day</div>
+            <div class="coll-stat-card-value">₹{{ format_indian(daily_coll_stats.avg) }}</div>
+            <div class="coll-stat-card-sub">mean daily collection</div>
+        </div>
+        <div class="coll-stat-card coll-stat-min">
+            <div class="coll-stat-card-label">Minimum Day</div>
+            <div class="coll-stat-card-value">₹{{ format_indian(daily_coll_stats.min) }}</div>
+            <div class="coll-stat-card-sub">{{ daily_coll_stats.min_day }}</div>
+        </div>
+        <div class="coll-stat-card coll-stat-max">
+            <div class="coll-stat-card-label">Maximum Day</div>
+            <div class="coll-stat-card-value">₹{{ format_indian(daily_coll_stats.max) }}</div>
+            <div class="coll-stat-card-sub">{{ daily_coll_stats.max_day }}</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ===== ANALYTIC 2: Daily Sales Trend (8 cols) + ANALYTIC 4: Product Type Mix (4 cols) ===== -->
+<div class="grid-master-8-4">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-area"></i> Daily Sales Trend</div>
+            <div class="panel-subtitle">Volume (L) &amp; Collection (₹) over selected period</div>
+        </div>
+        <div id="chart-daily-trend" class="chart-container-tall"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-pie"></i> Product Type Mix (LOCO / JODO / DODO)</div>
+            <div class="panel-subtitle">Sale share, RSP &amp; collection efficiency by fuel type</div>
+        </div>
+        <div id="chart-type-mix" class="chart-container"></div>
+        {% if type_mix %}
+        <table class="mini-table">
+            <thead><tr><th>Type</th><th class="num">Stations</th><th class="num">Sale (L)</th><th class="num">Share</th><th class="num">RSP (Rs/L)</th><th class="num">Coll Eff</th></tr></thead>
+            <tbody>
+                {% for t in type_mix %}
+                <tr>
+                    <td><strong>{{ t.type }}</strong></td>
+                    <td class="num">{{ t.stations }}</td>
+                    <td class="num">{{ t.sale_fmt }}</td>
+                    <td class="num">
+                        <span class="share-bar"><span class="share-bar-fill" data-width="{{ t.share|int }}"></span></span>
+                        {{ "%.1f"|format(t.share) }}%
+                    </td>
+                    <td class="num">{{ t.rsp_fmt }}</td>
+                    <td class="num">{{ format_indian(t.coll_eff) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if type_insights %}
+        <div class="insights-box">
+            {% for ins in type_insights %}
+            <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% else %}
+        <p class="empty-state">No data for this period.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ===== ANALYTIC 3: Geographic Performance (6 cols) + ANALYTIC 5: Collection & Payment Analysis (6 cols) ===== -->
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-map-marked-alt"></i> Sale by State</div>
+            <div class="panel-subtitle">Geographic performance with share &amp; per-station efficiency</div>
+        </div>
+        <div id="chart-states" class="chart-container"></div>
+        {% if states %}
+        <table class="mini-table">
+            <thead><tr><th>State</th><th class="num">Stations</th><th class="num">Sale (L)</th><th class="num">Share</th><th class="num">L/Station</th></tr></thead>
+            <tbody>
+                {% for s in states %}
+                <tr>
+                    <td><a href="/report/2?state={{ s.state }}{{ query_string_without('state') }}" style="text-decoration:none;color:inherit;">{{ s.state }}</a></td>
+                    <td class="num">{{ s.stations }}</td>
+                    <td class="num">{{ s.sale_fmt }}</td>
+                    <td class="num">{{ "%.1f"|format(s.share) }}%</td>
+                    <td class="num">{{ format_indian(s.per_station) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty-state">No data for this period.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-wallet"></i> Collection &amp; Payment Analysis</div>
+            <div class="panel-subtitle">Cash vs Digital vs Free-Sale composition</div>
+        </div>
+        {% if collection_summary and collection_summary.total %}
+        <div class="collection-summary">
+            <div class="coll-stat coll-cash">
+                <div class="coll-label">Cash Collection</div>
+                <div class="coll-value">{{ format_indian(collection_summary.cash) }}</div>
+                <div class="coll-pct">{{ "%.1f"|format((collection_summary.cash or 0) / collection_summary.total * 100) }}%</div>
+            </div>
+            <div class="coll-stat coll-digital">
+                <div class="coll-label">Paytm (Digital)</div>
+                <div class="coll-value">{{ format_indian(collection_summary.paytm) }}</div>
+                <div class="coll-pct">{{ "%.1f"|format((collection_summary.paytm or 0) / collection_summary.total * 100) }}%</div>
+            </div>
+            <div class="coll-stat coll-free">
+                <div class="coll-label">Free Sale Adj.</div>
+                <div class="coll-value">{{ format_indian(collection_summary.free_sale) }}</div>
+                <div class="coll-pct">{{ "%.1f"|format((collection_summary.free_sale or 0) / collection_summary.total * 100) }}%</div>
+            </div>
+        </div>
+        {% endif %}
+        <div id="chart-collection" class="chart-container"></div>
+    </div>
+</div>
+
+<!-- ===== ANALYTIC 6: Station Performance Distribution (8 cols) + Top/Bottom 5 (4 cols) ===== -->
+<div class="grid-master-8-4">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-bar"></i> Station Performance Distribution</div>
+            <div class="panel-subtitle">
+                {{ format_indian(total_sellers) }} selling stations out of {{ format_indian(total_stations_dist) }} total
+                {% if zero_sale_stations %}({{ format_indian(zero_sale_stations) }} with zero sale){% endif %}
+            </div>
+        </div>
+        <div id="chart-station-hist" class="chart-container"></div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-arrow-up"></i> Top 5 Stations</div>
+        </div>
+        <table class="mini-table">
+            <thead><tr><th>#</th><th>Station</th><th class="num">Sale (L)</th></tr></thead>
+            <tbody>
+                {% for s in top5 %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><a href="/report/11?station={{ s.alds_name }}{{ current_query_string_amp() }}" class="drill-link">{{ s.alds_name }}</a><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                    <td class="num">{{ format_indian(s.sale_qty) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="panel-header" style="margin-top: 16px;">
+            <div class="panel-title"><i class="fas fa-arrow-down"></i> Bottom 5 (with sale)</div>
+        </div>
+        <table class="mini-table">
+            <thead><tr><th>#</th><th>Station</th><th class="num">Sale (L)</th></tr></thead>
+            <tbody>
+                {% for s in bottom5 %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><a href="/report/11?station={{ s.alds_name }}{{ current_query_string_amp() }}" class="drill-link">{{ s.alds_name }}</a><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                    <td class="num">{{ format_indian(s.sale_qty) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ===== ANALYTIC 7: Operational Exceptions & Data Health ===== -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-exclamation-triangle"></i> Operational Exceptions — Complete Breakdown</div>
+        <div class="panel-subtitle">{{ exceptions_total }} total exceptions across the selected period</div>
+    </div>
+</div>
+
+<div class="grid-master-8-4">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-tags"></i> Exception Summary by Type</div>
+            <div class="panel-subtitle">Click a chip to understand each exception type</div>
+        </div>
+        {% if exceptions %}
+        <div class="exception-chips">
+            {% for e in exceptions %}
+            <span class="chip {% if e.exception_type in ['no_sale', 'no_stock', 'sale_not_received'] %}chip-danger{% else %}chip-alert{% endif %}"
+                  title="{% if e.exception_type == 'no_sale' %}Station sold 0 litres — may be shut, no power, or not reporting{% elif e.exception_type == 'no_stock' %}Station reported 'no stock' in remarks — supply chain issue{% elif e.exception_type == 'sale_not_received' %}Station hasn't submitted sales data — follow up with TM{% elif e.exception_type == 'low_sale' %}Station sold less than 10L — underperforming or partial day{% endif %}">
+                {{ e.exception_type|replace('_', ' ')|title }}: {{ e.cnt }}
+            </span>
+            {% endfor %}
+        </div>
+        <div class="exception-trend-section">
+            <div class="panel-subtitle" style="margin-bottom: 4px;">Exception Trend (Daily — stacked by type)</div>
+            <div id="chart-exception-stacked" style="height:250px;"></div>
+        </div>
+        {% else %}
+        <p class="empty-state">No exceptions in this period. All stations reporting normally.</p>
+        {% endif %}
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-database"></i> Data Health</div>
+        </div>
+        <div id="chart-data-gauge" class="gauge-container"></div>
+        <div class="data-health-detail">
+            <div class="health-row">
+                <span class="health-label">Days with Data</span>
+                <span class="health-value">{{ data_loaded_days }} of {{ calendar_days }}</span>
+            </div>
+            <div class="health-row">
+                <span class="health-label">Completeness</span>
+                <span class="health-value">{{ data_completeness_pct }}%</span>
+            </div>
+        </div>
+    </div>
+{% if station_completeness %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-tower-broadcast"></i> Station Reporting Completeness ({{ station_completeness.latest_date }})</div>
+        <div class="panel-subtitle">Stations that reported in the last 7 days but not today</div>
+    </div>
+    <div class="summary-cards" style="margin-bottom: 16px;">
+        <div class="summary-card">
+            <div class="sc-label">Reported Today</div>
+            <div class="sc-value" style="color: #28a745;">{{ station_completeness.reported }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Expected (7-day baseline)</div>
+            <div class="sc-value">{{ station_completeness.expected }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Missing Stations</div>
+            <div class="sc-value {% if station_completeness.missing_count > 0 %}col-red{% else %}col-green{% endif %}">{{ station_completeness.missing_count }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-label">Completeness</div>
+            <div class="sc-value">{{ station_completeness.pct }}%</div>
+        </div>
+    </div>
+    {% if station_completeness.missing_stations %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>#</th><th>ERP Code</th><th>Station</th><th>State</th><th>TM</th><th>Coordinator</th></tr></thead>
+        <tbody>
+            {% for s in station_completeness.missing_stations %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ s.erp_code }}</td>
+                <td>{{ s.alds_name }}</td>
+                <td>{{ s.state }}</td>
+                <td>{{ s.tm or '—' }}</td>
+                <td>{{ s.coordinator or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p style="text-align: center; color: var(--text-muted, #6c757d); padding: 16px;">All expected stations reported today. ✓</p>
+    {% endif %}
+</div>
+{% endif %}
+</div>
+
+{% if exceptions %}
+<!-- Exception breakdown by state -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-map-marker-alt"></i> Exceptions by State</div>
+        <div class="panel-subtitle">Which states have the most operational issues</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>State</th><th class="num">No Sale</th><th class="num">No Stock</th>
+        <th class="num">Sale Not Received</th><th class="num">Low Sale</th><th class="num">Total</th></tr></thead>
+        <tbody>
+            {% for s in exceptions_by_state %}
+            <tr>
+                <td><strong>{{ s.state }}</strong></td>
+                <td class="num {% if s.no_sale > 0 %}down{% endif %}">{{ s.no_sale }}</td>
+                <td class="num {% if s.no_stock > 0 %}down{% endif %}">{{ s.no_stock }}</td>
+                <td class="num {% if s.sale_not_received > 0 %}down{% endif %}">{{ s.sale_not_received }}</td>
+                <td class="num {% if s.low_sale > 0 %}down{% endif %}">{{ s.low_sale }}</td>
+                <td class="num"><strong>{{ s.total }}</strong></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Top recurring problem stations -->
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-fire" style="color:var(--red);"></i> Top Problem Stations</div>
+            <div class="panel-subtitle">Stations with most exception days — recurring issues</div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Station</th><th>State</th><th>TM</th><th class="num">Exc Days</th><th>Types</th><th>Last Date</th></tr></thead>
+            <tbody>
+                {% for s in exceptions_top_stations[:15] %}
+                <tr>
+                    <td><strong>{{ s.alds_name }}</strong><br><span class="muted-text">{{ s.erp_code }}</span></td>
+                    <td>{{ s.state }}</td>
+                    <td>{{ s.tm or '-' }}</td>
+                    <td class="num down"><strong>{{ s.exc_days }}</strong></td>
+                    <td>{{ s.exc_types|replace(',', ', ') }}</td>
+                    <td>{{ s.last_exc_date }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-users"></i> Exceptions by Coordinator</div>
+            <div class="panel-subtitle">Accountability — whose territory has the most issues</div>
+        </div>
+        <div class="table-wrap">
+        <table>
+            <thead><tr><th>Coordinator</th><th class="num">Exceptions</th><th class="num">Stations Affected</th></tr></thead>
+            <tbody>
+                {% for c in exceptions_by_coord %}
+                <tr>
+                    <td><strong>{{ c.coordinator }}</strong></td>
+                    <td class="num {% if c.cnt > 10 %}down{% endif %}">{{ c.cnt }}</td>
+                    <td class="num">{{ c.stations }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+
+<!-- Recent exception details with remarks -->
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-list"></i> Recent Exception Details (Latest 50)</div>
+        <div class="panel-subtitle">Individual exception records with station remarks</div>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Date</th><th>Station</th><th>State</th><th>TM</th>
+        <th>Type</th><th class="num">Sale (L)</th><th>Remark</th></tr></thead>
+        <tbody>
+            {% for d in exceptions_detail %}
+            <tr>
+                <td>{{ d.sale_date }}</td>
+                <td><strong>{{ d.alds_name }}</strong><br><span class="muted-text">{{ d.erp_code }}</span></td>
+                <td>{{ d.state }}</td>
+                <td>{{ d.tm or '-' }}</td>
+                <td>
+                    <span class="chip {% if d.exception_type in ['no_sale', 'no_stock', 'sale_not_received'] %}chip-danger{% else %}chip-alert{% endif %}" style="font-size:10px;">
+                        {{ d.exception_type|replace('_', ' ')|title }}
+                    </span>
+                </td>
+                <td class="num">{{ d.sale_qty }}</td>
+                <td>{{ d.remark or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script type="application/json" id="data-daily-trend">{{ daily_trend|tojson }}</script>
+<script type="application/json" id="data-states">{{ states|tojson }}</script>
+<script type="application/json" id="data-type-mix">{{ type_mix|tojson }}</script>
+<script type="application/json" id="data-collection-trend">{{ collection_trend|tojson }}</script>
+<script type="application/json" id="data-hist-labels">{{ station_hist_labels|tojson }}</script>
+<script type="application/json" id="data-hist-counts">{{ station_hist_counts|tojson }}</script>
+<script type="application/json" id="data-exception-trend">{{ exception_trend|tojson }}</script>
+<script type="application/json" id="data-exception-stacked">{{ exceptions_by_date_type|tojson }}</script>
+<script type="application/json" id="data-completeness">{{ data_completeness_pct|tojson }}</script>
+<script>
+var dailyData = JSON.parse(document.getElementById('data-daily-trend').textContent);
+var statesData = JSON.parse(document.getElementById('data-states').textContent);
+var typeData = JSON.parse(document.getElementById('data-type-mix').textContent);
+var collData = JSON.parse(document.getElementById('data-collection-trend').textContent);
+var histLabels = JSON.parse(document.getElementById('data-hist-labels').textContent);
+var histCounts = JSON.parse(document.getElementById('data-hist-counts').textContent);
+var excTrendData = JSON.parse(document.getElementById('data-exception-trend').textContent);
+var dataCompleteness = JSON.parse(document.getElementById('data-completeness').textContent);
+
+makeDualAxisChart('chart-daily-trend',
+    dailyData.map(function(d) { return d.sale_date; }),
+    dailyData.map(function(d) { return d.sale_qty || 0; }),
+    dailyData.map(function(d) { return d.collection || 0; })
+);
+
+makeBarChart('chart-states',
+    statesData.map(function(s) { return s.state; }),
+    statesData.map(function(s) { return s.sale_qty || 0; }),
+    { decimals: 0, unit: ' L' }
+);
+
+makeDonutChart('chart-type-mix',
+    typeData.map(function(t) { return t.type; }),
+    typeData.map(function(t) { return t.sale_qty || 0; }),
+    { unit: ' L' }
+);
+
+makeStackedBar('chart-collection',
+    collData.map(function(d) { return d.sale_date; }),
+    [
+        { name: 'Cash',   data: collData.map(function(d) { return Math.round(d.cash || 0); }),       color: '#17a2b8' },
+        { name: 'Paytm',  data: collData.map(function(d) { return Math.round(d.paytm || 0); }),      color: '#6f42c1' },
+        { name: 'Free Sale', data: collData.map(function(d) { return Math.round(d.free_sale || 0); }), color: '#ffc107' },
+    ]
+);
+
+makeHistogram('chart-station-hist', histLabels, histCounts);
+
+if (excTrendData.length > 0) {
+    makeSparkline('chart-exception-spark',
+        excTrendData.map(function(d) { return d.cnt; })
+    );
+}
+
+// Stacked exception bar chart by type
+var excStackedEl = document.getElementById('chart-exception-stacked');
+if (excStackedEl && typeof echarts !== 'undefined') {
+    var excStackedData = JSON.parse(document.getElementById('data-exception-stacked').textContent);
+    if (excStackedData && excStackedData.length > 0) {
+        var excDates = {};
+        var types = ['no_sale', 'no_stock', 'sale_not_received', 'low_sale'];
+        var typeColors = {'no_sale': '#dc3545', 'no_stock': '#fd7e14', 'sale_not_received': '#6f42c1', 'low_sale': '#ffc107'};
+        var typeLabels = {'no_sale': 'No Sale', 'no_stock': 'No Stock', 'sale_not_received': 'Sale Not Received', 'low_sale': 'Low Sale'};
+        // Pivot data
+        excStackedData.forEach(function(r) {
+            if (!excDates[r.sale_date]) excDates[r.sale_date] = {no_sale:0, no_stock:0, sale_not_received:0, low_sale:0};
+            excDates[r.sale_date][r.exception_type] = r.cnt;
+        });
+        var dateList = Object.keys(excDates).sort();
+        var series = types.map(function(t) {
+            return {
+                name: typeLabels[t],
+                type: 'bar',
+                stack: 'total',
+                data: dateList.map(function(d) { return excDates[d][t] || 0; }),
+                itemStyle: {color: typeColors[t]}
+            };
+        });
+        echarts.init(excStackedEl).setOption({
+            tooltip: {trigger: 'axis', axisPointer: {type: 'shadow'}},
+            legend: {bottom: 0, textStyle: {fontSize: 10}},
+            grid: {left: 60, right: 30, top: 30, bottom: 50, containLabel: true},
+            xAxis: {type: 'category', data: dateList, name: 'Date', nameLocation: 'middle', nameGap: 30, axisLabel: {rotate: 45, fontSize: 9}},
+            yAxis: {type: 'value', name: 'Count', nameLocation: 'middle', nameGap: 40},
+            series: series
+        });
+    }
+}
+
+makeGauge('chart-data-gauge', dataCompleteness, { label: 'Data Loaded' });
+</script>
+{% endblock %}

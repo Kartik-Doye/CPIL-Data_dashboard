@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+{% if avg_best_day %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Best Day</div>
+        <div class="sc-value">{{ avg_best_day.sale_fmt }}</div>
+        <div class="sc-sub">{{ avg_best_day.date }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Worst Day</div>
+        <div class="sc-value">{{ avg_worst_day.sale_fmt }}</div>
+        <div class="sc-sub">{{ avg_worst_day.date }}</div>
+    </div>
+</div>
+{% endif %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-calculator"></i> Average Sales by State</div>
+    </div>
+    {% if not avg_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>State</th><th class="num">Total Sale (L)</th><th class="num">Days</th><th class="num">Stations</th><th class="num">Avg/Day (L)</th><th class="num">Avg/Station/Day (L)</th></tr></thead>
+        <tbody>
+            {% for r in avg_rows %}
+            <tr>
+                <td>{{ r.state }}</td>
+                <td class="num">{{ format_litres(r.sale_qty) }}</td>
+                <td class="num">{{ format_int(r.days) }}</td>
+                <td class="num">{{ format_int(r.stations) }}</td>
+                <td class="num">{{ format_indian(r.avg_per_day) }} L</td>
+                <td class="num">{{ format_indian(r.avg_per_station) }} L</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr class="totals-row">
+                <td>TOTAL</td>
+                <td class="num">{{ format_litres(avg_rows|sum(attribute='sale_qty')) }}</td>
+                <td class="num">—</td>
+                <td class="num">{{ format_int(avg_rows|sum(attribute='stations')) }}</td>
+                <td class="num">—</td>
+                <td class="num">—</td>
+            </tr>
+        </tfoot>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

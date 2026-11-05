@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 21: Five Types (LOCO/COCO/DODO/JOCO/JODO) -->
+
+{% if type_rows %}
+<!-- Summary Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Types</div>
+        <div class="sc-value">{{ type_rows|length }}</div>
+        <div class="sc-sub">fuel types active</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ format_indian(type_rows | map(attribute='sale_qty') | sum) }} L</div>
+        <div class="sc-sub">across all types</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Top Type</div>
+        <div class="sc-value">{{ type_rows[0].type }}</div>
+        <div class="sc-sub">{{ "%.1f"|format(type_rows[0].share) }}% share</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Stations</div>
+        <div class="sc-value">{{ type_rows | map(attribute='stations') | sum }}</div>
+        <div class="sc-sub">all types</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-layer-group"></i> Sale by Type</div>
+            <div class="panel-subtitle">Bar chart comparison</div>
+        </div>
+        <div id="chart-types-bar" class="chart-container"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-pie"></i> Share Distribution</div>
+            <div class="panel-subtitle">Donut chart</div>
+        </div>
+        <div id="chart-types-donut" class="chart-container"></div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> Detailed Type Comparison</div>
+    </div>
+    {% if not type_rows %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No data available for the selected filters.</p><p class="empty-hint">Try changing the State, Time period, or Station search above.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th><th class="num">Stations</th>
+                <th class="num">Sale (L)</th><th class="num">Collection</th>
+                <th class="num">L/Station</th><th class="num">Share</th>
+                <th class="num">RSP (Rs/L)</th><th class="num">Coll Eff</th>
+                <th class="num">Free Sale (L)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in type_rows %}
+            <tr>
+                <td><strong>{{ r.type }}</strong></td>
+                <td class="num">{{ format_int(r.stations) }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.collection_fmt }}</td>
+                <td class="num">{{ format_indian(r.per_station) }} L</td>
+                <td class="num">
+                    <span class="share-bar"><span class="share-bar-fill" data-width="{{ r.share|int }}"></span></span>
+                    {{ format_pct(r.share) }}
+                </td>
+                <td class="num">{{ format_indian(r.rsp) }}</td>
+                <td class="num">{{ format_indian(r.coll_eff) }}</td>
+                <td class="num">{{ r.free_sale_fmt }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% if type_insights %}
+    <div class="insights-box">
+        {% for ins in type_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-type-rows">{{ type_rows|tojson }}</script>
+<script>
+var typeData = JSON.parse(document.getElementById('data-type-rows').textContent);
+makeBarChart('chart-types-bar',
+  typeData.map(function(r){return r.type;}),
+  typeData.map(function(r){return r.sale_qty||0;}),
+  {decimals:0, unit:' L'});
+makeDonutChart('chart-types-donut',
+  typeData.map(function(r){return r.type;}),
+  typeData.map(function(r){return r.sale_qty||0;}),
+  {unit:' L'});
+</script>
+{% endblock %}

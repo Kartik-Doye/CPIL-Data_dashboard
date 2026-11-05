@@ -1,0 +1,191 @@
+import React from 'react';
+import { Sparkles, TrendingUp, CheckCircle, AlertCircle, Info, Calendar } from 'lucide-react';
+import { ForecastResult } from '../types';
+
+interface AIMLForecastProps {
+  forecast: ForecastResult;
+  currentSale: number;
+}
+
+export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSale }) => {
+  if (!forecast || !forecast.forecast || forecast.forecast.length === 0) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 text-center text-slate-400">
+        No forecast data generated.
+      </div>
+    );
+  }
+
+  const maxVal = Math.max(...forecast.forecast.map((f) => f.upper_bound), currentSale);
+  const minVal = Math.min(...forecast.forecast.map((f) => f.lower_bound), currentSale) * 0.95;
+
+  return (
+    <div className="space-y-6">
+      {/* Header Info */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <h2 className="text-base font-bold text-white">
+                AIML 7-Day Network Demand Forecast
+              </h2>
+              <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                Ensemble Mode
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Statistically validated projection with 95% confidence intervals based on historical
+              backtesting against actual consumption rates.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs">
+            <div>
+              <span className="text-slate-400 block text-[11px]">7-Day Cumulative Volume:</span>
+              <span className="text-base font-bold font-mono text-emerald-400">
+                {forecast.predicted_total_7d.toLocaleString('en-IN')} L
+              </span>
+            </div>
+            <div className="w-px h-6 bg-slate-800" />
+            <div>
+              <span className="text-slate-400 block text-[11px]">Backtest Error (MAPE):</span>
+              <span className="text-base font-bold font-mono text-indigo-300">
+                {forecast.mape_ensemble}%
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Model Accuracy Comparison Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-slate-900/80 border border-indigo-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-indigo-950/20 to-transparent">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold text-indigo-300">Ensemble (Active)</span>
+            <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+          </div>
+          <div className="text-2xl font-bold font-mono text-white">{forecast.mape_ensemble}%</div>
+          <p className="text-[11px] text-slate-400 mt-1">Weighted Holt-Winters (55%) + Linear (45%)</p>
+        </div>
+
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold text-slate-300">Holt-Winters Exp Smoothing</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-200">{forecast.mape_holt_winters}%</div>
+          <p className="text-[11px] text-slate-400 mt-1">Level & trend smoothing with α=0.35, β=0.15</p>
+        </div>
+
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold text-slate-300">Linear Regression</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-200">{forecast.mape_linear}%</div>
+          <p className="text-[11px] text-slate-400 mt-1">Least-squares trend line over 14d horizon</p>
+        </div>
+
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold text-slate-400">Baseline Naive</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-400">{forecast.mape_naive}%</div>
+          <p className="text-[11px] text-slate-500 mt-1">Same day previous week baseline</p>
+        </div>
+      </div>
+
+      {/* 7-Day Day-by-Day Forecast Table with Confidence Ranges */}
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-orange-400" />
+          <span>Daily Forward Projections & 95% Confidence Bounds</span>
+        </h3>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead className="bg-slate-950/70 text-slate-400 font-semibold border-b border-slate-800">
+              <tr>
+                <th className="py-3 px-4">Forecast Date</th>
+                <th className="py-3 px-4">Day of Week</th>
+                <th className="py-3 px-4 text-right">Predicted Demand</th>
+                <th className="py-3 px-4 text-center">95% Range (Lower - Upper)</th>
+                <th className="py-3 px-4 text-right">Linear Model</th>
+                <th className="py-3 px-4 text-right">Holt-Winters</th>
+                <th className="py-3 px-4">Visual Band</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 font-mono">
+              {forecast.forecast.map((f, idx) => {
+                const pct = ((f.predicted_qty - minVal) / (maxVal - minVal || 1)) * 100;
+                const lowerPct = ((f.lower_bound - minVal) / (maxVal - minVal || 1)) * 100;
+                const upperPct = ((f.upper_bound - minVal) / (maxVal - minVal || 1)) * 100;
+
+                return (
+                  <tr key={f.date} className="hover:bg-slate-800/40 transition-colors">
+                    <td className="py-3 px-4 font-bold text-white flex items-center gap-2">
+                      <span className="w-4 h-4 rounded-full bg-slate-800 text-[10px] text-slate-400 flex items-center justify-center font-sans">
+                        +{idx + 1}
+                      </span>
+                      <span>{f.date}</span>
+                    </td>
+                    <td className="py-3 px-4 font-sans text-slate-300 font-medium">
+                      {f.day_name}
+                      {(f.day_name === 'Sunday' || f.day_name === 'Saturday') && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-sans">
+                          Weekend
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right font-bold text-indigo-300 text-sm">
+                      {f.predicted_qty.toLocaleString('en-IN')} L
+                    </td>
+                    <td className="py-3 px-4 text-center text-slate-400">
+                      [{f.lower_bound.toLocaleString('en-IN')} — {f.upper_bound.toLocaleString('en-IN')}] L
+                    </td>
+                    <td className="py-3 px-4 text-right text-slate-400">
+                      {f.linear_pred.toLocaleString('en-IN')} L
+                    </td>
+                    <td className="py-3 px-4 text-right text-slate-400">
+                      {f.holt_winters_pred.toLocaleString('en-IN')} L
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="w-32 bg-slate-950 rounded-full h-2 relative overflow-hidden">
+                        <div
+                          className="absolute h-full bg-indigo-500/40"
+                          style={{
+                            left: `${Math.max(0, lowerPct)}%`,
+                            width: `${Math.min(100, upperPct - lowerPct)}%`,
+                          }}
+                        />
+                        <div
+                          className="absolute top-0 bottom-0 w-1 bg-indigo-400"
+                          style={{ left: `${Math.max(0, Math.min(100, pct))}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Analytical Notes */}
+      <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-400 space-y-1.5">
+        <div className="flex items-center gap-2 text-slate-300 font-semibold mb-1">
+          <Info className="w-4 h-4 text-orange-400" />
+          <span>Forecasting Methodology & Ground Truth Validation</span>
+        </div>
+        <p>
+          • <strong>Seasonality Adjustment:</strong> Saturdays and Sundays feature a +6% to +8% demand multiplier reflecting commercial AutoLPG taxi and intra-city transit consumption curves.
+        </p>
+        <p>
+          • <strong>Leak-Free Validation:</strong> Model weights and MAPE errors were backtested strictly on out-of-sample data without look-ahead contamination.
+        </p>
+      </div>
+    </div>
+  );
+};

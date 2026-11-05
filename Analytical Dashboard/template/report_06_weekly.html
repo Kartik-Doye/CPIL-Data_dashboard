@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 6: Weekly Sales Trend -->
+
+{% if weekly_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ weekly_summary.total_fmt }}</div>
+        <div class="sc-sub">{{ weekly_summary.weeks }} weeks</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Avg / Week</div>
+        <div class="sc-value">{{ weekly_summary.avg_week_fmt }}</div>
+        <div class="sc-sub">weekly average</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Collection</div>
+        <div class="sc-value">{{ weekly_summary.total_coll_fmt }}</div>
+        <div class="sc-sub">all weeks</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Best Week</div>
+        <div class="sc-value">{{ weekly_summary.best_val }}</div>
+        <div class="sc-sub">{{ weekly_summary.best_week }}</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-chart-bar"></i> Weekly Sales Trend</div>
+        <div class="panel-subtitle">Sale &amp; collection by week (Sun-Sat)</div>
+    </div>
+    <div id="chart-weekly" class="chart-container"></div>
+</div>
+
+{% if weekly_insights %}
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+    </div>
+    <div class="insights-box">
+        {% for ins in weekly_insights %}
+        <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> Weekly Breakdown</div>
+    </div>
+    {% if not weekly_rows %}
+    <div class="empty-state"><i class="fas fa-inbox"></i><p>No data available.</p></div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Week</th>
+                <th class="num">Sale (L)</th><th class="num">Collection</th>
+                <th class="num">Avg/Day (L)</th><th class="num">Loaded Days</th>
+                <th class="num">WoW Change</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in weekly_rows %}
+            <tr>
+                <td>{{ r.week_label }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.coll_fmt }}</td>
+                <td class="num">{{ format_indian(r.avg_per_day) }} L</td>
+                <td class="num">{{ r.loaded_days }}</td>
+                <td class="num {% if r.wow_change and r.wow_change > 0 %}up{% elif r.wow_change and r.wow_change < 0 %}down{% endif %}">
+                    {{ r.wow_change_fmt if r.wow_change is not none else '—' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-weekly-rows">{{ weekly_rows|tojson }}</script>
+<script>
+var wkData = JSON.parse(document.getElementById('data-weekly-rows').textContent);
+makeDualAxisChart('chart-weekly',
+    wkData.map(function(r){return r.week_label;}),
+    wkData.map(function(r){return r.sale_qty||0;}),
+    wkData.map(function(r){return r.collection||0;}));
+</script>
+{% endblock %}

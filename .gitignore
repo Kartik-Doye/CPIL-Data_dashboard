@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+Analytical Dashboard/pgdata/
+Manual Work/logs/
+Manual Work/archive/
+Manual Work/sale.xlsx

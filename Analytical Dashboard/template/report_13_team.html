@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Report 13: Team Performance -->
+
+{% if team_summary %}
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="sc-label">{{ team_label }}s</div>
+        <div class="sc-value">{{ team_summary.total_members }}</div>
+        <div class="sc-sub">team members</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Total Sale</div>
+        <div class="sc-value">{{ team_summary.total_sale_fmt }}</div>
+        <div class="sc-sub">all members</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Avg / Member</div>
+        <div class="sc-value">{{ team_summary.avg_sale_fmt }}</div>
+        <div class="sc-sub">team average</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-label">Top Performer</div>
+        <div class="sc-value">{{ team_summary.top_member }}</div>
+        <div class="sc-sub">{{ "%.1f"|format(team_summary.top_share) }}% share</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-users"></i> Team Performance</div>
+        <div class="panel-actions">
+            <form method="get" style="display:flex;gap:4px;">
+                {% for k, v in request.args.items() %}{% if k != 'version' %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+                <select name="version" class="filter-select" onchange="this.form.submit()">
+                    <option value="tm" {% if team_version == 'tm' %}selected{% endif %}>TM</option>
+                    <option value="coordinator" {% if team_version == 'coordinator' %}selected{% endif %}>Coordinator</option>
+                </select>
+            </form>
+        </div>
+    </div>
+    <div id="chart-team-bar" class="chart-container"></div>
+</div>
+
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-chart-pie"></i> Share Distribution</div>
+        </div>
+        <div id="chart-team-donut" class="chart-container"></div>
+    </div>
+    {% if team_insights %}
+    <div class="panel">
+        <div class="panel-header">
+            <div class="panel-title"><i class="fas fa-lightbulb"></i> Key Insights</div>
+        </div>
+        <div class="insights-box">
+            {% for ins in team_insights %}
+            <p><i class="fas fa-chevron-circle-right"></i> {{ ins }}</p>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <div class="panel-title"><i class="fas fa-table"></i> {{ team_label }}-wise Breakdown</div>
+    </div>
+    {% if not team_rows %}
+    <div class="empty-state"><i class="fas fa-inbox"></i><p>No data available.</p></div>
+    {% else %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Rank</th><th>{{ team_label }}</th>
+                <th class="num">Stations</th><th class="num">Sale (L)</th>
+                <th class="num">Collection</th><th class="num">Coll Rate (₹/L)</th><th class="num">Share</th>
+                <th class="num">L/Station</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in team_rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ r.dim }}</strong></td>
+                <td class="num">{{ format_int(r.stations) }}</td>
+                <td class="num">{{ r.sale_fmt }}</td>
+                <td class="num">{{ r.coll_fmt }}</td>
+                <td class="num">₹{{ "%.1f"|format(r.coll_eff) }}/L</td>
+                <td class="num">
+                    <span class="share-bar"><span class="share-bar-fill" data-width="{{ r.share|int }}"></span></span>
+                    {{ format_pct(r.share) }}
+                </td>
+                <td class="num">{{ format_indian(r.per_station) }} L</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="data-team-rows">{{ team_rows|tojson }}</script>
+<script>
+var teamData = JSON.parse(document.getElementById('data-team-rows').textContent);
+makeBarChart('chart-team-bar',
+    teamData.map(function(r){return r.dim;}),
+    teamData.map(function(r){return r.sale_qty||0;}),
+    {decimals:0, unit:' L'});
+makeDonutChart('chart-team-donut',
+    teamData.map(function(r){return r.dim;}),
+    teamData.map(function(r){return r.sale_qty||0;}));
+</script>
+{% endblock %}
