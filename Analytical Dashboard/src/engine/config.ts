@@ -8,6 +8,7 @@ try {
   // Ignore if already loaded
 }
 dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), 'Manual Work', '.env') });
 
 export const DB_HOST = process.env.DB_HOST || 'localhost';
 export const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);

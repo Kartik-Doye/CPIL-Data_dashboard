@@ -50,3 +50,24 @@ test('historical forecast outcomes adapt ensemble weights after enough evaluatio
   assert.ok((adapted.weights?.linear ?? 0) < (recentOnly.weights?.linear ?? 0));
   assert.match(adapted.learning_status || '', /12/);
 });
+
+test('historical overprediction bias is damped for the matching forecast horizon', () => {
+  const history = makeHistory(35, index => 100 + (index % 7) * 10 + index);
+  const persistedErrors = {
+    sample_count: 12,
+    mape: {
+      linear: 10,
+      holt_winters: 10,
+      naive_last_week: 10,
+      same_weekday_avg: 10,
+    },
+  };
+  const historicalWeightsOnly = generateForecast(history, 7, undefined, persistedErrors);
+  const biasCorrected = generateForecast(history, 7, undefined, {
+    ...persistedErrors,
+    ensemble_bias_pct_by_horizon: { 1: 0.2 },
+  });
+
+  assert.ok(biasCorrected.forecast[0].predicted_qty < historicalWeightsOnly.forecast[0].predicted_qty);
+  assert.ok(Number.isFinite(biasCorrected.forecast[1].predicted_qty));
+});

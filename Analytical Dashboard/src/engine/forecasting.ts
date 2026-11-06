@@ -280,12 +280,14 @@ interface BacktestErrors {
   squared: Record<ForecastModel, number[]>;
   ensemblePercentage: number[];
   ensembleSquared: number[];
+  ensembleBiasPercentage: number[];
   scoredDays: number;
 }
 
 export interface PersistedForecastErrors {
   sample_count: number;
   mape: Partial<Record<ForecastModel, number>>;
+  ensemble_bias_pct_by_horizon?: Partial<Record<number, number>>;
 }
 
 function createBacktestErrors(): BacktestErrors {
@@ -304,8 +306,13 @@ function createBacktestErrors(): BacktestErrors {
     },
     ensemblePercentage: [],
     ensembleSquared: [],
+    ensembleBiasPercentage: [],
     scoredDays: 0,
   };
+}
+
+function boundedBiasCorrection(biasPercentage: number): number {
+  return Math.max(-0.25, Math.min(0.25, biasPercentage * 0.5));
 }
 
 function inverseMapeWeights(
@@ -370,6 +377,9 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
         0
       );
       if (getFestivalName(testDate)) ensemblePrediction *= 0.94;
+      if (errors.ensembleBiasPercentage.length > 0) {
+        ensemblePrediction *= 1 - boundedBiasCorrection(mean(errors.ensembleBiasPercentage));
+      }
 
       for (const model of Object.keys(modelPredictions) as ForecastModel[]) {
         const difference = modelPredictions[model] - actual;
@@ -380,6 +390,7 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
       const ensembleDifference = ensemblePrediction - actual;
       errors.ensemblePercentage.push(Math.abs(ensembleDifference) / actual);
       errors.ensembleSquared.push(ensembleDifference ** 2);
+      errors.ensembleBiasPercentage.push(ensembleDifference / actual);
       errors.scoredDays++;
     }
   }
@@ -554,6 +565,10 @@ export function generateForecast(
 
     if (festName) {
       ensemble *= 0.94;
+    }
+    const historicalBias = persistedErrors?.ensemble_bias_pct_by_horizon?.[j + 1];
+    if (historicalBias !== undefined && Number.isFinite(historicalBias)) {
+      ensemble *= 1 - boundedBiasCorrection(historicalBias);
     }
 
     const horizonFactor = 1.0 + j * 0.05;

@@ -215,22 +215,30 @@ async function processDataset(
   try {
     await queryLoader(`
       UPDATE forecast_feedback AS f
-      SET actual_sale_qty = s.sale_qty,
+      SET actual_sale_qty = s.actual_sale_qty,
           evaluated_at = NOW(),
           updated_at = NOW()
-      FROM sale_tracker AS s
+      FROM (
+        SELECT sale_date, SUM(sale_qty) AS actual_sale_qty
+        FROM sale_tracker
+        GROUP BY sale_date
+      ) AS s
       WHERE f.target_date = s.sale_date
-        AND f.actual_sale_qty IS DISTINCT FROM s.sale_qty
+        AND f.actual_sale_qty IS DISTINCT FROM s.actual_sale_qty
     `);
     const feedbackRows = await queryLoader<{
+      horizon_day: number;
       sample_count: number;
+      ensemble_bias_pct: number | null;
       linear_mape: number | null;
       holt_winters_mape: number | null;
       naive_mape: number | null;
       weekday_mape: number | null;
     }>(`
       SELECT
+        (target_date - forecast_origin_date)::int AS horizon_day,
         COUNT(*) FILTER (WHERE actual_sale_qty > 0)::int AS sample_count,
+        AVG((predicted_ensemble - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS ensemble_bias_pct,
         AVG(ABS(predicted_linear - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS linear_mape,
         AVG(ABS(predicted_holt_winters - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS holt_winters_mape,
         AVG(ABS(predicted_naive - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS naive_mape,
@@ -239,20 +247,33 @@ async function processDataset(
       WHERE actual_sale_qty IS NOT NULL
         AND actual_sale_qty > 0
         AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+      GROUP BY horizon_day
     `, [stations[0]?.sale_date]);
-    const feedback = feedbackRows[0];
-    if (feedback) {
+    if (feedbackRows.length > 0) {
+      const evaluatedCount = feedbackRows.reduce((sum, row) => sum + Number(row.sample_count || 0), 0);
+      const weightedModelMape = (key: 'linear_mape' | 'holt_winters_mape' | 'naive_mape' | 'weekday_mape') => {
+        const validRows = feedbackRows.filter(row => row[key] !== null);
+        const count = validRows.reduce((sum, row) => sum + Number(row.sample_count || 0), 0);
+        return count > 0
+          ? validRows.reduce((sum, row) => sum + Number(row[key]) * Number(row.sample_count || 0), 0) / count
+          : undefined;
+      };
       persistedErrors = {
-        sample_count: Number(feedback.sample_count) || 0,
+        sample_count: evaluatedCount,
         mape: {
-          linear: feedback.linear_mape === null ? undefined : Number(feedback.linear_mape),
-          holt_winters: feedback.holt_winters_mape === null ? undefined : Number(feedback.holt_winters_mape),
-          naive_last_week: feedback.naive_mape === null ? undefined : Number(feedback.naive_mape),
-          same_weekday_avg: feedback.weekday_mape === null ? undefined : Number(feedback.weekday_mape),
+          linear: weightedModelMape('linear_mape'),
+          holt_winters: weightedModelMape('holt_winters_mape'),
+          naive_last_week: weightedModelMape('naive_mape'),
+          same_weekday_avg: weightedModelMape('weekday_mape'),
         },
+        ensemble_bias_pct_by_horizon: Object.fromEntries(
+          feedbackRows
+            .filter(row => row.ensemble_bias_pct !== null)
+            .map(row => [Number(row.horizon_day), Number(row.ensemble_bias_pct) / 100])
+        ),
       };
     }
-    learningStatus = 'Forecast feedback is being saved to PostgreSQL.';
+    learningStatus = 'Forecast outcomes are being evaluated against actual network sales.';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[FORECAST FEEDBACK] Persistence unavailable: ${message}`);
@@ -273,13 +294,7 @@ async function processDataset(
             actual_sale_qty, updated_at
           )
           VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NOW())
-          ON CONFLICT (forecast_origin_date, target_date) DO UPDATE SET
-            predicted_ensemble = EXCLUDED.predicted_ensemble,
-            predicted_linear = EXCLUDED.predicted_linear,
-            predicted_holt_winters = EXCLUDED.predicted_holt_winters,
-            predicted_naive = EXCLUDED.predicted_naive,
-            predicted_weekday = EXCLUDED.predicted_weekday,
-            updated_at = NOW()
+          ON CONFLICT (forecast_origin_date, target_date) DO NOTHING
         `, [
           forecastOriginDate,
           forecast.date,
@@ -291,8 +306,8 @@ async function processDataset(
         ]);
       }
       forecastEngineResult.learning_status = persistedErrors && persistedErrors.sample_count >= 7
-        ? `Saved forecast outcomes; adaptive weighting uses ${persistedErrors.sample_count} historical evaluations.`
-        : 'Saved forecasts; adaptive historical weighting starts after 7 evaluated outcomes.';
+        ? `Saved forecasts are scored against network-wide actuals; model weights and horizon bias use ${persistedErrors.sample_count} evaluated outcomes.`
+        : 'Saved forecasts are scored against network-wide actuals; adaptive learning becomes active after 7 evaluated outcomes.';
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -661,6 +676,14 @@ async function startServer() {
 
   app.listen(PORT, () => {
     console.log(`[GO Gas Executive Suite] Dashboard active at http://localhost:${PORT}`);
+    const refreshLearningData = () => {
+      void getTelemetryData(true).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[FORECAST FEEDBACK] Scheduled daily learning refresh failed: ${message}`);
+      });
+    };
+    refreshLearningData();
+    setInterval(refreshLearningData, 24 * 60 * 60 * 1000);
   });
 }
 
