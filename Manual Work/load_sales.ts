@@ -57,8 +57,30 @@ function parseDateCell(val: any): string | null {
   return null;
 }
 
+function findCell(record: Record<string, unknown>, aliases: string[]): [string, unknown] | undefined {
+  const wanted = new Set(aliases.map((name) => name.trim().toLowerCase().replace(/[\s_]+/g, '')));
+  return Object.entries(record).find(([header]) =>
+    wanted.has(header.trim().toLowerCase().replace(/[\s_]+/g, ''))
+  );
+}
+
+function readNumber(
+  record: Record<string, unknown>,
+  aliases: string[],
+  rowNumber: number,
+  displayColumn: string
+): number {
+  const cell = findCell(record, aliases);
+  if (!cell || cell[1] === '' || cell[1] === null || cell[1] === undefined) return 0;
+  const value = typeof cell[1] === 'number' ? cell[1] : Number(String(cell[1]).replace(/,/g, '').trim());
+  if (!Number.isFinite(value)) {
+    throw new Error(`[FAILED] Row ${rowNumber}, column "${cell[0]}" (${displayColumn}): expected a number, got "${String(cell[1])}".`);
+  }
+  return value;
+}
+
 export async function processSaleFile(filePath: string, isDryRun = false) {
-  logMessage(`Starting ingestion for file: ${path.basename(filePath)}`);
+  logMessage(`[STARTED] Loading file: ${path.basename(filePath)}`);
 
   if (!fs.existsSync(filePath)) {
     logMessage(`[FAILED] File not found: ${filePath}`);
@@ -88,60 +110,81 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
       return false;
     }
 
+    const headers = Object.keys(rawRows[0]);
+    if (!findCell(Object.fromEntries(headers.map((header) => [header, ''])), ['Cost Code', 'CostCode', 'ERP Code', 'Code'])) {
+      logMessage('[FAILED] Header row, column "Cost Code": required column is missing.');
+      await pool.end();
+      return false;
+    }
+    if (!findCell(Object.fromEntries(headers.map((header) => [header, ''])), ['Date'])) {
+      logMessage('[FAILED] Header row, column "Date": required column is missing.');
+      await pool.end();
+      return false;
+    }
+
     const validRows: any[] = [];
     const datesSet = new Set<string>();
-    const erpCodesSet = new Set<string>();
+    const erpCodes = new Map<string, number>();
 
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
-      const costCode = String(r['Cost Code'] || r['CostCode'] || r['COST CODE'] || '').trim();
-      if (!costCode) continue;
-
-      if (erpCodesSet.has(costCode)) {
-        logMessage(`[FAILED] Duplicate Cost Code found in Excel: ${costCode}`);
-        await pool.end();
-        return false;
+      const rowNumber = r.__rowNumber;
+      const codeCell = findCell(r, ['Cost Code', 'CostCode', 'COST CODE', 'ERP Code', 'Code']);
+      const costCode = String(codeCell?.[1] ?? '').trim();
+      if (!costCode) {
+        throw new Error(`[FAILED] Row ${rowNumber}, column "${codeCell?.[0] || 'Cost Code'}": value is required.`);
       }
-      erpCodesSet.add(costCode);
 
-      const dStr = parseDateCell(r['Date'] || r['date '] || r['DATE']);
-      if (dStr) {
-        datesSet.add(dStr);
+      const previousRow = erpCodes.get(costCode);
+      if (previousRow !== undefined) {
+        throw new Error(`[FAILED] Row ${rowNumber}, column "${codeCell?.[0] || 'Cost Code'}": duplicate Cost Code "${costCode}" (first seen at row ${previousRow}).`);
       }
+      erpCodes.set(costCode, rowNumber);
+
+      const dateCell = findCell(r, ['Date']);
+      const dateValue = dateCell?.[1];
+      const dStr = parseDateCell(dateValue);
+      if (!dStr) {
+        throw new Error(`[FAILED] Row ${rowNumber}, column "${dateCell?.[0] || 'Date'}": invalid or missing date value "${String(dateValue ?? '')}".`);
+      }
+      datesSet.add(dStr);
 
       validRows.push({
+        sourceRow: rowNumber,
         erp_code: costCode,
-        alds_name: String(r['ALDS NAME'] || r['ALDS Name'] || r['alds_name'] || '').trim(),
-        state: String(r['STATE'] || r['State'] || '').trim(),
-        tm: String(r['TM'] || r['tm'] || '').trim(),
-        coordinator: String(r['Coordinator'] || r['COORDINATOR'] || '').trim(),
-        type: String(r['Type'] || r['TYPE'] || 'LOCO').trim(),
-        tank_cap: String(r['TANK CAP'] || r['Tank Cap'] || '').trim(),
-        sale_qty: Number(r['SALE QTY'] || r['Sale Qty'] || 0) || 0,
-        collection: Number(r['COLLECTION'] || r['Collection'] || 0) || 0,
-        new_rate: Number(r['NEW RATE'] || r['New Rate'] || 0) || 0,
-        other: Number(r['OTHER'] || 0) || 0,
-        diff: Number(r['DIFF'] || 0) || 0,
-        erp_rate: Number(r['ERP RATE'] || 0) || 0,
-        ret_test_cal: Number(r['RET TEST/CAL'] || 0) || 0,
-        free_sale_litres: Number(r['FREE SALE LITRES'] || r['Free Sale Litres'] || r['FREE SALE LTR'] || 0) || 0,
-        free_sale_rupees: Number(r['FREE SALE RUPEES'] || r['Free Sale Rupees'] || 0) || 0,
-        scheme: String(r['SCHEME'] || '') === 'NA' ? null : Number(r['SCHEME'] || 0) || 0,
-        paytm: Number(r['PAYTM'] || 0) || 0,
-        net_cash_collection: Number(r['NET CASH COLLECTION'] || 0) || 0,
-        closing_dip_in_ltr: Number(r['CLOSING DIP IN LTR'] || r['CLOSING DIP'] || 0) || 0,
-        remark: String(r['REMARK'] || r['Remark'] || '').trim(),
+        alds_name: String(findCell(r, ['ALDS NAME', 'ALDS Name', 'alds_name'])?.[1] ?? '').trim(),
+        state: String(findCell(r, ['STATE', 'State'])?.[1] ?? '').trim(),
+        tm: String(findCell(r, ['TM'])?.[1] ?? '').trim(),
+        coordinator: String(findCell(r, ['Coordinator'])?.[1] ?? '').trim(),
+        type: String(findCell(r, ['Type'])?.[1] ?? 'LOCO').trim(),
+        tank_cap: String(findCell(r, ['TANK CAP', 'Tank Cap'])?.[1] ?? '').trim(),
+        sale_qty: readNumber(r, ['SALE QTY', 'Sale Qty'], rowNumber, 'Sale Qty'),
+        collection: readNumber(r, ['COLLECTION'], rowNumber, 'Collection'),
+        new_rate: readNumber(r, ['NEW RATE', 'New Rate'], rowNumber, 'New Rate'),
+        other: readNumber(r, ['OTHER'], rowNumber, 'Other'),
+        diff: readNumber(r, ['DIFF'], rowNumber, 'Diff'),
+        erp_rate: readNumber(r, ['ERP RATE'], rowNumber, 'ERP Rate'),
+        ret_test_cal: readNumber(r, ['RET TEST/CAL'], rowNumber, 'Ret Test/Cal'),
+        free_sale_litres: readNumber(r, ['FREE SALE LITRES', 'Free Sale Litres', 'FREE SALE LTR'], rowNumber, 'Free Sale Litres'),
+        free_sale_rupees: readNumber(r, ['FREE SALE RUPEES', 'Free Sale Rupees'], rowNumber, 'Free Sale Rupees'),
+        scheme: String(findCell(r, ['SCHEME'])?.[1] ?? '').trim().toUpperCase() === 'NA'
+          ? null
+          : readNumber(r, ['SCHEME'], rowNumber, 'Scheme'),
+        paytm: readNumber(r, ['PAYTM'], rowNumber, 'Paytm'),
+        net_cash_collection: readNumber(r, ['NET CASH COLLECTION'], rowNumber, 'Net Cash Collection'),
+        closing_dip_in_ltr: readNumber(r, ['CLOSING DIP IN LTR', 'CLOSING DIP'], rowNumber, 'Closing Dip'),
+        remark: String(findCell(r, ['REMARK'])?.[1] ?? '').trim(),
         date: dStr,
       });
     }
 
     if (datesSet.size > 1) {
-      logMessage(`[FAILED] Multiple dates detected in file: ${Array.from(datesSet).join(', ')}`);
+      logMessage(`[FAILED] Rows in column "Date": multiple sale dates detected (${Array.from(datesSet).join(', ')}). The file must contain one date.`);
       await pool.end();
       return false;
     }
 
-    const fileDate = datesSet.size === 1 ? Array.from(datesSet)[0] : new Date().toISOString().slice(0, 10);
+    const fileDate = Array.from(datesSet)[0];
 
     const client = await pool.connect();
     try {
@@ -155,7 +198,7 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
       const dbSumQty = checkRes.rows[0].sum_qty || 0;
 
       if (dbCount > 0) {
-        logMessage(`[ALREADY IN DATABASE] Sale date ${fileDate} is already loaded (${dbCount} rows, ${dbSumQty} L).`);
+        logMessage(`[SKIPPED] Sale date ${fileDate} is already in the database (${dbCount} rows, ${dbSumQty} L).`);
         if (dbCount !== validRows.length) {
           logMessage(`[WARNING] Excel has ${validRows.length} rows, but Database has ${dbCount} rows.`);
         }
@@ -165,7 +208,7 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
       }
 
       if (isDryRun) {
-        logMessage(`[DRY RUN SUCCESS] File validated cleanly. ${validRows.length} rows ready for date ${fileDate}.`);
+        logMessage(`[VALIDATED] File is valid: ${validRows.length} rows ready for date ${fileDate}; no database changes made.`);
         client.release();
         await pool.end();
         return true;
@@ -190,26 +233,26 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
 
       let totalQty = 0;
       for (const row of validRows) {
+        try {
+          await client.query(insertSql, [
+            row.erp_code, row.alds_name, row.state, row.tm, row.coordinator, row.type, row.tank_cap,
+            row.sale_qty, row.collection, row.new_rate, row.other, row.diff, row.erp_rate, row.ret_test_cal,
+            row.free_sale_litres, row.free_sale_rupees, row.scheme, row.paytm, row.net_cash_collection,
+            row.closing_dip_in_ltr, row.remark, fileDate
+          ]);
+        } catch (insertError: any) {
+          const dbLocation = insertError.column
+            ? `column "${insertError.column}"`
+            : insertError.constraint
+              ? `constraint "${insertError.constraint}"`
+              : 'database constraint/data';
+          throw new Error(`[FAILED] Row ${row.sourceRow} (Cost Code "${row.erp_code}"), ${dbLocation}: ${insertError.message}`);
+        }
         totalQty += row.sale_qty;
-        await client.query(insertSql, [
-          row.erp_code, row.alds_name, row.state, row.tm, row.coordinator, row.type, row.tank_cap,
-          row.sale_qty, row.collection, row.new_rate, row.other, row.diff, row.erp_rate, row.ret_test_cal,
-          row.free_sale_litres, row.free_sale_rupees, row.scheme, row.paytm, row.net_cash_collection,
-          row.closing_dip_in_ltr, row.remark, fileDate
-        ]);
       }
 
       await client.query('COMMIT');
-      logMessage(`[SUCCESS] LOADED ${path.basename(filePath)}: ${validRows.length} stations, date ${fileDate}, total volume: ${Math.round(totalQty)} L.`);
-
-      // Archive file
-      const archiveDir = path.join(__dirname, 'archive');
-      if (!fs.existsSync(archiveDir)) {
-        fs.mkdirSync(archiveDir, { recursive: true });
-      }
-      const archivePath = path.join(archiveDir, `${fileDate}_${path.basename(filePath)}`);
-      fs.copyFileSync(filePath, archivePath);
-      logMessage(`[ARCHIVED] Copied to ${archivePath}`);
+      logMessage(`[LOADED] ${path.basename(filePath)}: ${validRows.length} stations, date ${fileDate}, total volume: ${Math.round(totalQty)} L.`);
 
       client.release();
       await pool.end();
@@ -218,12 +261,12 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
       await client.query('ROLLBACK');
       client.release();
       await pool.end();
-      logMessage(`[FAILED] Database transaction error: ${dbErr.message}`);
+      logMessage(dbErr.message.startsWith('[FAILED]') ? dbErr.message : `[FAILED] Database error: ${dbErr.message}`);
       return false;
     }
   } catch (err: any) {
     await pool.end();
-    logMessage(`[FAILED] File parsing error: ${err.message}`);
+    logMessage(err.message.startsWith('[FAILED]') ? err.message : `[FAILED] File "${path.basename(filePath)}": ${err.message}`);
     return false;
   }
 }

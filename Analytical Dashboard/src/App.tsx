@@ -22,7 +22,6 @@ import { RSPDisparityReport } from './components/RSPDisparityReport';
 import { FreeSaleLeakageAudit } from './components/FreeSaleLeakageAudit';
 import { TMLeaderboard } from './components/TMLeaderboard';
 import { CustomerChurnPredictor } from './components/CustomerChurnPredictor';
-import { UploadModal } from './components/UploadModal';
 import { DatabaseInspectorModal } from './components/DatabaseInspectorModal';
 import { ExecutiveTelemetry, StationRecord } from './types';
 import { Loader2, AlertCircle } from 'lucide-react';
@@ -32,7 +31,6 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ReportTab>('master');
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [isDbInspectorOpen, setIsDbInspectorOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -76,14 +74,10 @@ export function App() {
     const isExternalConnected = isConnected && diag.engine === 'external';
     const connBadge = isExternalConnected
       ? '%c ONLINE (External PostgreSQL) '
-      : isConnected
-        ? '%c FALLBACK (Embedded PostgreSQL) '
-        : '%c OFFLINE / FALLBACK ';
+      : '%c OFFLINE ';
     const badgeStyle = isExternalConnected
       ? 'background: #059669; color: #ffffff; font-weight: bold; padding: 2px 6px; border-radius: 4px;'
-      : isConnected
-        ? 'background: #d97706; color: #ffffff; font-weight: bold; padding: 2px 6px; border-radius: 4px;'
-        : 'background: #dc2626; color: #ffffff; font-weight: bold; padding: 2px 6px; border-radius: 4px;';
+      : 'background: #dc2626; color: #ffffff; font-weight: bold; padding: 2px 6px; border-radius: 4px;';
     const titleStyle = 'font-weight: bold; color: #f97316; font-size: 13px;';
     const sectionHeader = 'color: #6366f1; font-weight: bold; font-size: 11px;';
 
@@ -102,7 +96,7 @@ export function App() {
     console.info(`Target Host       : ${diag.host}:${diag.port}`);
     console.info(`Target Database   : ${diag.database}`);
     console.info(`Database User     : ${diag.user}`);
-    console.info(`Connection State  : ${isExternalConnected ? 'Connected to external PostgreSQL (sale_alds)' : isConnected ? 'External PostgreSQL unavailable; using embedded fallback' : 'Disconnected / Refused'}`);
+    console.info(`Connection State  : ${isExternalConnected ? 'Connected to PostgreSQL (sale_tracker)' : 'Disconnected / Refused'}`);
     console.info(`Active Telemetry  : ${diag.active_source} (${telemetry.source_file})`);
     if (diag.error || diag.external_connection_error) {
       console.warn(`Database Notice   : ${diag.error || diag.external_connection_error}`);
@@ -129,7 +123,7 @@ export function App() {
       console.warn(
         `PostgreSQL database is currently OFFLINE at ${diag.host}:${diag.port}.\n` +
         `Reason: ${diag.error || 'Connection ECONNREFUSED'}.\n` +
-        `The application has automatically loaded operational data from '${telemetry.source_file}'.`
+        'No fallback data is served; connect PostgreSQL to restore dashboard data.'
       );
     }
     console.groupEnd();
@@ -144,7 +138,7 @@ export function App() {
         'Metric': 'Data Source',
         'UI Rendered': telemetry.source_file,
         'PostgreSQL DB': isConnected ? `sale_tracker (${diag.database})` : 'Offline',
-        'Sync Status': telemetry.source_file.includes('PostgreSQL') ? 'MATCHED' : 'FALLBACK'
+        'Sync Status': telemetry.source_file.includes('PostgreSQL') ? 'DATABASE' : 'UNEXPECTED SOURCE'
       },
       {
         'Metric': 'Active Date',
@@ -209,11 +203,12 @@ export function App() {
         if (telemetry.db_diagnostics?.connected && telemetry.db_diagnostics.engine === 'external') {
           showToast('Database connection and query audit re-verified successfully!');
         } else {
-          showToast('External PostgreSQL is unavailable. The dashboard is using its fallback database.');
+          showToast('External PostgreSQL is unavailable. Dashboard data is not being served.');
         }
       }
     } catch (err: any) {
       console.error('[API Telemetry Fetch Error]:', err);
+      setData(null);
       setError(err.message || 'Error connecting to server');
     } finally {
       setLoading(false);
@@ -280,7 +275,6 @@ export function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onRefresh={() => fetchData(true)}
-        onOpenUpload={() => setUploadModalOpen(true)}
         onExportCSV={handleExportCSV}
         onOpenDrawer={() => setIsDrawerOpen(true)}
         onOpenDbInspector={() => setIsDbInspectorOpen(true)}
@@ -444,16 +438,6 @@ export function App() {
           </>
         )}
       </main>
-
-      {/* Upload Modal */}
-      <UploadModal
-        isOpen={uploadModalOpen}
-        onClose={() => setUploadModalOpen(false)}
-        onUploadSuccess={(msg) => {
-          showToast(msg);
-          fetchData(true);
-        }}
-      />
 
       {/* PostgreSQL Database Inspector Modal */}
       <DatabaseInspectorModal

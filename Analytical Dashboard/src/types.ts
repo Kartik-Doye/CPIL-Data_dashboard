@@ -115,16 +115,17 @@ export interface ForecastPoint {
 export interface ForecastResult {
   horizon_days: number;
   predicted_total_7d: number;
-  mape_ensemble: number;
-  mape_linear: number;
-  mape_holt_winters: number;
-  mape_naive: number;
+  mape_ensemble: number | null;
+  mape_linear: number | null;
+  mape_holt_winters: number | null;
+  mape_naive: number | null;
+  backtest_days?: number;
   forecast: ForecastPoint[];
   insufficient?: boolean;
   days_available?: number;
   dates?: string[];
   historical_actuals?: number[];
-  models_metrics?: Record<string, { mape: number; rmse: number }>;
+  models_metrics?: Record<string, { mape: number | null; rmse: number | null }>;
   weights?: Record<string, number>;
   insights?: string[];
   reasons?: string[];
@@ -167,13 +168,13 @@ export interface DecliningStation {
 
 export interface DatabaseDiagnostics {
   connected: boolean;
-  engine?: 'external' | 'embedded';
+  engine?: 'external';
   connection_string: string;
   host: string;
   port: number;
   database: string;
   user: string;
-  active_source: 'PostgreSQL' | 'Embedded PostgreSQL' | 'Excel Fallback';
+  active_source: 'PostgreSQL';
   total_rows?: number;
   min_date?: string;
   max_date?: string;

@@ -25,8 +25,8 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
   if (!isOpen) return null;
 
   const connString = diagnostics?.connection_string || 'postgresql://bot_reader:****@localhost:5432/sale_alds';
-  const isConnected = diagnostics?.connected ?? false;
-  const isExternalConnected = isConnected && diagnostics?.engine === 'external';
+  const isConnected = diagnostics?.connected === true && diagnostics.engine === 'external';
+  const isExternalConnected = isConnected;
   const discrepancy = diagnostics?.discrepancy_analysis;
 
   const copyConnectionString = () => {
@@ -44,9 +44,7 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
             <div className={`p-2.5 rounded-xl border ${
               isExternalConnected
                 ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30'
-                : isConnected
-                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/30'
-                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-500/30'
+                : 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-500/30'
             }`}>
               <Database className="w-5 h-5" />
             </div>
@@ -58,11 +56,9 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
                 <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                   isExternalConnected
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30'
-                    : isConnected
-                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-200 dark:border-amber-500/30'
-                      : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-200 dark:border-rose-500/30'
+                    : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-200 dark:border-rose-500/30'
                 }`}>
-                  {isExternalConnected ? 'External PostgreSQL Connected' : isConnected ? 'Embedded Fallback Active' : 'DB Offline'}
+                  {isExternalConnected ? 'PostgreSQL Connected' : 'DB Offline'}
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -154,7 +150,7 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
                       {telemetry?.source_file.includes('PostgreSQL') ? (
                         <span className="text-emerald-600 dark:text-emerald-400 text-[10px] font-semibold">Matched</span>
                       ) : (
-                        <span className="text-amber-600 dark:text-amber-400 text-[10px] font-semibold">Fallback</span>
+                        <span className="text-rose-600 dark:text-rose-400 text-[10px] font-semibold">Unavailable</span>
                       )}
                     </td>
                   </tr>

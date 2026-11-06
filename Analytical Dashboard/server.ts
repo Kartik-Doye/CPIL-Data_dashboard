@@ -19,7 +19,6 @@ import {
   normalizeStateCode,
 } from './src/engine/analyticsViews.js';
 import { query, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
-import { readSpreadsheetRows } from './src/engine/excel.js';
 import { StationRecord } from './src/types.js';
 
 dotenv.config();
@@ -28,7 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -36,31 +35,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 let cachedTelemetry: any = null;
 let lastLoadedTime = 0;
 
-function parseDateCell(val: any): string {
-  if (!val) return new Date().toISOString().split('T')[0];
-  if (typeof val === 'number') {
-    const dateObj = new Date((val - 25569) * 86400 * 1000);
-    if (!isNaN(dateObj.getTime())) {
-      return dateObj.toISOString().split('T')[0];
-    }
-  }
-  const str = String(val).trim();
-  if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
-  const parts = str.split(/[-/]/);
-  if (parts.length === 3) {
-    if (parts[2].length === 4) {
-      const day = parts[0].padStart(2, '0');
-      const month = parts[1].padStart(2, '0');
-      const year = parts[2];
-      return `${year}-${month}-${day}`;
-    }
-  }
-  return new Date().toISOString().split('T')[0];
-}
-
 async function loadFromDatabase(): Promise<any | null> {
-  const isAlive = await testDbConnection();
-  if (!isAlive) return null;
   const dbConnection = getDbConnectionDetails();
 
   try {
@@ -188,171 +163,11 @@ async function loadFromDatabase(): Promise<any | null> {
       };
     });
 
-    const source = dbConnection.engine === 'external'
-      ? 'PostgreSQL Database (sale_alds)'
-      : 'Embedded PostgreSQL (local fallback)';
-    return processDataset(stations, source, history30d);
+    return processDataset(stations, 'PostgreSQL Database (sale_tracker)', history30d);
   } catch (err: any) {
     console.error('[DATABASE] Critical query failure:', err.message);
     return null;
   }
-}
-
-async function loadFromExcel(bufferOrPath?: Buffer | string): Promise<any | null> {
-  let sourceFileName = 'sale.xlsx';
-  let source: Buffer | string;
-
-  if (Buffer.isBuffer(bufferOrPath)) {
-    source = bufferOrPath;
-    sourceFileName = 'uploaded_file.xlsx';
-  } else {
-    const targetPath = bufferOrPath || path.join(__dirname, '..', 'Manual Work', 'sale.xlsx');
-    if (!fs.existsSync(targetPath)) {
-      console.warn(`Excel file not found at ${targetPath}`);
-      return null;
-    }
-    sourceFileName = path.basename(targetPath);
-    source = targetPath;
-  }
-
-  const rawRows = await readSpreadsheetRows(source);
-
-  const stations: StationRecord[] = [];
-
-  for (let i = 0; i < rawRows.length; i++) {
-    const r = rawRows[i];
-    const costCode = String(r['Cost Code'] || r['CostCode'] || r['COST CODE'] || '').trim();
-    if (!costCode) continue;
-
-    const aldsName = String(r['ALDS NAME'] || r['ALDS Name'] || r['alds_name'] || '').trim();
-    const rawState = String(r['STATE'] || r['State'] || '').trim();
-    const state = normalizeStateCode(rawState);
-    const tm = String(r['TM'] || r['tm'] || '').trim() || 'No TM';
-    const coordinator = String(r['Coordinator'] || r['COORDINATOR'] || '').trim() || 'Unassigned';
-    const type = String(r['Type'] || r['TYPE'] || 'LOCO').trim().toUpperCase() || 'LOCO';
-    const tankCap = String(r['TANK CAP'] || r['Tank Cap'] || '').trim();
-
-    const saleQty = Number(r['SALE QTY'] || r['Sale Qty'] || 0) || 0;
-    const collection = Number(r['COLLECTION'] || r['Collection'] || 0) || 0;
-    const newRate = Number(r['NEW RATE'] || r['New Rate'] || 0) || 0;
-    const other = Number(r['OTHER'] || 0) || 0;
-    const diff = Number(r['DIFF'] || 0) || 0;
-    const erpRate = Number(r['ERP RATE'] || 0) || 0;
-    const retTestCal = Number(r['RET TEST/CAL'] || 0) || 0;
-    const freeSaleLitres = Number(r['FREE SALE LITRES'] || r['Free Sale Litres'] || r['FREE SALE LTR'] || 0) || 0;
-    const freeSaleRupees = Number(r['FREE SALE RUPEES'] || r['Free Sale Rupees'] || 0) || 0;
-    const scheme = Number(r['SCHEME'] || 0) || 0;
-    const paytm = Number(r['PAYTM'] || 0) || 0;
-    const netCashCollection = Number(r['NET CASH COLLECTION'] || 0) || 0;
-    const closingDip = Number(r['CLOSING DIP IN LTR'] || r['CLOSING DIP'] || 0) || 0;
-    const remark = String(r['REMARK'] || r['Remark'] || '').trim();
-    const netTotalCollection = Number(r['Net Total Collection'] || r['NET TOTAL COLLECTION'] || collection) || collection;
-    const effectiveRsp = Number(r['Effective RSP'] || r['EFFECTIVE RSP'] || newRate) || newRate;
-    const collectionCheck = Number(r['Collection Check'] || 0) || 0;
-    const schemeAsPerHo = Number(r['Scheme as per H.O'] || 0) || 0;
-    const freeSalePct = Number(r['Free Sale %'] || 0) || 0;
-    const saleDate = parseDateCell(r['Date'] || r['date '] || r['DATE']);
-
-    const dailyBurn = saleQty > 0 ? saleQty : 1000;
-    const daysLeft = closingDip > 0 && dailyBurn > 0 ? Number((closingDip / dailyBurn).toFixed(1)) : 99;
-
-    let trendSlope = 0;
-    if (saleQty === 0) {
-      trendSlope = -100;
-    } else {
-      trendSlope = Number(((saleQty - 1050) / 1050 * 100).toFixed(1));
-    }
-
-    let statusBand: 'Achieved' | 'On track' | 'At risk' | 'Behind' = 'Achieved';
-    if (saleQty >= 1100) statusBand = 'Achieved';
-    else if (saleQty >= 990) statusBand = 'On track';
-    else if (saleQty >= 825) statusBand = 'At risk';
-    else statusBand = 'Behind';
-
-    stations.push({
-      id: `station-${i + 1}-${costCode}`,
-      erp_code: costCode,
-      alds_name: aldsName,
-      type,
-      coordinator,
-      state,
-      raw_state: rawState,
-      tm,
-      tank_cap: tankCap,
-      sale_qty: saleQty,
-      collection,
-      new_rate: newRate,
-      other,
-      diff,
-      erp_rate: erpRate,
-      ret_test_cal: retTestCal,
-      free_sale_litres: freeSaleLitres,
-      free_sale_rupees: freeSaleRupees,
-      scheme,
-      paytm,
-      net_cash_collection: netCashCollection,
-      closing_dip_in_ltr: closingDip,
-      remark,
-      net_total_collection: netTotalCollection,
-      effective_rsp: effectiveRsp,
-      collection_check: collectionCheck,
-      scheme_as_per_ho: schemeAsPerHo,
-      free_sale_pct: freeSalePct,
-      sale_date: saleDate,
-      days_left: daysLeft,
-      trend_slope: trendSlope,
-      status_band: statusBand,
-    });
-  }
-
-  // 90-Day Historical Projection matching August, September, October quarterly run-rate
-  const dailyView = getDailyView(stations);
-  const totalSaleQty = dailyView.sale_qty;
-  const effectiveRsp = dailyView.effective_rsp_avg;
-  const stationsTotal = stations.length;
-  const zeroSaleStations = stations.filter((s) => s.sale_qty === 0);
-  const stationsWithSale = stationsTotal - zeroSaleStations.length;
-
-  const history30d: any[] = [];
-  const activeDate = dailyView.sale_date;
-  const baseDateObj = new Date(activeDate);
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-  // Generate full 90-day history (Aug, Sept, Oct) so ML engine has complete seasonal cycle
-  for (let d = 89; d >= 0; d--) {
-    const curDate = new Date(baseDateObj);
-    curDate.setDate(curDate.getDate() - d);
-    const dateStr = curDate.toISOString().split('T')[0];
-    const dow = curDate.getDay();
-
-    let seasonalMult = 1.0;
-    if (dow === 0) seasonalMult = 1.07;
-    else if (dow === 6) seasonalMult = 1.05;
-    else if (dow === 5) seasonalMult = 1.02;
-    else if (dow === 1) seasonalMult = 0.96;
-    else seasonalMult = 0.98 + (Math.sin(d / 5) * 0.03);
-
-    // Festival demand dip / surge for Gandhi Jayanti / Dussehra / Janmashtami
-    if (dateStr.endsWith('10-02') || dateStr.endsWith('08-15')) {
-      seasonalMult *= 0.88;
-    }
-
-    const pseudoRandom = 1.0 + (((d * 19) % 7) - 3) * 0.004;
-    const dayVolume = d === 0 ? totalSaleQty : Math.round(totalSaleQty * seasonalMult * pseudoRandom);
-    const dayColl = Math.round(dayVolume * effectiveRsp);
-
-    history30d.push({
-      date: dateStr,
-      day_name: dayNames[dow],
-      sale_qty: dayVolume,
-      collection: dayColl,
-      effective_rsp: effectiveRsp,
-      active_stations: stationsWithSale + (d % 4 === 0 ? -1 : 0),
-      zero_sale_count: zeroSaleStations.length + (d % 4 === 0 ? 1 : 0),
-    });
-  }
-
-  return processDataset(stations, sourceFileName, history30d);
 }
 
 function processDataset(stations: StationRecord[], sourceFileName: string, historySeries: any[]) {
@@ -454,36 +269,27 @@ function processDataset(stations: StationRecord[], sourceFileName: string, histo
 }
 
 async function getTelemetryData(forceRefresh = false) {
+  const isConnected = await testDbConnection(forceRefresh);
+  if (!isConnected) {
+    cachedTelemetry = null;
+    lastLoadedTime = 0;
+    return null;
+  }
+
   const now = Date.now();
   if (cachedTelemetry && !forceRefresh && now - lastLoadedTime < 30000) {
     return cachedTelemetry;
   }
 
-  // Run audit report on PostgreSQL
-  const dbAudit = await getDbAuditReport(forceRefresh);
-
-  // 1. Strictly pull from local PostgreSQL database
-  let loadedTelemetry: any = null;
-  const dbData = await loadFromDatabase();
-  if (dbData) {
-    loadedTelemetry = dbData;
-  } else {
-    // 2. Fallback to Excel for local development/studio environment if DB is offline
-    const excelData = await loadFromExcel();
-    if (excelData) {
-      console.info('[DATABASE] PostgreSQL offline. Falling back to sale.xlsx for UI verification.');
-      loadedTelemetry = excelData;
-    }
-  }
+  const dbAudit = await getDbAuditReport();
+  const loadedTelemetry = await loadFromDatabase();
 
   if (!loadedTelemetry) {
-    console.error('[DATABASE] Critical: Unable to load data from PostgreSQL or Excel. Dashboard is currently offline.');
+    console.error('[DATABASE] Unable to load telemetry from PostgreSQL table sale_tracker.');
     return null;
   }
 
-  // Calculate discrepancy analysis between UI active data and PostgreSQL records
-  const isPostgresSource = dbAudit.engine === 'external'
-    && loadedTelemetry.source_file === 'PostgreSQL Database (sale_alds)';
+  const isPostgresSource = loadedTelemetry.source_file === 'PostgreSQL Database (sale_tracker)';
   const isExternalDatabaseConnected = dbAudit.connected && dbAudit.engine === 'external';
   const hasDiscrepancy = Boolean(
     !isExternalDatabaseConnected ||
@@ -492,22 +298,16 @@ async function getTelemetryData(forceRefresh = false) {
     (isExternalDatabaseConnected && dbAudit.latest_date_stations && dbAudit.latest_date_stations !== loadedTelemetry.stations_total)
   );
 
-  let discrepancyReason = 'UI data matches active PostgreSQL records.';
-  if (!isExternalDatabaseConnected) {
-    discrepancyReason = `External PostgreSQL is unavailable (${dbAudit.external_connection_error || dbAudit.error || 'connection failed'}). UI is using '${loadedTelemetry.source_file}'.`;
-  } else if (!isPostgresSource) {
-    discrepancyReason = `PostgreSQL is connected, but UI is running on '${loadedTelemetry.source_file}' because table 'sale_tracker' is empty or unpopulated. Run 'npm run load-sales' to populate.`;
+  let discrepancyReason = 'UI data is loaded from PostgreSQL table sale_tracker.';
+  if (!isPostgresSource) {
+    discrepancyReason = 'Telemetry source does not match the configured PostgreSQL table.';
   } else if (hasDiscrepancy) {
     discrepancyReason = `Discrepancy detected: UI is displaying date ${loadedTelemetry.date} (${loadedTelemetry.stations_total} stations, ${loadedTelemetry.total_sale_qty} L), but DB max date is ${dbAudit.latest_date} (${dbAudit.latest_date_stations} stations, ${dbAudit.latest_date_sale_qty} L).`;
   }
 
   loadedTelemetry.db_diagnostics = {
     ...dbAudit,
-    active_source: isPostgresSource
-      ? 'PostgreSQL'
-      : loadedTelemetry.source_file.includes('Embedded PostgreSQL')
-        ? 'Embedded PostgreSQL'
-        : 'Excel Fallback',
+    active_source: 'PostgreSQL',
     discrepancy_analysis: {
       has_discrepancy: hasDiscrepancy,
       reason: discrepancyReason,
@@ -526,7 +326,7 @@ async function getTelemetryData(forceRefresh = false) {
   console.log(`Connection String : ${dbAudit.connection_string}`);
   console.log(`Database Host     : ${dbAudit.host} / ${dbAudit.database}`);
   console.log(`Database User     : ${dbAudit.user}`);
-  console.log(`Database Status   : ${dbAudit.engine === 'external' ? 'ONLINE (External PostgreSQL - sale_alds)' : 'FALLBACK (Embedded PostgreSQL)'}`);
+  console.log(`Database Status   : ${dbAudit.connected ? 'ONLINE (PostgreSQL)' : 'OFFLINE'}`);
   console.log(`Active UI Source  : ${loadedTelemetry.source_file}`);
   if (dbAudit.connected) {
     console.log(`Total Rows in DB  : ${dbAudit.total_rows} (${dbAudit.distinct_days || 0} distinct days, ${dbAudit.distinct_stations || 0} stations)`);
@@ -565,8 +365,8 @@ app.get('/api/telemetry', async (req: Request, res: Response) => {
     const forceRefresh = req.query.refresh === 'true';
     const data = await getTelemetryData(forceRefresh);
     if (!data) {
-      console.warn(`[API] GET ${req.url} - Data unavailable (Both PostgreSQL and Excel empty)`);
-      res.status(503).json({ error: 'No telemetry data available. Please check database connection or sale.xlsx file.' });
+      console.warn(`[API] GET ${req.url} - PostgreSQL telemetry unavailable`);
+      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable. Verify the database connection and ensure sale_tracker contains data.' });
       return;
     }
     res.json(data);
@@ -640,28 +440,9 @@ app.post('/api/simulate', async (req: Request, res: Response) => {
 });
 
 app.post('/api/upload', async (req: Request, res: Response) => {
-  try {
-    const { base64Data, filename } = req.body;
-    if (typeof base64Data !== 'string' || !base64Data) {
-      res.status(400).json({ error: 'Missing base64 data' });
-      return;
-    }
-    if (typeof filename !== 'string' || !filename.toLowerCase().endsWith('.xlsx')) {
-      res.status(415).json({ error: 'Unsupported spreadsheet format. Upload an .xlsx file.' });
-      return;
-    }
-    const buffer = Buffer.from(base64Data, 'base64');
-    const processed = await loadFromExcel(buffer);
-    if (!processed) {
-      res.status(422).json({ error: 'Unable to parse spreadsheet' });
-      return;
-    }
-    cachedTelemetry = processed;
-    lastLoadedTime = Date.now();
-    res.json({ success: true, message: `Successfully loaded ${filename}`, date: processed.date });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+  res.status(409).json({
+    error: 'Spreadsheet uploads do not write to PostgreSQL and are disabled. Use `npm run load-sales` to validate and load workbook data into sale_tracker.',
+  });
 });
 
 app.get('/api/export/csv', async (_req: Request, res: Response) => {

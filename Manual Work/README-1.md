@@ -11,7 +11,7 @@ of adding a date column, saving as CSV, and importing via pgAdmin.
 1. Reads `sale.xlsx` (28 columns, one row per station).
 2. Takes the sale date from the **Date** column (the whole file must be one day).
 3. Checks if that date is already in the database:
-   - **Already loaded** → prints `ALREADY IN DATABASE` and skips (no duplicates).
+   - **Already loaded** → prints `[SKIPPED]` and skips (no duplicates).
    - If the row count or `SUM(SALE QTY)` differs from the database, prints a
      **WARNING** (new data may have been pasted without changing the date).
 4. Validates the file:
@@ -22,8 +22,10 @@ of adding a date column, saving as CSV, and importing via pgAdmin.
    - A blank or repeated Cost Code stops the file.
 5. Inserts all rows for that date in **one transaction** — either the whole
    day loads, or nothing does.
-6. After a successful load, copies the file to `archive/dd-mm-yyyy.xlsx`.
-7. Writes a timestamped log to `logs/`.
+6. Writes a timestamped log to `logs/`.
+
+The loader does not create an archive copy. The source workbook remains where
+you saved it; save a separate backup yourself only if you need one.
 
 The database user `bot_loader` can only **SELECT** and **INSERT**. It cannot
 UPDATE or DELETE, so the script can never erase history.
@@ -124,14 +126,17 @@ python load_sales.py
 
 ### Step 3 — Read the report
 
-The script prints one of these messages:
+The terminal shows a clear result. Row numbers in error messages are Excel row
+numbers, including the header row as row 1:
 
 | Message | Meaning | What to do |
 |---|---|---|
-| `LOADED sale.xlsx: 315 rows, date 2026-10-15` | Success — the day is in the database. | Nothing. Done. |
-| `ALREADY IN DATABASE sale.xlsx` | This date was loaded before. | Nothing, unless you see a WARNING. |
-| `WARNING: file has N rows ... but database has M rows` | The date exists but the file looks different — you may have pasted new data without changing the date. | Check the Date column. If it's a new day, fix the date and rerun. If you need to replace the old data, see "Replace a day" below. |
-| `FAILED sale.xlsx: ...` | The file has a problem (bad column, non-numeric value, blank Cost Code, etc.). The reason is shown. Nothing was saved. | Fix the problem in Excel, save, and rerun. |
+| `[LOADED] sale.xlsx: 316 stations, date 2026-11-01, total volume: ... L` | Success — the day was inserted into the database. | Nothing. Done. |
+| `[SKIPPED] Date ... is already in the database` | That date already exists and was not inserted again. | Check the workbook's Date column if this is unexpected. |
+| `[VALIDATED] ... no database changes made` | The dry run passed validation. | Run without `--dry-run` to insert. |
+| `[FAILED] Row 18, column "SALE QTY": expected a number, got "abc"` | The indicated Excel row and column contain invalid data. Header errors say `Header row`. | Fix that cell in Excel, save, and rerun. No partial day is committed. |
+| `[FAILED] Row 18 (Cost Code "..."), column/constraint ...` | PostgreSQL rejected that station row. | Inspect the reported field or constraint and correct the source data. The load transaction is rolled back. |
+| `[FAILED] Database error: ...` | The database could not be reached or rejected the operation without a specific row. | Check PostgreSQL status, credentials, schema, and permissions. |
 
 The same output is saved to `logs/load_YYYYMMDD_HHMMSS.log`.
 
@@ -207,9 +212,8 @@ The corrected file will load fresh.
 | `requirements.txt` | Python libraries to install. |
 | `.env` | Your passwords and settings (not committed to git). |
 | `.env.example` | Template for `.env`. |
-| `.gitignore` | Tells git to ignore `.env`, logs, archive, and `sale.xlsx`. |
+| `.gitignore` | Tells git to ignore `.env`, logs, and `sale.xlsx`. |
 | `sale.xlsx` | Today's data file (overwritten each day). |
-| `archive/` | After each successful load, a dated copy is saved here. |
 | `logs/` | Timestamped log files, one per run. |
 
 ---

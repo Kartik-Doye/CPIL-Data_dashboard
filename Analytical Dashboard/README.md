@@ -2,8 +2,9 @@
 
 The dashboard frontend is built with React, TypeScript, and Vite. An Express
 server provides the API and connects to PostgreSQL using `pg`. When external
-PostgreSQL is unavailable, the app can use its embedded PGlite database or
-Excel fallback; the DB Inspector identifies which source is active.
+PostgreSQL is required. The dashboard does not use embedded PGlite or Excel
+fallback data; when PostgreSQL is unavailable or `sale_tracker` has no usable
+rows, API requests return an error rather than serving other data.
 
 ## Setup
 
@@ -23,6 +24,13 @@ The `npm run test-db` command performs a read-only check of the PostgreSQL
 connection and required tables. `npm run build` creates the production
 frontend bundle; set `NODE_ENV=production` when starting the server to serve
 that bundle.
+
+To load workbook data, use `npm run load-sales` from the project root. This
+validates the workbook and writes it to PostgreSQL; uploading a workbook through
+the dashboard is disabled because it would not persist data to the database.
+
+For an explanation of the visible dashboard, navigation, filters, and report
+catalog, see [UI_GUIDE.md](UI_GUIDE.md).
 
 ## Database schema
 

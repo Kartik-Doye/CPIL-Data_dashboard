@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { Readable } from 'node:stream';
 
 type SpreadsheetSource = string | Buffer;
+export type SpreadsheetRow = Record<string, unknown> & { readonly __rowNumber: number };
 
 function cellValue(value: ExcelJS.CellValue): unknown {
   if (value === null || value === undefined) return '';
@@ -15,7 +16,7 @@ function cellValue(value: ExcelJS.CellValue): unknown {
   return '';
 }
 
-export async function readSpreadsheetRows(source: SpreadsheetSource): Promise<Record<string, unknown>[]> {
+export async function readSpreadsheetRows(source: SpreadsheetSource): Promise<SpreadsheetRow[]> {
   if (typeof source === 'string' && !source.toLowerCase().endsWith('.xlsx')) {
     throw new Error('Unsupported spreadsheet format. Save the workbook as .xlsx and try again.');
   }
@@ -40,10 +41,11 @@ export async function readSpreadsheetRows(source: SpreadsheetSource): Promise<Re
     throw new Error('Spreadsheet does not contain a header row.');
   }
 
-  const rows: Record<string, unknown>[] = [];
+  const rows: SpreadsheetRow[] = [];
   worksheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    const values: Record<string, unknown> = {};
+    const values = { __rowNumber: rowNumber } as SpreadsheetRow;
+    Object.defineProperty(values, '__rowNumber', { value: rowNumber, enumerable: false });
     for (let index = 0; index < headers.length; index += 1) {
       if (headers[index]) {
         values[headers[index]] = cellValue(row.getCell(index + 1).value);

@@ -1,6 +1,9 @@
 # GO Gas Database Troubleshooting Guide
 
-If the dashboard shows **Embedded PostgreSQL** or **Excel Fallback** as its source, it is not currently reading live data from external PostgreSQL. The DB Inspector also shows the active source and connection result.
+The dashboard uses external PostgreSQL only. If the database is unavailable or
+`sale_tracker` is empty, the dashboard returns an error rather than displaying
+spreadsheet or embedded fallback data. The DB Inspector and `npm run test-db`
+show the connection result.
 
 ## The Error: `connect ECONNREFUSED 127.0.0.1:5432`
 This error means **PostgreSQL is not running** on your computer.

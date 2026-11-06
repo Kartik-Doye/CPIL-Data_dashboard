@@ -273,6 +273,123 @@ function optimizeHoltWinters(data: number[], m = 7): [number, number, number] {
   return bestParams;
 }
 
+type ForecastModel = 'linear' | 'holt_winters' | 'naive_last_week' | 'same_weekday_avg';
+
+interface BacktestErrors {
+  percentage: Record<ForecastModel, number[]>;
+  squared: Record<ForecastModel, number[]>;
+  ensemblePercentage: number[];
+  ensembleSquared: number[];
+  scoredDays: number;
+}
+
+function createBacktestErrors(): BacktestErrors {
+  return {
+    percentage: {
+      linear: [],
+      holt_winters: [],
+      naive_last_week: [],
+      same_weekday_avg: [],
+    },
+    squared: {
+      linear: [],
+      holt_winters: [],
+      naive_last_week: [],
+      same_weekday_avg: [],
+    },
+    ensemblePercentage: [],
+    ensembleSquared: [],
+    scoredDays: 0,
+  };
+}
+
+function inverseMapeWeights(
+  errors: Record<ForecastModel, number[]>
+): Record<ForecastModel, number> {
+  const models: ForecastModel[] = ['linear', 'holt_winters', 'naive_last_week', 'same_weekday_avg'];
+  const inverseErrors = models.map(model => {
+    const mape = errors[model].length > 0 ? mean(errors[model]) * 100 : null;
+    return mape === null ? 0 : 1 / Math.max(mape, 1);
+  });
+  const total = inverseErrors.reduce((sum, weight) => sum + weight, 0);
+
+  if (total === 0) {
+    return {
+      linear: 0.25,
+      holt_winters: 0.25,
+      naive_last_week: 0.25,
+      same_weekday_avg: 0.25,
+    };
+  }
+
+  return {
+    linear: inverseErrors[0] / total,
+    holt_winters: inverseErrors[1] / total,
+    naive_last_week: inverseErrors[2] / total,
+    same_weekday_avg: inverseErrors[3] / total,
+  };
+}
+
+function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): BacktestErrors {
+  const errors = createBacktestErrors();
+  const firstTestIndex = Math.max(7, actuals.length - maxWindows);
+
+  for (let testIndex = firstTestIndex; testIndex < actuals.length; testIndex++) {
+    const trainDates = dates.slice(0, testIndex);
+    const trainActuals = actuals.slice(0, testIndex);
+    const testDate = dates[testIndex];
+    const actual = actuals[testIndex];
+
+    const trainFeatures = buildFeaturesNoLeak(trainDates, trainActuals);
+    const linearModel = new LinearRegressionModel();
+    linearModel.fit(trainFeatures, trainActuals);
+    const testFeatures = buildFeaturesNoLeak(
+      [...trainDates, testDate],
+      [...trainActuals, 0]
+    );
+    const linearPrediction = Math.max(linearModel.predict(testFeatures[testFeatures.length - 1]), 0);
+
+    const [alpha, beta, gamma] = optimizeHoltWinters(trainActuals, 7);
+    const { forecast: holtWintersForecast } = holtWinters(trainActuals, alpha, beta, gamma, 7, 1);
+    const modelPredictions: Record<ForecastModel, number> = {
+      linear: linearPrediction,
+      holt_winters: holtWintersForecast[0] ?? mean(trainActuals),
+      naive_last_week: naiveLastWeek(trainDates, trainActuals, testDate),
+      same_weekday_avg: sameWeekdayAvg(trainDates, trainActuals, testDate),
+    };
+
+    if (actual > 0) {
+      const weights = inverseMapeWeights(errors.percentage);
+      let ensemblePrediction = Object.entries(weights).reduce(
+        (sum, [model, weight]) => sum + modelPredictions[model as ForecastModel] * weight,
+        0
+      );
+      if (getFestivalName(testDate)) ensemblePrediction *= 0.94;
+
+      for (const model of Object.keys(modelPredictions) as ForecastModel[]) {
+        const difference = modelPredictions[model] - actual;
+        errors.percentage[model].push(Math.abs(difference) / actual);
+        errors.squared[model].push(difference ** 2);
+      }
+
+      const ensembleDifference = ensemblePrediction - actual;
+      errors.ensemblePercentage.push(Math.abs(ensembleDifference) / actual);
+      errors.ensembleSquared.push(ensembleDifference ** 2);
+      errors.scoredDays++;
+    }
+  }
+
+  return errors;
+}
+
+function meanPercentageError(errors: number[]): number | null {
+  return errors.length > 0 ? Math.round(mean(errors) * 1000) / 10 : null;
+}
+
+function rootMeanSquaredError(errors: number[]): number | null {
+  return errors.length > 0 ? Math.round(Math.sqrt(mean(errors))) : null;
+}
+
 // =========================================================================== //
 // Main Forecasting Pipeline
 // =========================================================================== //
@@ -309,10 +426,11 @@ export function generateForecast(
       days_available: daysAvailable,
       horizon_days: forecastDays,
       predicted_total_7d: 0,
-      mape_ensemble: 0,
-      mape_linear: 0,
-      mape_holt_winters: 0,
-      mape_naive: 0,
+      mape_ensemble: null,
+      mape_linear: null,
+      mape_holt_winters: null,
+      mape_naive: null,
+      backtest_days: 0,
       dates: dates.map(d => d.toISOString().slice(0, 10)),
       historical_actuals: actuals,
       forecast: [],
@@ -320,7 +438,7 @@ export function generateForecast(
       weights: {},
       insights: [
         `Only ${daysAvailable} historical day(s) detected. Forecasting algorithms require at least 7 to 14 sequential days to establish weekly cycles.`,
-        `When connected to your local PostgreSQL database (sale_alds on localhost:5432), all 3 months of data (Aug, Sept, Oct) are ingested automatically for high-accuracy training.`
+        `Historical observations are read from PostgreSQL table sale_tracker; ${daysAvailable} day(s) are currently available for training.`
       ],
       reasons: [
         'Insufficient historical length to optimize seasonal gamma parameter.',
@@ -344,60 +462,14 @@ export function generateForecast(
   const [alpha, beta, gamma] = optimizeHoltWinters(actuals, 7);
   const { forecast: hwRaw } = holtWinters(actuals, alpha, beta, gamma, 7, forecastDays);
 
-  // 3. Backtest holdout (last 7 days)
-  const holdout = Math.min(7, Math.floor(actuals.length / 2));
-  const trainDates = dates.slice(0, dates.length - holdout);
-  const trainActuals = actuals.slice(0, actuals.length - holdout);
-  const testDates = dates.slice(dates.length - holdout);
-  const testActuals = actuals.slice(actuals.length - holdout);
-
-  const trainFeat = buildFeaturesNoLeak(trainDates, trainActuals);
-  const linBt = new LinearRegressionModel();
-  linBt.fit(trainFeat, trainActuals);
-
-  const { forecast: hwBt } = holtWinters(trainActuals, alpha, beta, gamma, 7, holdout);
-
-  const linErrors: number[] = [];
-  const hwErrors: number[] = [];
-  const naiveErrors: number[] = [];
-  const weekdayErrors: number[] = [];
-
-  for (let i = 0; i < holdout; i++) {
-    const act = testActuals[i];
-    const tDate = testDates[i];
-    if (act > 0) {
-      const nPred = naiveLastWeek(trainDates, trainActuals, tDate);
-      const wPred = sameWeekdayAvg(trainDates, trainActuals, tDate);
-      const hPred = hwBt[i] || act;
-      const lPred = linBt.predict(trainFeat[trainFeat.length - 1] || [0]);
-
-      linErrors.push(Math.abs(act - lPred) / act);
-      hwErrors.push(Math.abs(act - hPred) / act);
-      naiveErrors.push(Math.abs(act - nPred) / act);
-      weekdayErrors.push(Math.abs(act - wPred) / act);
-    }
-  }
-
-  const linMape = linErrors.length > 0 ? (mean(linErrors) * 100) : 12.0;
-  const hwMape = hwErrors.length > 0 ? (mean(hwErrors) * 100) : 10.0;
-  const naiveMape = naiveErrors.length > 0 ? (mean(naiveErrors) * 100) : 15.0;
-  const weekdayMape = weekdayErrors.length > 0 ? (mean(weekdayErrors) * 100) : 14.0;
-
-  // Inverse MAPE weights
-  const wLin = 1 / Math.max(linMape, 1);
-  const wHw = 1 / Math.max(hwMape, 1);
-  const wNaive = 1 / Math.max(naiveMape, 1);
-  const wWeekday = 1 / Math.max(weekdayMape, 1);
-  const totalWeight = wLin + wHw + wNaive + wWeekday;
-
-  const weights = {
-    linear: Math.round((wLin / totalWeight) * 1000) / 1000,
-    holt_winters: Math.round((wHw / totalWeight) * 1000) / 1000,
-    naive_last_week: Math.round((wNaive / totalWeight) * 1000) / 1000,
-    same_weekday_avg: Math.round((wWeekday / totalWeight) * 1000) / 1000,
-  };
-
-  const ensembleMape = Math.round(Math.min(hwMape, linMape, naiveMape, weekdayMape) * 0.9 * 10) / 10;
+  // Walk-forward validation only uses observations available before each test day.
+  const backtest = rollingBacktest(dates, actuals);
+  const weights = inverseMapeWeights(backtest.percentage);
+  const linMape = meanPercentageError(backtest.percentage.linear);
+  const hwMape = meanPercentageError(backtest.percentage.holt_winters);
+  const naiveMape = meanPercentageError(backtest.percentage.naive_last_week);
+  const weekdayMape = meanPercentageError(backtest.percentage.same_weekday_avg);
+  const ensembleMape = meanPercentageError(backtest.ensemblePercentage);
 
   // 4. Forecast Loop
   const extendedDates = [...dates];
@@ -490,9 +562,13 @@ export function generateForecast(
   const insights: string[] = [];
   const reasons: string[] = [];
 
-  insights.push(
-    `Weighted Ensemble model achieved lowest historical backtest error (${ensembleMape}% MAPE).`
-  );
+  if (ensembleMape !== null) {
+    insights.push(
+      `The ensemble's walk-forward validation MAPE was ${ensembleMape}% across ${backtest.scoredDays} positive-sales day(s).`
+    );
+  } else {
+    insights.push('Not enough positive-sales history is available to calculate a walk-forward accuracy score.');
+  }
 
   if (daysAvailable >= 60) {
     insights.push(
@@ -510,17 +586,18 @@ export function generateForecast(
     horizon_days: forecastDays,
     predicted_total_7d: total7dVolume,
     mape_ensemble: ensembleMape,
-    mape_linear: Math.round(linMape * 10) / 10,
-    mape_holt_winters: Math.round(hwMape * 10) / 10,
-    mape_naive: Math.round(naiveMape * 10) / 10,
+    mape_linear: linMape,
+    mape_holt_winters: hwMape,
+    mape_naive: naiveMape,
+    backtest_days: backtest.scoredDays,
     dates: dates.map(d => d.toISOString().slice(0, 10)),
     historical_actuals: actuals,
     forecast: forecastPoints,
     models_metrics: {
-      linear: { mape: Math.round(linMape * 10) / 10, rmse: Math.round(recentStd) },
-      holt_winters: { mape: Math.round(hwMape * 10) / 10, rmse: Math.round(recentStd * 0.95) },
-      naive_last_week: { mape: Math.round(naiveMape * 10) / 10, rmse: Math.round(recentStd * 1.1) },
-      same_weekday_avg: { mape: Math.round(weekdayMape * 10) / 10, rmse: Math.round(recentStd * 1.05) },
+      linear: { mape: linMape, rmse: rootMeanSquaredError(backtest.squared.linear) },
+      holt_winters: { mape: hwMape, rmse: rootMeanSquaredError(backtest.squared.holt_winters) },
+      naive_last_week: { mape: naiveMape, rmse: rootMeanSquaredError(backtest.squared.naive_last_week) },
+      same_weekday_avg: { mape: weekdayMape, rmse: rootMeanSquaredError(backtest.squared.same_weekday_avg) },
     },
     weights,
     insights,

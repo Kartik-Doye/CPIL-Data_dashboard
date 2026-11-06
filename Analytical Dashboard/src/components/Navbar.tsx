@@ -1,5 +1,5 @@
 import React from 'react';
-import { Flame, RefreshCw, Upload, Download, CheckCircle, AlertTriangle, Sun, Moon, PanelLeft, Database } from 'lucide-react';
+import { Flame, RefreshCw, Download, CheckCircle, AlertTriangle, Sun, Moon, PanelLeft, Database } from 'lucide-react';
 import { ExecutiveTelemetry } from '../types';
 
 interface NavbarProps {
@@ -8,7 +8,6 @@ interface NavbarProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onRefresh: () => void;
-  onOpenUpload: () => void;
   onExportCSV: () => void;
   onOpenDrawer?: () => void;
   onOpenDbInspector?: () => void;
@@ -20,7 +19,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   theme,
   onToggleTheme,
   onRefresh,
-  onOpenUpload,
   onExportCSV,
   onOpenDrawer,
   onOpenDbInspector,
@@ -142,15 +140,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="hidden sm:inline">Light</span>
               </>
             )}
-          </button>
-
-          <button
-            onClick={onOpenUpload}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition-colors shadow-xs cursor-pointer"
-            title="Upload new sale.xlsx"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Load File</span>
           </button>
 
           <button

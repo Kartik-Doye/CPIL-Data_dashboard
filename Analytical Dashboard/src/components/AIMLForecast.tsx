@@ -18,6 +18,11 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
 
   const maxVal = Math.max(...forecast.forecast.map((f) => f.upper_bound), currentSale);
   const minVal = Math.min(...forecast.forecast.map((f) => f.lower_bound), currentSale) * 0.95;
+  const accuracy =
+    forecast.mape_ensemble === null
+      ? null
+      : Math.max(0, Math.min(100, 100 - forecast.mape_ensemble));
+  const formatMape = (value: number | null) => value === null ? '—' : `${value}%`;
 
   return (
     <div className="space-y-6">
@@ -37,8 +42,8 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Statistically validated projection with 95% confidence intervals based on historical
-              backtesting against actual consumption rates.
+              Forecasts are estimates; the validation score below summarizes historical
+              walk-forward testing and does not guarantee future accuracy.
             </p>
           </div>
 
@@ -51,9 +56,12 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
             </div>
             <div className="w-px h-6 bg-slate-800" />
             <div>
-              <span className="text-slate-400 block text-[11px]">Backtest Error (MAPE):</span>
+              <span className="text-slate-400 block text-[11px]">Historical validation accuracy:</span>
               <span className="text-base font-bold font-mono text-indigo-300">
-                {forecast.mape_ensemble}%
+                {accuracy === null ? 'Not available' : `${accuracy.toFixed(1)}%`}
+              </span>
+              <span className="text-slate-500 block text-[10px]">
+                {forecast.backtest_days ?? 0} scored day(s); MAPE {formatMape(forecast.mape_ensemble)}
               </span>
             </div>
           </div>
@@ -67,15 +75,19 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
             <span className="text-xs font-semibold text-indigo-300">Ensemble (Active)</span>
             <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
           </div>
-          <div className="text-2xl font-bold font-mono text-white">{forecast.mape_ensemble}%</div>
-          <p className="text-[11px] text-slate-400 mt-1">Weighted Holt-Winters (55%) + Linear (45%)</p>
+          <div className="text-2xl font-bold font-mono text-white">
+            {accuracy === null ? '—' : `${accuracy.toFixed(1)}%`}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1">
+            Walk-forward accuracy; {forecast.backtest_days ?? 0} scored day(s)
+          </p>
         </div>
 
         <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-slate-300">Holt-Winters Exp Smoothing</span>
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-200">{forecast.mape_holt_winters}%</div>
+          <div className="text-2xl font-bold font-mono text-slate-200">{formatMape(forecast.mape_holt_winters)}</div>
           <p className="text-[11px] text-slate-400 mt-1">Level & trend smoothing with α=0.35, β=0.15</p>
         </div>
 
@@ -83,7 +95,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-slate-300">Linear Regression</span>
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-200">{forecast.mape_linear}%</div>
+          <div className="text-2xl font-bold font-mono text-slate-200">{formatMape(forecast.mape_linear)}</div>
           <p className="text-[11px] text-slate-400 mt-1">Least-squares trend line over 14d horizon</p>
         </div>
 
@@ -91,7 +103,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-slate-400">Baseline Naive</span>
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-400">{forecast.mape_naive}%</div>
+          <div className="text-2xl font-bold font-mono text-slate-400">{formatMape(forecast.mape_naive)}</div>
           <p className="text-[11px] text-slate-500 mt-1">Same day previous week baseline</p>
         </div>
       </div>
@@ -100,7 +112,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
           <Calendar className="w-4 h-4 text-orange-400" />
-          <span>Daily Forward Projections & 95% Confidence Bounds</span>
+          <span>Daily Forward Projections & Estimated Ranges</span>
         </h3>
 
         <div className="overflow-x-auto">
@@ -183,7 +195,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
           • <strong>Seasonality Adjustment:</strong> Saturdays and Sundays feature a +6% to +8% demand multiplier reflecting commercial AutoLPG taxi and intra-city transit consumption curves.
         </p>
         <p>
-          • <strong>Leak-Free Validation:</strong> Model weights and MAPE errors were backtested strictly on out-of-sample data without look-ahead contamination.
+          • <strong>Walk-forward validation:</strong> Each scored day is predicted using only earlier observations. Accuracy is 100% minus validation MAPE and is not a guarantee of future performance.
         </p>
       </div>
     </div>

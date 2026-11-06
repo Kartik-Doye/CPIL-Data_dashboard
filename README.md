@@ -1,8 +1,9 @@
 # GO Gas Executive Suite
 
-The project is a React dashboard served by an Express/TypeScript backend. It
-reports sales, station, team, and forecast analytics from PostgreSQL, with
-Excel/embedded fallbacks for local development.
+The project is a React dashboard served by an Express/TypeScript backend. Sales,
+station, team, and forecast history are sourced from PostgreSQL only. The
+dashboard does not fall back to spreadsheet or embedded data when PostgreSQL is
+unavailable.
 
 ## Requirements
 
@@ -19,13 +20,14 @@ npm run test-db
 npm run dev
 ```
 
-Open `http://localhost:3000`. The DB test verifies the PostgreSQL connection
+Open `http://localhost:5000`. The DB test verifies the PostgreSQL connection
 and the required `sale_tracker` and `state_map` tables. Configure connection
 settings in `Analytical Dashboard/.env`; never commit environment files.
 
-If PostgreSQL is unavailable, the dashboard can use its embedded/Excel
-fallback. Check the DB Inspector or run `npm run test-db` to distinguish a
-live PostgreSQL connection from fallback mode.
+PostgreSQL must be available and `sale_tracker` must contain data for the
+dashboard to load. If the connection or data is unavailable, the UI reports an
+error instead of showing cached or spreadsheet values. Use `npm run load-sales`
+to validate and load `Manual Work/sale.xlsx` into PostgreSQL.
 
 ## Useful commands
 

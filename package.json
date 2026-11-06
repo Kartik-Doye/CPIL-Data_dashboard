@@ -15,7 +15,6 @@
     "test-db": "tsx test_db.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.15",
     "@tailwindcss/vite": "^4.3.3",
     "@types/pg": "^8.23.1",
     "@vitejs/plugin-react": "^6.1.1",

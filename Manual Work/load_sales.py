@@ -8,7 +8,6 @@ import sys
 import os
 import argparse
 import datetime
-import shutil
 import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
@@ -37,7 +36,7 @@ def log(msg):
         f.write(formatted + "\n")
 
 def process_file(file_path, dry_run=False):
-    log(f"Processing: {os.path.basename(file_path)}")
+    log(f"[STARTED] Loading file: {os.path.basename(file_path)}")
     if not os.path.exists(file_path):
         log(f"[FAILED] File not found: {file_path}")
         return False
@@ -67,12 +66,7 @@ def process_file(file_path, dry_run=False):
             break
             
     if not cost_code_col:
-        log("[FAILED] Could not locate 'Cost Code' column in Excel header.")
-        return False
-
-    df = df[df[cost_code_col].notna() & (df[cost_code_col].astype(str).str.strip() != "")]
-    if df.empty:
-        log("[FAILED] No valid rows found with non-empty Cost Code.")
+        log('[FAILED] Header row, column "Cost Code": required column is missing.')
         return False
 
     # Extract date
@@ -82,18 +76,73 @@ def process_file(file_path, dry_run=False):
             date_col = col
             break
 
-    if not date_col or df[date_col].isna().all():
-        sale_date = datetime.date.today()
-    else:
-        sample_date = df[date_col].dropna().iloc[0]
-        if isinstance(sample_date, datetime.date):
-            sale_date = sample_date
-        else:
-            sale_date = pd.to_datetime(sample_date).date()
+    if not date_col:
+        log('[FAILED] Header row, column "Date": required column is missing.')
+        return False
+
+    parsed_dates = pd.to_datetime(df[date_col], errors="coerce").dt.date
+    if parsed_dates.isna().any():
+        index = parsed_dates[parsed_dates.isna()].index[0]
+        log(f'[FAILED] Row {index + 2}, column "{date_col}": invalid or missing date value "{df.loc[index, date_col]}".')
+        return False
+
+    unique_dates = set(parsed_dates.tolist())
+    if len(unique_dates) != 1:
+        date_rows = ", ".join(f"row {index + 2}={value}" for index, value in parsed_dates.items())
+        log(f'[FAILED] Column "{date_col}": multiple sale dates detected ({date_rows}). The file must contain one date.')
+        return False
+    sale_date = unique_dates.pop()
+
+    seen_codes = {}
+    for index, value in df[cost_code_col].items():
+        code = str(value).strip() if pd.notna(value) else ""
+        if not code:
+            log(f'[FAILED] Row {index + 2}, column "{cost_code_col}": value is required.')
+            return False
+        if code in seen_codes:
+            log(f'[FAILED] Row {index + 2}, column "{cost_code_col}": duplicate Cost Code "{code}" (first seen at row {seen_codes[code]}).')
+            return False
+        seen_codes[code] = index + 2
 
     log(f"Detected Sale Date: {sale_date} ({len(df)} stations)")
 
+    def number_value(row, index, col, aliases):
+        source_col = next((name for name in aliases if name in row.index), None)
+        if source_col is None or pd.isna(row[source_col]) or str(row[source_col]).strip() == "":
+            return 0
+        raw = row[source_col]
+        try:
+            return float(str(raw).replace(",", "").strip())
+        except (TypeError, ValueError):
+            raise ValueError(f'[FAILED] Row {index + 2}, column "{source_col}" ({col}): expected a number, got "{raw}".')
+
+    try:
+        for index, row in df.iterrows():
+            for label, aliases in [
+                ("Sale Qty", ["SALE QTY", "Sale Qty"]),
+                ("Collection", ["COLLECTION", "Collection"]),
+                ("New Rate", ["NEW RATE", "New Rate"]),
+                ("Other", ["OTHER"]),
+                ("Diff", ["DIFF"]),
+                ("ERP Rate", ["ERP RATE"]),
+                ("Ret Test/Cal", ["RET TEST/CAL"]),
+                ("Free Sale Litres", ["FREE SALE LITRES", "Free Sale Litres"]),
+                ("Free Sale Rupees", ["FREE SALE RUPEES", "Free Sale Rupees"]),
+                ("Scheme", ["SCHEME"]),
+                ("Paytm", ["PAYTM"]),
+                ("Net Cash Collection", ["NET CASH COLLECTION"]),
+                ("Closing Dip", ["CLOSING DIP IN LTR", "CLOSING DIP"]),
+            ]:
+                if label == "Scheme" and str(row.get("SCHEME", "")).strip().upper() == "NA":
+                    continue
+                number_value(row, index, label, aliases)
+    except ValueError as e:
+        log(str(e))
+        return False
+
     # Connect to Postgres
+    conn = None
+    cur = None
     try:
         conn = psycopg2.connect(
             host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
@@ -107,13 +156,13 @@ def process_file(file_path, dry_run=False):
         db_count, db_qty = row[0], row[1] or 0.0
 
         if db_count > 0:
-            log(f"[ALREADY IN DATABASE] Date {sale_date} is already loaded ({db_count} rows, {round(db_qty)} L).")
+            log(f"[SKIPPED] Date {sale_date} is already in the database ({db_count} rows, {round(db_qty)} L).")
             cur.close()
             conn.close()
             return True
 
         if dry_run:
-            log(f"[DRY RUN SUCCESS] File validated cleanly. {len(df)} rows ready for date {sale_date}.")
+            log(f"[VALIDATED] File is valid: {len(df)} rows ready for date {sale_date}; no database changes made.")
             cur.close()
             conn.close()
             return True
@@ -134,7 +183,7 @@ def process_file(file_path, dry_run=False):
         """
 
         total_qty = 0
-        for _, r in df.iterrows():
+        for index, r in df.iterrows():
             code = str(r[cost_code_col]).strip()
             name = str(r.get("ALDS NAME", r.get("alds_name", ""))).strip()
             st = str(r.get("STATE", r.get("State", ""))).strip()
@@ -143,44 +192,57 @@ def process_file(file_path, dry_run=False):
             tp = str(r.get("Type", r.get("TYPE", "LOCO"))).strip()
             cap = str(r.get("TANK CAP", r.get("Tank Cap", ""))).strip()
 
-            sqty = float(r.get("SALE QTY", r.get("Sale Qty", 0)) or 0)
-            coll = float(r.get("COLLECTION", r.get("Collection", 0)) or 0)
-            nrate = float(r.get("NEW RATE", r.get("New Rate", 0)) or 0)
-            other = float(r.get("OTHER", 0) or 0)
-            diff = float(r.get("DIFF", 0) or 0)
-            erate = float(r.get("ERP RATE", 0) or 0)
-            rtest = float(r.get("RET TEST/CAL", 0) or 0)
-            flit = float(r.get("FREE SALE LITRES", r.get("Free Sale Litres", 0)) or 0)
-            frup = float(r.get("FREE SALE RUPEES", r.get("Free Sale Rupees", 0)) or 0)
+            sqty = number_value(r, index, "Sale Qty", ["SALE QTY", "Sale Qty"])
+            coll = number_value(r, index, "Collection", ["COLLECTION", "Collection"])
+            nrate = number_value(r, index, "New Rate", ["NEW RATE", "New Rate"])
+            other = number_value(r, index, "Other", ["OTHER"])
+            diff = number_value(r, index, "Diff", ["DIFF"])
+            erate = number_value(r, index, "ERP Rate", ["ERP RATE"])
+            rtest = number_value(r, index, "Ret Test/Cal", ["RET TEST/CAL"])
+            flit = number_value(r, index, "Free Sale Litres", ["FREE SALE LITRES", "Free Sale Litres"])
+            frup = number_value(r, index, "Free Sale Rupees", ["FREE SALE RUPEES", "Free Sale Rupees"])
             scheme_val = r.get("SCHEME", 0)
-            scheme = None if str(scheme_val).strip() == "NA" else float(scheme_val or 0)
-            paytm = float(r.get("PAYTM", 0) or 0)
-            ncash = float(r.get("NET CASH COLLECTION", 0) or 0)
-            cdip = float(r.get("CLOSING DIP IN LTR", r.get("CLOSING DIP", 0)) or 0)
+            scheme = None if str(scheme_val).strip().upper() == "NA" else number_value(r, index, "Scheme", ["SCHEME"])
+            paytm = number_value(r, index, "Paytm", ["PAYTM"])
+            ncash = number_value(r, index, "Net Cash Collection", ["NET CASH COLLECTION"])
+            cdip = number_value(r, index, "Closing Dip", ["CLOSING DIP IN LTR", "CLOSING DIP"])
             rem = str(r.get("REMARK", r.get("Remark", ""))).strip()
 
             total_qty += sqty
-            cur.execute(insert_sql, (
-                code, name, st, tm, coord, tp, cap,
-                sqty, coll, nrate, other, diff, erate, rtest,
-                flit, frup, scheme, paytm, ncash, cdip, rem, sale_date
-            ))
+            try:
+                cur.execute(insert_sql, (
+                    code, name, st, tm, coord, tp, cap,
+                    sqty, coll, nrate, other, diff, erate, rtest,
+                    flit, frup, scheme, paytm, ncash, cdip, rem, sale_date
+                ))
+            except Exception as e:
+                db_column = getattr(getattr(e, "diag", None), "column_name", None)
+                location = f', column "{db_column}"' if db_column else ", database constraint/data"
+                raise RuntimeError(f'[FAILED] Row {index + 2} (Cost Code "{code}"){location}: {e}') from e
 
         conn.commit()
-        log(f"[SUCCESS] LOADED {os.path.basename(file_path)}: {len(df)} stations, date {sale_date}, total volume: {round(total_qty)} L.")
-
-        # Archive
-        archive_dir = os.path.join(_this_dir, "archive")
-        os.makedirs(archive_dir, exist_ok=True)
-        archive_path = os.path.join(archive_dir, f"{sale_date}_{os.path.basename(file_path)}")
-        shutil.copyfile(file_path, archive_path)
-        log(f"[ARCHIVED] Saved to {archive_path}")
+        log(f"[LOADED] {os.path.basename(file_path)}: {len(df)} stations, date {sale_date}, total volume: {round(total_qty)} L.")
 
         cur.close()
         conn.close()
         return True
     except Exception as e:
-        log(f"[FAILED] Database execution error: {e}")
+        message = str(e)
+        log(message if message.startswith("[FAILED]") else f"[FAILED] Database error: {message}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception as rollback_error:
+                log(f"[ERROR] Could not roll back database transaction: {rollback_error}")
+            if cur:
+                try:
+                    cur.close()
+                except Exception as close_error:
+                    log(f"[ERROR] Could not close database cursor: {close_error}")
+            try:
+                conn.close()
+            except Exception as close_error:
+                log(f"[ERROR] Could not close database connection: {close_error}")
         return False
 
 if __name__ == "__main__":

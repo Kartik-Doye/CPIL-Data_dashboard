@@ -1,0 +1,2 @@
+npm run load-sales
+npm run dev
