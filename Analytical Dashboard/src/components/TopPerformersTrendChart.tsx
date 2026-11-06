@@ -165,7 +165,7 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
         <div className="min-w-0 rounded-xl bg-slate-50/80 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800 p-2 sm:p-4">
           <div className="w-full overflow-x-auto">
             <svg
-              className="w-full min-w-[34rem] h-64 sm:h-72"
+              className="w-full min-w-136 lg:min-w-0 h-64 sm:h-72"
               viewBox="0 0 760 280"
               role="img"
               aria-label={`Monthly sales trend for ${selectedStationErp === 'all' ? 'top five stations' : selectedStationErp}`}

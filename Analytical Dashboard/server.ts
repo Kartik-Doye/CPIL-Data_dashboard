@@ -20,6 +20,7 @@ import {
 } from './src/engine/analyticsViews.js';
 import { query, queryLoader, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
 import { StationMonthlySales, StationRecord } from './src/types.js';
+import { sendExecutiveBriefing } from './src/engine/emailReport.js';
 
 dotenv.config();
 
@@ -34,6 +35,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 let cachedTelemetry: any = null;
 let lastLoadedTime = 0;
+let emailSendInProgress = false;
+let lastEmailSentAt = 0;
 
 async function loadFromDatabase(): Promise<any | null> {
   const dbConnection = getDbConnectionDetails();
@@ -507,6 +510,66 @@ app.get('/api/telemetry', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error(`[API] GET ${req.url} - Fatal Error: ${err.message}`);
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/email/send', async (req: Request, res: Response) => {
+  const remoteAddress = req.socket.remoteAddress || '';
+  const normalizedAddress = remoteAddress.startsWith('::ffff:')
+    ? remoteAddress.slice('::ffff:'.length)
+    : remoteAddress;
+  const origin = req.get('origin');
+  let originAllowed = !origin;
+
+  if (origin) {
+    try {
+      const parsedOrigin = new URL(origin);
+      originAllowed = (
+        (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:') &&
+        parsedOrigin.host === req.get('host')
+      );
+    } catch {
+      originAllowed = false;
+    }
+  }
+
+  if (
+    (normalizedAddress !== '::1' && !normalizedAddress.startsWith('127.')) ||
+    !originAllowed ||
+    req.get('x-go-gas-email-request') !== 'authorized-client'
+  ) {
+    res.status(403).json({ error: 'Email sending is only available from this computer.' });
+    return;
+  }
+  if (emailSendInProgress) {
+    res.status(409).json({ error: 'An executive briefing email is already being sent.' });
+    return;
+  }
+  if (Date.now() - lastEmailSentAt < 30_000) {
+    res.status(429).json({ error: 'Please wait 30 seconds before sending another briefing.' });
+    return;
+  }
+
+  emailSendInProgress = true;
+  try {
+    const telemetry = await getTelemetryData(true);
+    if (!telemetry) {
+      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable. The briefing email was not sent.' });
+      return;
+    }
+
+    const result = await sendExecutiveBriefing(telemetry);
+    lastEmailSentAt = Date.now();
+    res.json({
+      message: `Executive briefing sent to ${result.recipientCount} configured recipient(s).`,
+      date: telemetry.date,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[EMAIL] Executive briefing send failed: ${message}`);
+    res.status(500).json({ error: `Executive briefing email failed: ${message}` });
+  } finally {
+    emailSendInProgress = false;
   }
 });
 

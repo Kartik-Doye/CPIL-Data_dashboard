@@ -127,7 +127,7 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({ data }) => {
       {/* Outcome Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Total Projected Collection */}
-        <div className="bg-slate-900/80 border border-emerald-500/30 rounded-xl p-5 shadow-sm bg-gradient-to-b from-emerald-950/20 to-transparent">
+        <div className="bg-slate-900/80 border border-emerald-500/30 rounded-xl p-5 shadow-sm bg-linear-to-b from-emerald-950/20 to-transparent">
           <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
             Projected Daily Collection
           </span>

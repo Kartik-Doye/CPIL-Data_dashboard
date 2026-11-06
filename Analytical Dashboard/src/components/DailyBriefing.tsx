@@ -11,6 +11,8 @@ import {
   Sparkles,
   MapPin,
   ShieldAlert,
+  Mail,
+  LoaderCircle,
 } from 'lucide-react';
 import { ExecutiveTelemetry } from '../types';
 
@@ -20,6 +22,8 @@ interface DailyBriefingProps {
 
 export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   const [copied, setCopied] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<{ message: string; success: boolean } | null>(null);
   const qty = (value: number) => value.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -113,6 +117,34 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
     setTimeout(() => setCopied(false), 2500);
   };
 
+  const handleSendEmail = async () => {
+    setEmailSending(true);
+    setEmailStatus(null);
+    try {
+      const response = await fetch('/api/email/send', {
+        method: 'POST',
+        headers: { 'X-GO-Gas-Email-Request': 'authorized-client' },
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json')
+        ? await response.json() as { message?: string; error?: string }
+        : null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `Email request failed (HTTP ${response.status}).`);
+      }
+      if (!payload?.message) {
+        throw new Error('The server returned an invalid email response.');
+      }
+      setEmailStatus({ message: payload.message, success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setEmailStatus({ message: `Email not sent: ${message}`, success: false });
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Briefing Top Banner */}
@@ -135,26 +167,51 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
             </div>
           </div>
 
-          <button
-            onClick={handleCopy}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-md cursor-pointer ${
-              copied
-                ? 'bg-emerald-600 text-white shadow-emerald-600/30'
-                : 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-600/30'
-            }`}
-          >
-            {copied ? (
-              <>
-                <Check className="w-4 h-4" />
-                <span>Copied to Clipboard!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4" />
-                <span>Copy for WhatsApp / Email</span>
-              </>
+          <div className="flex flex-col items-start sm:items-end gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleCopy}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-md cursor-pointer ${
+                  copied
+                    ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+                    : 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-600/30'
+                }`}
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Copied to Clipboard!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Copy for WhatsApp / Email</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleSendEmail}
+                disabled={emailSending}
+                title="Sends the current executive summary to the locally configured recipient(s)."
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-sky-700 hover:bg-sky-600 disabled:bg-slate-700 disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait"
+              >
+                {emailSending ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                <span>{emailSending ? 'Sending...' : 'Send Test Email'}</span>
+              </button>
+            </div>
+            {emailStatus && (
+              <p
+                role="status"
+                aria-live="polite"
+                className={`max-w-md text-xs ${emailStatus.success ? 'text-emerald-400' : 'text-rose-400'}`}
+              >
+                {emailStatus.message}
+              </p>
             )}
-          </button>
+            <p className="text-[10px] text-slate-500">
+              Test sends a real email to the configured recipient(s).
+            </p>
+          </div>
         </div>
       </div>
 
