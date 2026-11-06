@@ -56,7 +56,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
       {/* Status Bands Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Achieved */}
-        <div className="bg-slate-900/80 border border-emerald-500/30 rounded-xl p-4 shadow-sm bg-gradient-to-b from-emerald-950/20 to-transparent">
+        <div className="bg-slate-900/80 border border-emerald-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-emerald-950/20 to-transparent">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4" />
@@ -71,7 +71,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
         </div>
 
         {/* On Track */}
-        <div className="bg-slate-900/80 border border-indigo-500/30 rounded-xl p-4 shadow-sm bg-gradient-to-b from-indigo-950/20 to-transparent">
+        <div className="bg-slate-900/80 border border-indigo-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-indigo-950/20 to-transparent">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-indigo-400 flex items-center gap-1.5">
               <Clock className="w-4 h-4" />
@@ -86,7 +86,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
         </div>
 
         {/* At Risk */}
-        <div className="bg-slate-900/80 border border-amber-500/30 rounded-xl p-4 shadow-sm bg-gradient-to-b from-amber-950/20 to-transparent">
+        <div className="bg-slate-900/80 border border-amber-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-amber-950/20 to-transparent">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4" />
@@ -101,7 +101,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
         </div>
 
         {/* Behind */}
-        <div className="bg-slate-900/80 border border-rose-500/30 rounded-xl p-4 shadow-sm bg-gradient-to-b from-rose-950/20 to-transparent">
+        <div className="bg-slate-900/80 border border-rose-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-rose-950/20 to-transparent">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-rose-400 flex items-center gap-1.5">
               <XCircle className="w-4 h-4" />
