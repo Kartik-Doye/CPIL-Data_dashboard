@@ -33,3 +33,20 @@ test('excludes zero-sales days from percentage accuracy rather than claiming per
   assert.equal(result.backtest_days, 0);
   assert.equal(result.mape_ensemble, null);
 });
+
+test('historical forecast outcomes adapt ensemble weights after enough evaluations', () => {
+  const history = makeHistory(35, index => 100 + (index % 7) * 10 + index);
+  const recentOnly = generateForecast(history, 7);
+  const adapted = generateForecast(history, 7, undefined, {
+    sample_count: 12,
+    mape: {
+      linear: 100,
+      holt_winters: 1,
+      naive_last_week: 1,
+      same_weekday_avg: 1,
+    },
+  });
+
+  assert.ok((adapted.weights?.linear ?? 0) < (recentOnly.weights?.linear ?? 0));
+  assert.match(adapted.learning_status || '', /12/);
+});

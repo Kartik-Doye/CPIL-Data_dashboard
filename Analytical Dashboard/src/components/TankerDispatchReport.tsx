@@ -11,7 +11,8 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
-import { fmtQty, fmtCurrency, fmtLakhs } from '../engine/formatting';
+import { fmtQty } from '../engine/formatting';
+import { recommendTanker } from '../engine/tanker';
 
 interface TankerDispatchReportProps {
   stations: StationRecord[];
@@ -26,8 +27,16 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
 }) => {
   const [selectedUrgency, setSelectedUrgency] = useState<'all' | 'critical' | 'warning'>('all');
   const [copied, setCopied] = useState(false);
+  const exactLitres = (value: number) => value.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
-  // Group stations needing replenishment (days left < 3.5 or stockout remark)
+  const activeDailyBurn = stations.filter((s) => s.sale_qty > 0);
+  const networkDailyBurn = activeDailyBurn.length
+    ? activeDailyBurn.reduce((sum, s) => sum + s.sale_qty, 0) / activeDailyBurn.length
+    : 0;
+
   const dispatchCandidates = stations
     .filter((s) => {
       const isUrgentDip = s.days_left <= 3.5;
@@ -36,14 +45,15 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
     })
     .map((s) => {
       // 3-day forecasted burn
-      const dailyBurn = s.sale_qty > 0 ? s.sale_qty : 1050;
+      const historicalRows = (telemetry.station_monthly_sales || []).filter((row) => row.erp_code === s.erp_code);
+      const historyDays = historicalRows.reduce((sum, row) => sum + row.reporting_days, 0);
+      const historicalDailyBurn = historyDays > 0
+        ? historicalRows.reduce((sum, row) => sum + row.sale_qty, 0) / historyDays
+        : 0;
+      const dailyBurn = s.sale_qty > 0 ? s.sale_qty : historicalDailyBurn || networkDailyBurn;
       const burn3Day = dailyBurn * 3;
       const currentStock = s.closing_dip_in_ltr || s.closing_dip || 0;
-
-      // Recommended tanker capacity (12-Ton = ~22,000 L AutoLPG, 18-Ton = ~33,000 L AutoLPG)
-      // Standard dispatch allocation: 12-Ton for standard stations (<1,200 L/d), 18-Ton for high volume
-      const recommendedTanker = dailyBurn >= 1400 || burn3Day >= 4200 ? '18-Ton (33,000 L)' : '12-Ton (22,000 L)';
-      const recommendedVolumeLtr = dailyBurn >= 1400 || burn3Day >= 4200 ? 33000 : 22000;
+      const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, currentStock);
 
       let urgency: 'Critical' | 'Warning' | 'Standby' = 'Warning';
       if (s.days_left < 1.5 || s.sale_qty === 0 || /stock/i.test(s.remark || '')) {
@@ -60,7 +70,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
         burn3Day,
         currentStock,
         recommendedTanker,
-        recommendedVolumeLtr,
+        recommendedVolumeLtr: requiredVolumeLtr,
         urgency,
       };
     })
@@ -80,7 +90,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
     const lines = [
       `🚨 *GO GAS AUTO-LPG TANKER DISPATCH SCHEDULE* 🚨`,
       `*Date:* ${telemetry.date} | *Total Orders:* ${dispatchCandidates.length}`,
-      `*Total Fuel Volume Needed:* ${fmtLakhs(totalReplenishmentLtr)}`,
+      `*Estimated Refill Volume:* ${exactLitres(totalReplenishmentLtr)} L`,
       `------------------------------------------`,
     ];
 
@@ -89,7 +99,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
         `*${idx + 1}. ${d.station.erp_code} - ${d.station.alds_name}* (${d.station.state})`
       );
       lines.push(
-        `   • Stock Dip: ${fmtQty(d.currentStock)} L (${d.station.days_left}d left)`
+        `   • Stock Dip: ${exactLitres(d.currentStock)} L (${exactLitres(d.station.days_left)} days left)`
       );
       lines.push(
         `   • Recommended Dispatch: *${d.recommendedTanker}*`
@@ -120,7 +130,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
       '3-Day Burn (L)',
       'Days Fuel Left',
       'Recommended Tanker',
-      'Allocated Litres',
+      'Estimated Refill Litres',
       'Remark',
     ];
 
@@ -166,7 +176,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                   Report 32: Tanker Replenishment Dispatch Generator
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Automated supply chain scheduling based on 3-day forecasted burn rates and closing inventory dips.
+                  Estimates litres needed to reach three days of cover, then selects the smallest available 7.5 KL, 10 KL, or 20 KL company tanker. Confirm tank ullage before dispatch.
                 </p>
               </div>
             </div>
@@ -224,7 +234,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
               Total Fuel Volume Required
             </span>
             <span className="text-xl font-bold font-mono text-emerald-700 dark:text-emerald-300">
-              {fmtLakhs(totalReplenishmentLtr)}
+              {exactLitres(totalReplenishmentLtr)} L
             </span>
           </div>
         </div>
@@ -342,6 +352,9 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                         <Truck className="w-3 h-3 shrink-0" />
                         {d.recommendedTanker}
                       </span>
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        Estimated fill:                         {exactLitres(d.recommendedVolumeLtr)} L
+                      </div>
                     </td>
 
                     <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-slate-500 dark:text-slate-400 text-[11px]`}>

@@ -167,7 +167,11 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
       />
 
       {/* 3-Month Top Performers Trend Line Chart */}
-      <TopPerformersTrendChart stations={filteredStations} isCompact={isCompact} />
+      <TopPerformersTrendChart
+        stations={filteredStations}
+        monthlySales={data.station_monthly_sales}
+        isCompact={isCompact}
+      />
 
       {/* Threshold-based Sales Drop Alert System (>20% drop vs 3-month rolling avg) */}
       <SalesDropAlerts
@@ -198,6 +202,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                 </span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Each point is the network's reported total litres for one day; daily run-rate is latest-day volume divided by one day, not a forecast.
                 Observed volume trajectory over the past month.
               </p>
             </div>
@@ -239,7 +244,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
               <span className="font-mono font-bold text-slate-900 dark:text-white">{fmtQty(minHistorySale)} L</span>
             </div>
             <div>
-              <span className="text-slate-500 dark:text-slate-400 block text-[11px]">Current Run-Rate:</span>
+              <span className="text-slate-500 dark:text-slate-400 block text-[11px]">Latest-Day Run-Rate:</span>
               <span className="font-mono font-bold text-orange-600 dark:text-orange-400">{fmtQty(totalVolume)} L/d</span>
             </div>
           </div>

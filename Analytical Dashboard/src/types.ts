@@ -120,6 +120,7 @@ export interface ForecastResult {
   mape_holt_winters: number | null;
   mape_naive: number | null;
   backtest_days?: number;
+  learning_status?: string;
   forecast: ForecastPoint[];
   insufficient?: boolean;
   days_available?: number;
@@ -164,6 +165,7 @@ export interface DecliningStation {
   drop_pct: number;
   drop_litres: number;
   current_sale: number;
+  average_daily_sale?: number;
 }
 
 export interface DatabaseDiagnostics {
@@ -209,6 +211,13 @@ export interface DatabaseDiagnostics {
   };
 }
 
+export interface StationMonthlySales {
+  erp_code: string;
+  month: string;
+  sale_qty: number;
+  reporting_days: number;
+}
+
 export interface ExecutiveTelemetry {
   date: string;
   is_live: boolean;
@@ -233,6 +242,7 @@ export interface ExecutiveTelemetry {
   bottom_performing_stations: StationRecord[];
   forecast: ForecastResult;
   history_30d: DailyHistoricalPoint[];
+  station_monthly_sales?: StationMonthlySales[];
   states_summary: StateSummary[];
   tm_summary: TMSummary[];
   type_summary: TypeSummary[];

@@ -16,34 +16,26 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
   isCompact = false,
   onNavigateToTab,
 }) => {
-  const [filterThreshold, setFilterThreshold] = useState<number>(20); // 20% or 30% or 40%
-
-  // Calculate 3-month rolling average estimate and drop percentage for each station
-  const avgSale = telemetry.total_sale_qty / (telemetry.stations_with_sale || 1);
+  const [filterThreshold, setFilterThreshold] = useState<number>(20);
+  const monthlySales = telemetry.station_monthly_sales || [];
 
   const alerts = stations
     .map((s) => {
-      // 3-Month rolling baseline is derived from current sales + historical variance or diff metric
-      // If s.diff < 0, diff represents drop vs rolling average
-      let rollingAvg3M = s.sale_qty;
-      if (s.diff < 0) {
-        rollingAvg3M = s.sale_qty + Math.abs(s.diff);
-      } else if (s.sale_qty > 0) {
-        // Typical ALDS daily baseline estimate derived from network mean
-        rollingAvg3M = Math.max(s.sale_qty * 1.25, avgSale * 1.1);
-      } else {
-        rollingAvg3M = avgSale; // Zero sale baseline uses network mean
-      }
+      const history = monthlySales.filter((row) => row.erp_code === s.erp_code);
+      const reportedDays = history.reduce((sum, row) => sum + row.reporting_days, 0);
+      const rollingAvg3M = reportedDays > 0
+        ? history.reduce((sum, row) => sum + row.sale_qty, 0) / reportedDays
+        : 0;
 
       const dropLitres = Math.max(0, rollingAvg3M - s.sale_qty);
       const dropPct = rollingAvg3M > 0 ? (dropLitres / rollingAvg3M) * 100 : 0;
 
       return {
         station: s,
-        rollingAvg3M: Math.round(rollingAvg3M),
+        rollingAvg3M,
         currentSale: s.sale_qty,
-        dropLitres: Math.round(dropLitres),
-        dropPct: Math.round(dropPct * 10) / 10,
+        dropLitres,
+        dropPct,
         isZeroSale: s.sale_qty === 0,
       };
     })
@@ -67,13 +59,13 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <span>3-Month Rolling Average Sales Drop Alert System</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-semibold font-mono">
-                  &gt;{filterThreshold}% Drop Threshold
+                  ≥{filterThreshold}% Drop Threshold
                 </span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-amber-500" />
                 <span className="font-semibold text-slate-700 dark:text-slate-300">T-1 Daily Data Lag:</span>
-                <span>DB updates daily with closed T-1 sales (Yesterday's metrics). Date: {telemetry.date}</span>
+                <span>Compares latest reported sales with the station's average on reporting days over the latest three calendar months (through {telemetry.date}).</span>
               </p>
             </div>
           </div>
@@ -82,7 +74,7 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
         {/* Threshold Selector Tabs */}
         <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 self-start md:self-auto">
           <span className="text-[11px] font-medium text-slate-500 px-2">Drop Cutoff:</span>
-          {[20, 30, 50].map((th) => (
+          {[5, 10, 20].map((th) => (
             <button
               key={th}
               onClick={() => setFilterThreshold(th)}
@@ -92,7 +84,7 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              &gt;{th}%
+              ≥{th}%
             </button>
           ))}
         </div>
@@ -101,7 +93,7 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
       {/* Summary KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="p-3 rounded-lg bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-500/20">
-          <span className="text-xs font-medium text-rose-600 dark:text-rose-400 block">Flagged Stations (&gt;{filterThreshold}% Drop)</span>
+          <span className="text-xs font-medium text-rose-600 dark:text-rose-400 block">Flagged Stations (≥{filterThreshold}% Drop)</span>
           <span className="text-xl font-bold font-mono text-rose-700 dark:text-rose-300">{totalFlagged} Stations</span>
         </div>
 
@@ -136,7 +128,9 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
             {alerts.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center py-6 text-slate-400">
-                  No stations currently exceeding {filterThreshold}% sales drop vs 3-month rolling average.
+                  {monthlySales.length === 0
+                    ? 'Three-month station sales history is unavailable; no estimated baseline is used.'
+                    : `No stations currently at or above ${filterThreshold}% drop versus their three-month daily average.`}
                 </td>
               </tr>
             ) : (

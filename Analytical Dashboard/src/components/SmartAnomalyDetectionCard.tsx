@@ -106,7 +106,7 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
                 </span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Uses historical Z-score statistics to flag sudden data entry typos, price decimal errors, and dispenser locks.
+                Rule-based screening of today's station data. A flag is a prompt to investigate, not proof of an error.
               </p>
             </div>
           </div>
@@ -131,7 +131,7 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30">
-          <span className="text-xs font-medium text-rose-700 dark:text-rose-400 block">Critical Input Errors</span>
+          <span className="text-xs font-medium text-rose-700 dark:text-rose-400 block">Critical Flags to Verify</span>
           <span className="text-xl font-bold font-mono text-rose-800 dark:text-rose-300">{criticalCount} Anomalies</span>
         </div>
 
@@ -142,8 +142,13 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
 
         <div className="p-3 rounded-lg bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-500/30">
           <span className="text-xs font-medium text-purple-700 dark:text-purple-400 block">Detection Algorithm</span>
-          <span className="text-xl font-bold font-mono text-purple-800 dark:text-purple-300">Z-Score 3.0σ + IQR</span>
+          <span className="text-xl font-bold font-mono text-purple-800 dark:text-purple-300">4 Rule Checks</span>
         </div>
+      </div>
+
+      <div className="rounded-lg border border-purple-100 dark:border-purple-900/40 bg-purple-50/60 dark:bg-purple-950/20 p-3 text-[11px] text-slate-600 dark:text-slate-300 space-y-1">
+        <p><strong>How to read the flags:</strong> volume above 4.5× the network average and 4,000 L is checked for a possible extra zero; RSP below ₹20 or above ₹150 is checked for a decimal/input error; zero sales with stock dip above 8,000 L may indicate a dispenser or reporting issue; sales above 1,500 L with collection below ₹10,000 is a collection mismatch warning.</p>
+        <p>These are fixed rule thresholds, not historical Z-score/IQR analysis. Verify source records before taking action.</p>
       </div>
 
       {/* Anomaly Table */}
@@ -163,7 +168,7 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
             {filteredAnomalies.length === 0 ? (
               <tr>
                 <td colSpan={6} className="text-center py-6 text-slate-400 font-sans">
-                  No abnormal data entry typos or operational anomalies detected in this view.
+                  No records currently meet these rule thresholds.
                 </td>
               </tr>
             ) : (

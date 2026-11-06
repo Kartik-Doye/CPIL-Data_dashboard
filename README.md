@@ -29,6 +29,17 @@ dashboard to load. If the connection or data is unavailable, the UI reports an
 error instead of showing cached or spreadsheet values. Use `npm run load-sales`
 to validate and load `Manual Work/sale.xlsx` into PostgreSQL.
 
+### Forecast feedback learning
+
+The dashboard can retune ensemble weights from saved forecast-vs-actual
+outcomes. As a PostgreSQL administrator, run
+`Manual Work/02_forecast_feedback.sql` in the `sale_alds` database, then
+configure `BOT_LOADER_PASSWORD` (and optionally `BOT_LOADER_USER`) in
+`Analytical Dashboard/.env`. The dashboard's `bot_reader` role remains
+read-only. Until the migration and loader credentials are available, forecast
+feedback storage is reported as unavailable and no saved-history learning is
+applied.
+
 ## Useful commands
 
 ```powershell

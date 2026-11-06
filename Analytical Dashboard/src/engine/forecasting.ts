@@ -283,6 +283,11 @@ interface BacktestErrors {
   scoredDays: number;
 }
 
+export interface PersistedForecastErrors {
+  sample_count: number;
+  mape: Partial<Record<ForecastModel, number>>;
+}
+
 function createBacktestErrors(): BacktestErrors {
   return {
     percentage: {
@@ -390,6 +395,37 @@ function rootMeanSquaredError(errors: number[]): number | null {
   return errors.length > 0 ? Math.round(Math.sqrt(mean(errors))) : null;
 }
 
+function adaptiveWeights(
+  backtestErrors: Record<ForecastModel, number[]>,
+  persistedErrors?: PersistedForecastErrors
+): Record<ForecastModel, number> {
+  const recentWeights = inverseMapeWeights(backtestErrors);
+  if (!persistedErrors || persistedErrors.sample_count < 7) return recentWeights;
+
+  const historicalErrors = createBacktestErrors().percentage;
+  for (const model of Object.keys(historicalErrors) as ForecastModel[]) {
+    const mape = persistedErrors.mape[model];
+    if (mape !== undefined && Number.isFinite(mape)) {
+      historicalErrors[model].push(mape / 100);
+    }
+  }
+  const historicalWeights = inverseMapeWeights(historicalErrors);
+  const blended = Object.fromEntries(
+    (Object.keys(recentWeights) as ForecastModel[]).map(model => [
+      model,
+      (recentWeights[model] + historicalWeights[model]) / 2,
+    ])
+  ) as Record<ForecastModel, number>;
+  const total = Object.values(blended).reduce((sum, weight) => sum + weight, 0);
+
+  return Object.fromEntries(
+    (Object.keys(blended) as ForecastModel[]).map(model => [
+      model,
+      Math.round((blended[model] / total) * 1000) / 1000,
+    ])
+  ) as Record<ForecastModel, number>;
+}
+
 // =========================================================================== //
 // Main Forecasting Pipeline
 // =========================================================================== //
@@ -397,7 +433,8 @@ function rootMeanSquaredError(errors: number[]): number | null {
 export function generateForecast(
   historicalDaily: Array<{ sale_date?: string; date?: string; sale_qty: number }>,
   forecastDays = 14,
-  stationRecords?: StationRecord[]
+  stationRecords?: StationRecord[],
+  persistedErrors?: PersistedForecastErrors
 ): ForecastResult {
   const dates: Date[] = [];
   const actuals: number[] = [];
@@ -464,7 +501,7 @@ export function generateForecast(
 
   // Walk-forward validation only uses observations available before each test day.
   const backtest = rollingBacktest(dates, actuals);
-  const weights = inverseMapeWeights(backtest.percentage);
+  const weights = adaptiveWeights(backtest.percentage, persistedErrors);
   const linMape = meanPercentageError(backtest.percentage.linear);
   const hwMape = meanPercentageError(backtest.percentage.holt_winters);
   const naiveMape = meanPercentageError(backtest.percentage.naive_last_week);
@@ -522,9 +559,9 @@ export function generateForecast(
     const horizonFactor = 1.0 + j * 0.05;
     const uncertainty = recentStd * horizonFactor;
 
-    const p10 = Math.max(Math.round(ensemble - 1.28 * uncertainty), 0);
-    const p50 = Math.round(ensemble);
-    const p90 = Math.round(ensemble + 1.28 * uncertainty);
+    const p10 = Math.max(Number((ensemble - 1.28 * uncertainty).toFixed(2)), 0);
+    const p50 = Number(ensemble.toFixed(2));
+    const p90 = Number((ensemble + 1.28 * uncertainty).toFixed(2));
 
     if (j < 7) {
       total7dVolume += p50;
@@ -540,12 +577,12 @@ export function generateForecast(
       p10,
       p50,
       p90,
-      linear: Math.round(lp),
-      linear_pred: Math.round(lp),
-      holt_winters: Math.round(hp),
-      holt_winters_pred: Math.round(hp),
-      naive_last_week: Math.round(nl),
-      same_weekday_avg: Math.round(wa),
+      linear: Number(lp.toFixed(2)),
+      linear_pred: Number(lp.toFixed(2)),
+      holt_winters: Number(hp.toFixed(2)),
+      holt_winters_pred: Number(hp.toFixed(2)),
+      naive_last_week: Number(nl.toFixed(2)),
+      same_weekday_avg: Number(wa.toFixed(2)),
       ensemble: p50,
       lower_bound: p10,
       upper_bound: p90,
@@ -569,6 +606,11 @@ export function generateForecast(
   } else {
     insights.push('Not enough positive-sales history is available to calculate a walk-forward accuracy score.');
   }
+  if (persistedErrors && persistedErrors.sample_count >= 7) {
+    insights.push(
+      `Model weights also incorporate ${persistedErrors.sample_count} saved forecast outcomes compared with actual sales.`
+    );
+  }
 
   if (daysAvailable >= 60) {
     insights.push(
@@ -590,6 +632,9 @@ export function generateForecast(
     mape_holt_winters: hwMape,
     mape_naive: naiveMape,
     backtest_days: backtest.scoredDays,
+    learning_status: persistedErrors && persistedErrors.sample_count >= 7
+      ? `Adaptive weights use ${persistedErrors.sample_count} saved forecast outcomes.`
+      : 'Collecting forecast outcomes; adaptive historical weighting starts after 7 scored outcomes.',
     dates: dates.map(d => d.toISOString().slice(0, 10)),
     historical_actuals: actuals,
     forecast: forecastPoints,

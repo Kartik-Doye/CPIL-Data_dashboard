@@ -12,6 +12,8 @@ import {
   DB_NAME,
   DB_USER,
   DB_PASSWORD,
+  DB_LOADER_USER,
+  DB_LOADER_PASSWORD,
   DB_CONNECT_TIMEOUT,
   DB_STATEMENT_TIMEOUT_MS,
 } from './config.js';
@@ -19,6 +21,7 @@ import {
 const { Pool } = pg;
 
 let pool: pg.Pool | null = null;
+let loaderPool: pg.Pool | null = null;
 let activeEngine: 'external' | null = null;
 let isDbAvailable: boolean | null = null;
 let lastDbError: string | null = null;
@@ -59,6 +62,44 @@ export function getPool(): pg.Pool | null {
     });
   }
   return pool;
+}
+
+function getLoaderPool(): pg.Pool {
+  if (!DB_LOADER_PASSWORD) {
+    throw new Error('BOT_LOADER_PASSWORD is required to save forecast feedback.');
+  }
+  if (!loaderPool) {
+    loaderPool = new Pool({
+      host: DB_HOST,
+      port: DB_PORT,
+      database: DB_NAME,
+      user: DB_LOADER_USER,
+      password: DB_LOADER_PASSWORD,
+      connectionTimeoutMillis: Math.min(DB_CONNECT_TIMEOUT * 1000, 3000),
+      statement_timeout: DB_STATEMENT_TIMEOUT_MS,
+      max: 3,
+      idleTimeoutMillis: 30000,
+    });
+    loaderPool.on('error', (err: Error) => {
+      console.warn('[DB Loader Pool Warning]', err.message);
+    });
+  }
+  return loaderPool;
+}
+
+export async function queryLoader<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+  const p = getLoaderPool();
+  const client = await p.connect();
+  try {
+    await client.query(`SET statement_timeout = ${DB_STATEMENT_TIMEOUT_MS}`);
+    const result = await client.query(sql, params);
+    return result.rows as T[];
+  } catch (err) {
+    console.error('[Forecast Feedback DB Error]', err);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function ensureDatabaseEngine(): Promise<'external'> {

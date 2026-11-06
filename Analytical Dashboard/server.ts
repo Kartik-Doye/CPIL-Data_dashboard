@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { generateForecast } from './src/engine/forecasting.js';
+import { generateForecast, PersistedForecastErrors } from './src/engine/forecasting.js';
 import {
   runComprehensiveAnalysis,
   simulateWhatIf,
@@ -18,8 +18,8 @@ import {
   getDataStatusView,
   normalizeStateCode,
 } from './src/engine/analyticsViews.js';
-import { query, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
-import { StationRecord } from './src/types.js';
+import { query, queryLoader, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
+import { StationMonthlySales, StationRecord } from './src/types.js';
 
 dotenv.config();
 
@@ -57,6 +57,18 @@ async function loadFromDatabase(): Promise<any | null> {
     }
 
     console.log(`[DATABASE] Success! Found ${historyRows.length} days of history in PostgreSQL.`);
+
+    const monthlySalesRows = await query(`
+      SELECT
+        erp_code,
+        DATE_TRUNC('month', sale_date)::date::text AS month,
+        SUM(sale_qty)::float AS sale_qty,
+        COUNT(DISTINCT sale_date)::int AS reporting_days
+      FROM sale_tracker
+      WHERE sale_date >= DATE_TRUNC('month', (SELECT MAX(sale_date) FROM sale_tracker)) - INTERVAL '2 months'
+      GROUP BY erp_code, DATE_TRUNC('month', sale_date)
+      ORDER BY month ASC, erp_code ASC
+    `);
 
     const latestStations = await query(`
       SELECT 
@@ -155,22 +167,32 @@ async function loadFromDatabase(): Promise<any | null> {
       return {
         date: hr.date.slice(0, 10),
         day_name: dayNames[dow],
-        sale_qty: Math.round(hr.sale_qty),
-        collection: Math.round(hr.collection),
+        sale_qty: hr.sale_qty,
+        collection: hr.collection,
         effective_rsp: Math.round(effRsp * 100) / 100,
         active_stations: hr.active_stations,
         zero_sale_count: hr.zero_sale_count,
       };
     });
 
-    return processDataset(stations, 'PostgreSQL Database (sale_tracker)', history30d);
+    return processDataset(
+      stations,
+      'PostgreSQL Database (sale_tracker)',
+      history30d,
+      monthlySalesRows
+    );
   } catch (err: any) {
     console.error('[DATABASE] Critical query failure:', err.message);
     return null;
   }
 }
 
-function processDataset(stations: StationRecord[], sourceFileName: string, historySeries: any[]) {
+async function processDataset(
+  stations: StationRecord[],
+  sourceFileName: string,
+  historySeries: any[],
+  monthlySalesRows: StationMonthlySales[]
+) {
   const dailyView = getDailyView(stations);
   const statesSummary = getStatePeriodView(stations);
   const tmSummary = getTMPeriodView(stations);
@@ -188,8 +210,95 @@ function processDataset(stations: StationRecord[], sourceFileName: string, histo
   const effectiveRsp = dailyView.effective_rsp_avg;
   const collectionGapPerL = Number((averageRsp - effectiveRsp).toFixed(2));
 
-  // Pure TypeScript ML 7-Day Ensemble Forecast using the 90-day seasonal series
-  const forecastEngineResult = generateForecast(historySeries, 7, stations);
+  let persistedErrors: PersistedForecastErrors | undefined;
+  let learningStatus = 'Forecast feedback storage is unavailable.';
+  try {
+    await queryLoader(`
+      UPDATE forecast_feedback AS f
+      SET actual_sale_qty = s.sale_qty,
+          evaluated_at = NOW(),
+          updated_at = NOW()
+      FROM sale_tracker AS s
+      WHERE f.target_date = s.sale_date
+        AND f.actual_sale_qty IS DISTINCT FROM s.sale_qty
+    `);
+    const feedbackRows = await queryLoader<{
+      sample_count: number;
+      linear_mape: number | null;
+      holt_winters_mape: number | null;
+      naive_mape: number | null;
+      weekday_mape: number | null;
+    }>(`
+      SELECT
+        COUNT(*) FILTER (WHERE actual_sale_qty > 0)::int AS sample_count,
+        AVG(ABS(predicted_linear - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS linear_mape,
+        AVG(ABS(predicted_holt_winters - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS holt_winters_mape,
+        AVG(ABS(predicted_naive - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS naive_mape,
+        AVG(ABS(predicted_weekday - actual_sale_qty) / NULLIF(actual_sale_qty, 0)) * 100 AS weekday_mape
+      FROM forecast_feedback
+      WHERE actual_sale_qty IS NOT NULL
+        AND actual_sale_qty > 0
+        AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+    `, [stations[0]?.sale_date]);
+    const feedback = feedbackRows[0];
+    if (feedback) {
+      persistedErrors = {
+        sample_count: Number(feedback.sample_count) || 0,
+        mape: {
+          linear: feedback.linear_mape === null ? undefined : Number(feedback.linear_mape),
+          holt_winters: feedback.holt_winters_mape === null ? undefined : Number(feedback.holt_winters_mape),
+          naive_last_week: feedback.naive_mape === null ? undefined : Number(feedback.naive_mape),
+          same_weekday_avg: feedback.weekday_mape === null ? undefined : Number(feedback.weekday_mape),
+        },
+      };
+    }
+    learningStatus = 'Forecast feedback is being saved to PostgreSQL.';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[FORECAST FEEDBACK] Persistence unavailable: ${message}`);
+    learningStatus = `Saved-history learning unavailable: ${message}`;
+  }
+
+  const forecastEngineResult = generateForecast(historySeries, 7, stations, persistedErrors);
+  forecastEngineResult.learning_status = learningStatus;
+
+  try {
+    const forecastOriginDate = stations[0]?.sale_date;
+    if (forecastOriginDate && forecastEngineResult.forecast.length > 0) {
+      for (const forecast of forecastEngineResult.forecast) {
+        await queryLoader(`
+          INSERT INTO forecast_feedback (
+            forecast_origin_date, target_date, predicted_ensemble,
+            predicted_linear, predicted_holt_winters, predicted_naive, predicted_weekday,
+            actual_sale_qty, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NOW())
+          ON CONFLICT (forecast_origin_date, target_date) DO UPDATE SET
+            predicted_ensemble = EXCLUDED.predicted_ensemble,
+            predicted_linear = EXCLUDED.predicted_linear,
+            predicted_holt_winters = EXCLUDED.predicted_holt_winters,
+            predicted_naive = EXCLUDED.predicted_naive,
+            predicted_weekday = EXCLUDED.predicted_weekday,
+            updated_at = NOW()
+        `, [
+          forecastOriginDate,
+          forecast.date,
+          forecast.predicted_qty,
+          forecast.linear_pred,
+          forecast.holt_winters_pred,
+          forecast.naive_last_week,
+          forecast.same_weekday_avg,
+        ]);
+      }
+      forecastEngineResult.learning_status = persistedErrors && persistedErrors.sample_count >= 7
+        ? `Saved forecast outcomes; adaptive weighting uses ${persistedErrors.sample_count} historical evaluations.`
+        : 'Saved forecasts; adaptive historical weighting starts after 7 evaluated outcomes.';
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[FORECAST FEEDBACK] Forecast save failed: ${message}`);
+    forecastEngineResult.learning_status = `Forecast save failed: ${message}`;
+  }
 
   // Deep Statistical & Outlier Analysis
   const comprehensiveAnalysis = runComprehensiveAnalysis(stations);
@@ -220,19 +329,28 @@ function processDataset(stations: StationRecord[], sourceFileName: string, histo
   const topPerformingStations = sortedByQty.slice(0, 10);
   const bottomPerformingStations = sortedByQty.filter((s) => s.sale_qty > 0).slice(-10);
 
-  // Top Declining Stations
   const topDecliningStations = stations
-    .filter((s) => s.trend_slope !== undefined && s.trend_slope < -15)
-    .sort((a, b) => (a.trend_slope || 0) - (b.trend_slope || 0))
-    .slice(0, 8)
-    .map((s) => ({
-      code: s.erp_code,
-      name: s.alds_name,
-      state: s.state,
-      drop_pct: Math.abs(s.trend_slope || 0),
-      drop_litres: Math.round(Math.abs(s.sale_qty - 1050)),
-      current_sale: s.sale_qty,
-    }));
+    .map((station) => {
+      const history = monthlySalesRows.filter((row) => row.erp_code === station.erp_code);
+      const reportingDays = history.reduce((sum, row) => sum + row.reporting_days, 0);
+      const averageDailySale = reportingDays > 0
+        ? history.reduce((sum, row) => sum + row.sale_qty, 0) / reportingDays
+        : 0;
+      const dropLitres = Math.max(0, averageDailySale - station.sale_qty);
+      const dropPct = averageDailySale > 0 ? (dropLitres / averageDailySale) * 100 : 0;
+      return {
+        code: station.erp_code,
+        name: station.alds_name,
+        state: station.state,
+        drop_pct: dropPct,
+        drop_litres: dropLitres,
+        current_sale: station.sale_qty,
+        average_daily_sale: averageDailySale,
+      };
+    })
+    .filter((station) => station.drop_pct >= 5)
+    .sort((a, b) => b.drop_pct - a.drop_pct)
+    .slice(0, 10);
 
   return {
     date: dailyView.sale_date,
@@ -258,6 +376,7 @@ function processDataset(stations: StationRecord[], sourceFileName: string, histo
     bottom_performing_stations: bottomPerformingStations,
     forecast: forecastEngineResult,
     history_30d: historySeries.slice(-30),
+    station_monthly_sales: monthlySalesRows,
     states_summary: statesSummary,
     tm_summary: tmSummary,
     type_summary: typeSummary,

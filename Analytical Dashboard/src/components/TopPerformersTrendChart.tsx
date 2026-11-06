@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
-import { TrendingUp, Calendar, Award } from 'lucide-react';
-import { StationRecord } from '../types';
-import { fmtQty, fmtLakhs } from '../engine/formatting';
+import { TrendingUp } from 'lucide-react';
+import { StationMonthlySales, StationRecord } from '../types';
 
 interface TopPerformersTrendChartProps {
   stations: StationRecord[];
+  monthlySales?: StationMonthlySales[];
   isCompact?: boolean;
 }
 
 export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = ({
   stations,
+  monthlySales = [],
   isCompact = false,
 }) => {
   const [selectedStationErp, setSelectedStationErp] = useState<string>('all');
@@ -22,8 +23,17 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
 
   if (top5Stations.length === 0) return null;
 
-  // Generate 3-month quarterly data points (August, September, October)
-  const months = ['August 2026', 'September 2026', 'October 2026'];
+  const months = [...new Set(monthlySales.map((row) => row.month))].sort().slice(-3);
+  if (months.length === 0) {
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5">
+        <h3 className="text-sm font-bold text-slate-900 dark:text-white">Top Stations: 3-Month Volume Trend</h3>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+          Station-level monthly sales history is unavailable; no estimated trend is shown.
+        </p>
+      </div>
+    );
+  }
 
   const lineColors = [
     { stroke: '#4F46E5', fill: 'rgba(79, 70, 229, 0.1)', text: 'text-indigo-600 dark:text-indigo-400' }, // Indigo
@@ -33,16 +43,19 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
     { stroke: '#EC4899', fill: 'rgba(236, 72, 153, 0.1)', text: 'text-pink-600 dark:text-pink-400' }, // Pink
   ];
 
-  // Calculate station historical run-rate across 3 months based on current sales
   const stationTrends = top5Stations.map((st, idx) => {
-    const octVal = st.sale_qty * 30; // October total monthly volume
-    const sepVal = octVal * (0.94 + ((idx * 3) % 7) * 0.02); // September
-    const augVal = octVal * (0.89 + ((idx * 5) % 9) * 0.02); // August
+    const values = months.map((month) =>
+      monthlySales.find((row) => row.erp_code === st.erp_code && row.month === month)?.sale_qty ?? null
+    );
+    const firstValue = values[0];
+    const lastValue = values[values.length - 1];
     return {
       station: st,
       color: lineColors[idx % lineColors.length],
-      values: [Math.round(augVal), Math.round(sepVal), Math.round(octVal)],
-      growth: Math.round(((octVal - augVal) / augVal) * 100),
+      values,
+      growth: firstValue !== null && lastValue !== null && firstValue > 0
+        ? ((lastValue - firstValue) / firstValue) * 100
+        : null,
     };
   });
 
@@ -51,7 +64,14 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
       ? stationTrends
       : stationTrends.filter((t) => t.station.erp_code === selectedStationErp);
 
-  const maxVal = Math.max(...stationTrends.flatMap((t) => t.values), 1000);
+  const maxVal = Math.max(...stationTrends.flatMap((t) => t.values).filter((value): value is number => value !== null), 1);
+  const exactQty = (value: number) => value.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const xPositions = months.map((_, index) =>
+    months.length === 1 ? 300 : 60 + (480 * index) / (months.length - 1)
+  );
 
   return (
     <div
@@ -66,11 +86,11 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
               <TrendingUp className="w-4 h-4" />
             </div>
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              Top Stations 3-Month Quarterly Volume Trend
+              Top Stations: 3-Month Volume Trend
             </h3>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Historical throughput comparison (August, September & October 2026) for top performers.
+            Actual reported monthly litres for the five highest-volume stations; values are not estimates.
           </p>
         </div>
 
@@ -98,22 +118,34 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
           <line x1="40" y1="20" x2="590" y2="20" stroke="currentColor" className="text-slate-100 dark:text-slate-800" strokeDasharray="3 3" />
           <line x1="40" y1="70" x2="590" y2="70" stroke="currentColor" className="text-slate-100 dark:text-slate-800" strokeDasharray="3 3" />
           <line x1="40" y1="120" x2="590" y2="120" stroke="currentColor" className="text-slate-100 dark:text-slate-800" strokeDasharray="3 3" />
+          <text x="0" y="23" className="text-[8px] fill-slate-400">{exactQty(maxVal)}</text>
+          <text x="0" y="73" className="text-[8px] fill-slate-400">{exactQty(maxVal / 2)}</text>
+          <text x="0" y="123" className="text-[8px] fill-slate-400">0</text>
 
-          {/* Month Column Labels */}
-          <text x="60" y="152" className="text-[10px] fill-slate-400 dark:fill-slate-500 font-medium">Aug 2026</text>
-          <text x="300" y="152" className="text-[10px] fill-slate-400 dark:fill-slate-500 font-medium text-center">Sep 2026</text>
-          <text x="540" y="152" className="text-[10px] fill-slate-400 dark:fill-slate-500 font-medium text-right">Oct 2026</text>
+          {months.map((month, index) => (
+            <text
+              key={month}
+              x={xPositions[index]}
+              y="152"
+              textAnchor="middle"
+              className="text-[10px] fill-slate-400 dark:fill-slate-500 font-medium"
+            >
+              {new Date(`${month}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' })}
+            </text>
+          ))}
 
           {/* Lines for each station */}
           {displayTrends.map((t) => {
-            const x1 = 60;
-            const y1 = 120 - (t.values[0] / maxVal) * 95;
-            const x2 = 300;
-            const y2 = 120 - (t.values[1] / maxVal) * 95;
-            const x3 = 540;
-            const y3 = 120 - (t.values[2] / maxVal) * 95;
-
-            const pathD = `M ${x1} ${y1} L ${x2} ${y2} L ${x3} ${y3}`;
+            let segmentOpen = false;
+            const pathD = t.values.map((value, index) => {
+              if (value === null) {
+                segmentOpen = false;
+                return null;
+              }
+              const command = segmentOpen ? 'L' : 'M';
+              segmentOpen = true;
+              return `${command} ${xPositions[index]} ${120 - (value / maxVal) * 95}`;
+            }).filter((point): point is string => point !== null).join(' ');
 
             return (
               <g key={t.station.erp_code}>
@@ -125,9 +157,13 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-                <circle cx={x1} cy={y1} r="4" fill={t.color.stroke} />
-                <circle cx={x2} cy={y2} r="4" fill={t.color.stroke} />
-                <circle cx={x3} cy={y3} r="4" fill={t.color.stroke} />
+                {t.values.map((value, index) => (
+                  value === null ? null :
+                  <g key={`${t.station.erp_code}-${months[index]}`}>
+                    <circle cx={xPositions[index]} cy={120 - (value / maxVal) * 95} r="4" fill={t.color.stroke} />
+                    <title>{`${t.station.alds_name}: ${months[index]} — ${exactQty(value)} L`}</title>
+                  </g>
+                ))}
               </g>
             );
           })}
@@ -154,14 +190,19 @@ export const TopPerformersTrendChart: React.FC<TopPerformersTrendChartProps> = (
                   {st.erp_code}
                 </span>
                 <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 ml-auto">
-                  +{tr.growth}%
+                  {tr.growth === null ? '—' : `${tr.growth >= 0 ? '+' : ''}${tr.growth.toFixed(1)}%`}
                 </span>
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                 {st.alds_name}
               </div>
-              <div className="text-xs font-mono font-semibold text-slate-800 dark:text-slate-200 mt-1">
-                {fmtLakhs(tr.values[2])}
+              <div className="mt-1 space-y-0.5">
+                {months.map((month, monthIndex) => (
+                  <div key={month} className="flex justify-between gap-1 text-[10px] font-mono text-slate-600 dark:text-slate-300">
+                    <span>{new Date(`${month}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short' })}</span>
+                    <span>{tr.values[monthIndex] === null ? 'No report' : `${exactQty(tr.values[monthIndex]!)} L`}</span>
+                  </div>
+                ))}
               </div>
             </div>
           );

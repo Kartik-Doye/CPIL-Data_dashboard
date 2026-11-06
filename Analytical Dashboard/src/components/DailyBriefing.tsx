@@ -20,36 +20,89 @@ interface DailyBriefingProps {
 
 export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   const [copied, setCopied] = useState(false);
+  const qty = (value: number) => value.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const rupees = (value: number) => `₹${qty(value)}`;
 
   // Generate WhatsApp / Email ready formatted executive summary text
   const generateBriefingText = () => {
-    const tomorrowPred = data.forecast?.forecast?.[0];
-    const topStates = (data.states_summary || []).slice(0, 3);
+    const nextForecast = data.forecast?.forecast?.[0];
+    const previousSevenDays = data.history_30d?.slice(-8, -1) || [];
+    const sevenDayAverage = previousSevenDays.length
+      ? previousSevenDays.reduce((sum, day) => sum + day.sale_qty, 0) / previousSevenDays.length
+      : null;
+    const changePct = sevenDayAverage && sevenDayAverage > 0
+      ? ((data.total_sale_qty - sevenDayAverage) / sevenDayAverage) * 100
+      : null;
+    const accuracy = data.forecast?.mape_ensemble === null || data.forecast?.mape_ensemble === undefined
+      ? 'Not available'
+      : `${Math.max(0, 100 - data.forecast.mape_ensemble).toFixed(1)}% (MAPE ${data.forecast.mape_ensemble.toFixed(1)}%)`;
+    const paytmShare = data.total_collection > 0
+      ? (data.total_paytm_collection / data.total_collection) * 100
+      : 0;
+    const stockoutLines = data.stockout_risk_stations.length
+      ? data.stockout_risk_stations.map((station, index) =>
+        `   ${index + 1}. ${station.name} (${station.code}, ${station.state}): ${qty(station.days_left)} days left; stock ${qty(station.stock_ltr)} L; burn ${qty(station.daily_burn_ltr)} L/day`
+      ).join('\n')
+      : '   None reported.';
+    const zeroSaleLines = data.zero_sale_stations.length
+      ? data.zero_sale_stations.map((station, index) =>
+        `   ${index + 1}. ${station.alds_name} (${station.erp_code}, ${station.state}) | TM: ${station.tm || 'Unassigned'} | ${station.remark || 'Reason not provided'}`
+      ).join('\n')
+      : '   None reported.';
+    const stateLines = (data.states_summary || []).map((state) =>
+      `│ ${state.state.padEnd(5)} │ ${qty(state.total_sale_qty).padStart(12)} L │ ${rupees(state.total_collection).padStart(18)} │ ₹${state.effective_rsp.toFixed(2).padStart(7)} │ ${String(state.stations).padStart(5)} │ ${String(state.zero_sale_count).padStart(4)} │`
+    ).join('\n');
+    const topStationLines = (data.top_performing_stations || []).slice(0, 10).map((station, index) =>
+      `   ${String(index + 1).padStart(2)}. ${station.alds_name} (${station.state}) | ${qty(station.sale_qty)} L | ${rupees(station.net_total_collection || station.collection)}`
+    ).join('\n');
+    const decliningLines = (data.top_declining_stations || []).slice(0, 10).map((station, index) =>
+      `   ${String(index + 1).padStart(2)}. ${station.name} (${station.state}) | latest ${qty(station.current_sale)} L vs 3-month daily avg ${qty(station.average_daily_sale || 0)} L | down ${station.drop_pct.toFixed(1)}%`
+    ).join('\n');
 
     return `🔥 *GO GAS EXECUTIVE MORNING BRIEFING*
 📅 *Operational Date:* ${data.date}
-🏢 *Network Status:* ${data.stations_with_sale}/${data.stations_total} Stations Active (${data.zero_sale_count} Zero Sale)
+🏢 *Network Status:* ${data.stations_with_sale}/${data.stations_total} stations recorded sales (${data.zero_sale_count} recorded zero sales). This is reporting activity, not an equipment/system connectivity check.
 
-📊 *DAILY SNAPSHOT*
-• *Total Sales:* ${Math.round(data.total_sale_qty).toLocaleString('en-IN')} L (+3.2% vs 7d avg)
-• *Total Collections:* ₹${(data.total_collection / 10000000).toFixed(2)} Cr
-• *Effective RSP:* ₹${data.effective_rsp.toFixed(2)} / L (RSP Gap: ₹${data.collection_gap_per_l.toFixed(2)}/L)
-• *Digital / Paytm:* ₹${(data.total_paytm_collection / 100000).toFixed(1)} L (${((data.total_paytm_collection / (data.total_collection || 1)) * 100).toFixed(0)}%)
-• *Free Sale:* ${data.total_free_sale_litres} L (₹${data.total_free_sale_rupees.toLocaleString('en-IN')})
+📊 *OVERALL SUMMARY*
+───────────────────────────────────
+Latest Day Sale: ${qty(data.total_sale_qty)} L (${changePct === null ? 'change vs 7-day average unavailable' : `${changePct >= 0 ? '↑' : '↓'}${Math.abs(changePct).toFixed(1)}% vs 7-day average of ${qty(sevenDayAverage!)} L`})
+Collection: ${rupees(data.total_collection)} (rate: ₹${data.effective_rsp.toFixed(2)}/L)
+RSP: ₹${data.average_rsp.toFixed(2)}/L
+Effective RSP: ₹${data.effective_rsp.toFixed(2)}/L
+Free Sale: ${qty(data.total_free_sale_litres)} L (${rupees(data.total_free_sale_rupees)})
+Digital / Paytm: ${rupees(data.total_paytm_collection)} (${paytmShare.toFixed(2)}% of collection)
+Cash: ${rupees(data.total_cash_collection)}
+Total Stations: ${data.stations_total}
+Zero-Sale Stations: ${data.zero_sale_count}
 
-🤖 *TODAY'S AIML FORECAST*
-• *Predicted Demand:* ${tomorrowPred?.predicted_qty?.toLocaleString('en-IN') || '---'} L
-• *95% Confidence Band:* [${tomorrowPred?.lower_bound?.toLocaleString('en-IN')} - ${tomorrowPred?.upper_bound?.toLocaleString('en-IN')}] L
-• *7-Day Expected Volume:* ${(data.forecast?.predicted_total_7d / 100000).toFixed(1)} Lakh L
+📈 *FORECAST*
+───────────────────────────────────
+Forecast for ${nextForecast?.date || 'next available date'}: ${nextForecast ? `${qty(nextForecast.predicted_qty)} L` : 'Not available'}
+7-Day Forecast Total: ${qty(data.forecast?.predicted_total_7d || 0)} L
+Historical Validation Accuracy: ${accuracy} across ${data.forecast?.backtest_days ?? 0} scored day(s); this is historical performance, not a guarantee.
+Learning Status: ${data.forecast?.learning_status || 'Not available'}
 
-🚨 *CRITICAL ACTION ITEMS (HIGH PRIORITY)*
-1. *Stockout Risk:* ${data.stockout_risk_stations.length} stations have < 3 days stock remaining:
-${data.stockout_risk_stations.slice(0, 4).map((s) => `   - ${s.name} (${s.code}, ${s.state}): ${s.days_left} days left (${s.stock_ltr.toLocaleString('en-IN')} L dip)`).join('\n')}
-2. *Zero Sale Stations:* ${data.zero_sale_count} stations reported zero volume:
-${data.zero_sale_stations.slice(0, 5).map((s) => `   - ${s.alds_name} (${s.erp_code}, ${s.state}): ${s.remark || 'Reported Zero'}`).join('\n')}
+🗺️ *STATE-WISE BREAKDOWN (${data.states_summary?.length || 0} states)*
+┌───────┬──────────────┬────────────────────┬─────────┬───────┬──────┐
+│ State │ Sale (L)     │ Collection (₹)     │ Rate/L  │ Stns  │ Zero │
+├───────┼──────────────┼────────────────────┼─────────┼───────┼──────┤
+${stateLines || '│ No state summary available.                                           │'}
+└───────┴──────────────┴────────────────────┴─────────┴───────┴──────┘
 
-📍 *TOP REGIONS BY VOLUME*
-${topStates.map((s, idx) => `${idx + 1}. *${s.state}:* ${s.total_sale_qty.toLocaleString('en-IN')} L (₹${(s.total_collection / 100000).toFixed(1)}L, ${s.stations} stns)`).join('\n')}
+🏆 *TOP 10 PERFORMING STATIONS*
+${topStationLines || '   No station performance data available.'}
+
+⚠️ *ZERO-SALE STATIONS (${data.zero_sale_stations.length})*
+${zeroSaleLines}
+
+🚨 *STOCK-OUT WARNINGS (${data.stockout_risk_stations.length})*
+${stockoutLines}
+
+📉 *DECLINING STATIONS (${data.top_declining_stations?.length || 0})*
+${decliningLines || '   None flagged.'}
 
 _Generated via GO Gas Executive Suite Intelligence Engine_`;
   };
@@ -117,7 +170,7 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
             <div className="flex justify-between items-baseline">
               <span className="text-xs text-slate-300">Total Volume Sold:</span>
               <span className="text-sm font-bold font-mono text-white">
-                {Math.round(data.total_sale_qty).toLocaleString('en-IN')} L
+                {qty(data.total_sale_qty)} L
               </span>
             </div>
             <div className="flex justify-between items-baseline">
@@ -151,25 +204,32 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
             <div className="flex justify-between items-baseline">
               <span className="text-xs text-slate-300">Predicted Volume:</span>
               <span className="text-sm font-bold font-mono text-indigo-300">
-                {data.forecast?.forecast?.[0]?.predicted_qty?.toLocaleString('en-IN') || '---'} L
+                {data.forecast?.forecast?.[0]
+                  ? `${qty(data.forecast.forecast[0].predicted_qty)} L`
+                  : 'Not available'}
               </span>
             </div>
             <div className="flex justify-between items-baseline">
               <span className="text-xs text-slate-300">Confidence Range:</span>
               <span className="text-xs font-mono text-slate-200">
-                [{data.forecast?.forecast?.[0]?.lower_bound?.toLocaleString('en-IN')} -{' '}
-                {data.forecast?.forecast?.[0]?.upper_bound?.toLocaleString('en-IN')}] L
+                {data.forecast?.forecast?.[0]
+                  ? `${qty(data.forecast.forecast[0].lower_bound)} - ${qty(data.forecast.forecast[0].upper_bound)} L`
+                  : 'Not available'}
               </span>
             </div>
             <div className="flex justify-between items-baseline">
               <span className="text-xs text-slate-300">7-Day Projected Total:</span>
               <span className="text-xs font-mono text-emerald-300">
-                {(data.forecast?.predicted_total_7d / 100000).toFixed(1)} Lakh L
+                {qty(data.forecast?.predicted_total_7d || 0)} L
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Model Error (MAPE):</span>
-              <span className="text-xs font-mono text-indigo-400">6.8% (Ensemble)</span>
+              <span className="text-xs text-slate-300">Historical Accuracy:</span>
+              <span className="text-xs font-mono text-indigo-400">
+                {data.forecast?.mape_ensemble == null
+                  ? 'Not available'
+                  : `${Math.max(0, 100 - data.forecast.mape_ensemble).toFixed(1)}% (${data.forecast.backtest_days ?? 0} days)`}
+              </span>
             </div>
           </div>
         </div>

@@ -23,6 +23,10 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
       ? null
       : Math.max(0, Math.min(100, 100 - forecast.mape_ensemble));
   const formatMape = (value: number | null) => value === null ? '—' : `${value}%`;
+  const exactLitres = (value: number) => value.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
   return (
     <div className="space-y-6">
@@ -51,7 +55,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
             <div>
               <span className="text-slate-400 block text-[11px]">7-Day Cumulative Volume:</span>
               <span className="text-base font-bold font-mono text-emerald-400">
-                {forecast.predicted_total_7d.toLocaleString('en-IN')} L
+                {exactLitres(forecast.predicted_total_7d)} L
               </span>
             </div>
             <div className="w-px h-6 bg-slate-800" />
@@ -62,6 +66,9 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
               </span>
               <span className="text-slate-500 block text-[10px]">
                 {forecast.backtest_days ?? 0} scored day(s); MAPE {formatMape(forecast.mape_ensemble)}
+              </span>
+              <span className="text-slate-500 block text-[10px] max-w-64">
+                {forecast.learning_status || 'Saved forecast feedback status unavailable.'}
               </span>
             </div>
           </div>
@@ -88,7 +95,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
             <span className="text-xs font-semibold text-slate-300">Holt-Winters Exp Smoothing</span>
           </div>
           <div className="text-2xl font-bold font-mono text-slate-200">{formatMape(forecast.mape_holt_winters)}</div>
-          <p className="text-[11px] text-slate-400 mt-1">Level & trend smoothing with α=0.35, β=0.15</p>
+          <p className="text-[11px] text-slate-400 mt-1">Level, trend, and weekly seasonality smoothing</p>
         </div>
 
         <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
@@ -96,7 +103,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
             <span className="text-xs font-semibold text-slate-300">Linear Regression</span>
           </div>
           <div className="text-2xl font-bold font-mono text-slate-200">{formatMape(forecast.mape_linear)}</div>
-          <p className="text-[11px] text-slate-400 mt-1">Least-squares trend line over 14d horizon</p>
+          <p className="text-[11px] text-slate-400 mt-1">Leak-free trend and calendar feature regression</p>
         </div>
 
         <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-sm">
@@ -122,7 +129,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
                 <th className="py-3 px-4">Forecast Date</th>
                 <th className="py-3 px-4">Day of Week</th>
                 <th className="py-3 px-4 text-right">Predicted Demand</th>
-                <th className="py-3 px-4 text-center">95% Range (Lower - Upper)</th>
+                <th className="py-3 px-4 text-center">Estimated Range (Lower - Upper)</th>
                 <th className="py-3 px-4 text-right">Linear Model</th>
                 <th className="py-3 px-4 text-right">Holt-Winters</th>
                 <th className="py-3 px-4">Visual Band</th>
@@ -151,16 +158,16 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
                       )}
                     </td>
                     <td className="py-3 px-4 text-right font-bold text-indigo-300 text-sm">
-                      {f.predicted_qty.toLocaleString('en-IN')} L
+                      {exactLitres(f.predicted_qty)} L
                     </td>
                     <td className="py-3 px-4 text-center text-slate-400">
-                      [{f.lower_bound.toLocaleString('en-IN')} — {f.upper_bound.toLocaleString('en-IN')}] L
+                      [{exactLitres(f.lower_bound)} — {exactLitres(f.upper_bound)}] L
                     </td>
                     <td className="py-3 px-4 text-right text-slate-400">
-                      {f.linear_pred.toLocaleString('en-IN')} L
+                      {exactLitres(f.linear_pred)} L
                     </td>
                     <td className="py-3 px-4 text-right text-slate-400">
-                      {f.holt_winters_pred.toLocaleString('en-IN')} L
+                      {exactLitres(f.holt_winters_pred)} L
                     </td>
                     <td className="py-3 px-4">
                       <div className="w-32 bg-slate-950 rounded-full h-2 relative overflow-hidden">

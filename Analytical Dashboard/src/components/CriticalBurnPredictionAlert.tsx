@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ShieldAlert, AlertTriangle, Clock, Truck, ArrowRight, ExternalLink, Flame } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
-import { fmtQty, fmtLakhs } from '../engine/formatting';
+import { fmtQty } from '../engine/formatting';
+import { recommendTanker } from '../engine/tanker';
 
 interface CriticalBurnPredictionAlertProps {
   stations: StationRecord[];
@@ -20,8 +21,6 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
 
   // Calculate projected hours remaining based on 3-day daily burn rate vs closing tank dip
   const avgSale = telemetry.total_sale_qty / (telemetry.stations_with_sale || 1);
-  const highVolThreshold = avgSale * 1.35; // 35% above mean is high volume
-
   const criticalStations = stations
     .filter((s) => s.sale_qty > 0) // Active stations
     .map((s) => {
@@ -29,9 +28,7 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
       const closingDip = s.closing_dip_in_ltr || s.closing_dip || 0;
       const hoursLeft = Number(((closingDip / dailyBurn) * 24).toFixed(1));
 
-      // Tanker capacity recommendation based on dynamic high volume threshold
-      const recommendedTanker = dailyBurn >= highVolThreshold ? '18-Ton (33,000 L)' : '12-Ton (22,000 L)';
-      const recommendedLtr = dailyBurn >= highVolThreshold ? 33000 : 22000;
+      const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, closingDip);
 
       let riskSeverity: 'Critical (<24h)' | 'Urgent (<48h)' | 'Moderate (<72h)' = 'Moderate (<72h)';
       if (hoursLeft <= 24) {
@@ -46,7 +43,7 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
         dailyBurn,
         hoursLeft,
         recommendedTanker,
-        recommendedLtr,
+        requiredVolumeLtr,
         riskSeverity,
       };
     })
@@ -59,7 +56,11 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
 
   const count24h = criticalStations.filter((i) => i.hoursLeft <= 24).length;
   const count48h = criticalStations.filter((i) => i.hoursLeft <= 48).length;
-  const totalVolumeNeeded = criticalStations.reduce((acc, curr) => acc + curr.recommendedLtr, 0);
+  const totalVolumeNeeded = criticalStations.reduce((acc, curr) => acc + curr.requiredVolumeLtr, 0);
+  const exactLitres = (value: number) => value.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/50 rounded-xl p-5 shadow-xs transition-colors space-y-4">
@@ -79,7 +80,7 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-rose-500" />
-                <span>3-Day Burn Rate Projection: Highlighting stations predicted to run dry within 48 hours</span>
+                <span>Uses current daily sales and closing dip; tanker sizes are 7.5, 10, or 20 KL. Confirm tank ullage before dispatch.</span>
               </p>
             </div>
           </div>
@@ -119,7 +120,7 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
         <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-500/30 flex items-center justify-between">
           <div>
             <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 block">Total Fuel Volume Required</span>
-            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">{fmtLakhs(totalVolumeNeeded)}</span>
+            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">{exactLitres(totalVolumeNeeded)} L</span>
           </div>
           <button
             onClick={() => onNavigateToTab('dispatch')}
@@ -193,6 +194,9 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
                       <Truck className="w-3 h-3 shrink-0" />
                       {item.recommendedTanker}
                     </span>
+                    <div className="text-[10px] text-slate-500 mt-1 text-right">
+                      Refill estimate: {exactLitres(item.requiredVolumeLtr)} L
+                    </div>
                   </td>
 
                   <td className={`px-3 text-right ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
