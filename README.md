@@ -38,6 +38,12 @@ The dashboard can retune ensemble weights from saved forecast-vs-actual
 outcomes. Each forecast is saved by target date and compared with actual
 network sales when those sales are loaded. Model weights start adapting from
 the first scored outcome and become more evidence-based as outcomes accumulate.
+The AIML forecast also walk-forward benchmarks a native gradient-boosted tree
+candidate against the existing ensemble. It contributes 20% only when at least
+14 scored days are available, the blend improves MAPE by at least 5%, and it
+beats the existing ensemble on at least 60% of scored days; otherwise it stays
+benchmark-only. This is a lightweight TypeScript gradient-boosting model, not
+the XGBoost library.
 The AIML report also shows recent forecast error, over/underforecast direction,
 the best-performing component model, and notable week-to-week demand shifts as
 possible miss signals; these signals are diagnostic, not guaranteed causes.

@@ -76,10 +76,10 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
       </div>
 
       {forecast.reasons && forecast.reasons.length > 0 && (
-        <div className="bg-amber-950/20 border border-amber-500/25 rounded-xl p-4 text-xs text-slate-300 space-y-2">
-          <h3 className="font-semibold text-amber-300">Recent Forecast Review & Learning Signals</h3>
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-500/40 rounded-xl p-4 text-xs text-slate-800 dark:text-slate-200 space-y-2 shadow-sm">
+          <h3 className="font-semibold text-amber-900 dark:text-amber-300">Recent Forecast Review & Learning Signals</h3>
           {forecast.reasons.map((reason) => <p key={reason}>{reason}</p>)}
-          <p className="text-slate-400">
+          <p className="text-slate-600 dark:text-slate-400">
             These are data-based signals, not proof of cause. Model weights update as actual outcomes become available.
           </p>
         </div>
@@ -89,7 +89,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
           <h3 className="text-sm font-semibold text-white mb-1">Recent Prediction vs Actual</h3>
           <p className="text-xs text-slate-400 mb-3">
-            Difference = predicted minus actual. The explanation compares component-model predictions; it suggests a likely model signal, not a confirmed real-world cause.
+            Difference = predicted minus actual. Explanations combine component-model comparisons with station remarks and each station&apos;s change from its prior 7-day average. Remarks are recorded context, not independently verified causes.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
@@ -127,7 +127,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
       )}
 
       {/* Model Accuracy Comparison Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-slate-900/80 border border-indigo-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-indigo-950/20 to-transparent">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-indigo-300">Ensemble (Active)</span>
@@ -164,6 +164,22 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
           <div className="text-2xl font-bold font-mono text-slate-400">{formatMape(forecast.mape_naive)}</div>
           <p className="text-[11px] text-slate-500 mt-1">Same day previous week baseline</p>
         </div>
+
+        <div className={`bg-slate-900/80 border rounded-xl p-4 shadow-sm ${forecast.gradient_boosting_active ? 'border-emerald-500/30' : 'border-slate-800'}`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold text-slate-300">Gradient Boosting Trial</span>
+            <span className={`text-[10px] ${forecast.gradient_boosting_active ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {forecast.gradient_boosting_active ? 'Promoted' : 'Benchmark only'}
+            </span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-200">
+            {formatMape(forecast.models_metrics?.gradient_boosting?.mape ?? null)}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1">
+            Standalone walk-forward MAPE. 20% blend: {formatMape(forecast.models_metrics?.gradient_boosting_blend?.mape ?? null)}.
+            Promotion requires ≥5% better blended MAPE and wins on ≥60% of at least 14 days.
+          </p>
+        </div>
       </div>
 
       {/* 7-Day Day-by-Day Forecast Table with Confidence Ranges */}
@@ -183,6 +199,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
                 <th className="py-3 px-4 text-center">Estimated Range (Lower - Upper)</th>
                 <th className="py-3 px-4 text-right">Linear Model</th>
                 <th className="py-3 px-4 text-right">Holt-Winters</th>
+                <th className="py-3 px-4 text-right">Gradient Boosting Trial</th>
                 <th className="py-3 px-4">Visual Band</th>
               </tr>
             </thead>
@@ -219,6 +236,9 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
                     </td>
                     <td className="py-3 px-4 text-right text-slate-400">
                       {exactLitres(f.holt_winters_pred)} L
+                    </td>
+                    <td className="py-3 px-4 text-right text-slate-400">
+                      {exactLitres(f.gradient_boosting_pred)} L
                     </td>
                     <td className="py-3 px-4">
                       <div className="w-32 bg-slate-950 rounded-full h-2 relative overflow-hidden">

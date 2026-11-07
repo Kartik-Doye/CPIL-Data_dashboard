@@ -260,6 +260,14 @@ async function processDataset(
       predicted_naive: number;
       predicted_weekday: number;
       actual_sale_qty: number;
+      station_remark_signals?: Array<{
+        station_name: string;
+        erp_code: string;
+        sale_qty: number;
+        prior_7d_avg: number;
+        change_litres: number;
+        remark: string;
+      }>;
     }>(`
       SELECT
         target_date::text,
@@ -288,6 +296,77 @@ async function processDataset(
       ORDER BY target_date DESC
       LIMIT 7
     `, [stations[0]?.sale_date]);
+    const stationRemarkRows = await queryLoader<{
+      target_date: string;
+      station_name: string;
+      erp_code: string;
+      sale_qty: number;
+      prior_7d_avg: number;
+      change_litres: number;
+      remark: string;
+    }>(`
+      WITH recent_targets AS (
+        SELECT target_date
+        FROM (
+          SELECT DISTINCT ON (target_date)
+            target_date,
+            forecast_origin_date
+          FROM forecast_feedback
+          WHERE actual_sale_qty IS NOT NULL
+            AND actual_sale_qty > 0
+            AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+          ORDER BY target_date, forecast_origin_date DESC
+        ) AS latest_outcome_per_day
+        ORDER BY target_date DESC
+        LIMIT 7
+      ),
+      station_context AS (
+        SELECT
+          actual.sale_date::text AS target_date,
+          actual.alds_name AS station_name,
+          actual.erp_code,
+          actual.sale_qty::float AS sale_qty,
+          prior.prior_7d_avg::float AS prior_7d_avg,
+          (actual.sale_qty - prior.prior_7d_avg)::float AS change_litres,
+          TRIM(actual.remark) AS remark,
+          ROW_NUMBER() OVER (
+            PARTITION BY actual.sale_date
+            ORDER BY ABS(actual.sale_qty - prior.prior_7d_avg) DESC
+          ) AS remark_rank
+        FROM recent_targets AS target
+        JOIN sale_tracker AS actual ON actual.sale_date = target.target_date
+        CROSS JOIN LATERAL (
+          SELECT AVG(previous.sale_qty) AS prior_7d_avg
+          FROM sale_tracker AS previous
+          WHERE previous.erp_code = actual.erp_code
+            AND previous.sale_date < actual.sale_date
+            AND previous.sale_date >= actual.sale_date - INTERVAL '7 days'
+        ) AS prior
+        WHERE NULLIF(TRIM(actual.remark), '') IS NOT NULL
+          AND prior.prior_7d_avg IS NOT NULL
+      )
+      SELECT target_date, station_name, erp_code, sale_qty,
+             prior_7d_avg, change_litres, remark
+      FROM station_context
+      WHERE remark_rank <= 3
+      ORDER BY target_date DESC, remark_rank
+    `, [stations[0]?.sale_date]);
+    const remarkSignalsByDate = new Map<string, NonNullable<typeof recentOutcomeRows[number]['station_remark_signals']>>();
+    for (const row of stationRemarkRows) {
+      const signals = remarkSignalsByDate.get(row.target_date) ?? [];
+      signals.push({
+        station_name: row.station_name,
+        erp_code: row.erp_code,
+        sale_qty: Number(row.sale_qty),
+        prior_7d_avg: Number(row.prior_7d_avg),
+        change_litres: Number(row.change_litres),
+        remark: row.remark,
+      });
+      remarkSignalsByDate.set(row.target_date, signals);
+    }
+    for (const outcome of recentOutcomeRows) {
+      outcome.station_remark_signals = remarkSignalsByDate.get(outcome.target_date) ?? [];
+    }
     if (feedbackRows.length > 0) {
       const evaluatedCount = feedbackRows.reduce((sum, row) => sum + Number(row.sample_count || 0), 0);
       const weightedModelMape = (key: 'linear_mape' | 'holt_winters_mape' | 'naive_mape' | 'weekday_mape') => {

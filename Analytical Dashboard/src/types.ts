@@ -101,6 +101,7 @@ export interface ForecastPoint {
   linear_pred: number;
   holt_winters: number;
   holt_winters_pred: number;
+  gradient_boosting_pred: number;
   naive_last_week: number;
   same_weekday_avg: number;
   ensemble: number;
@@ -120,6 +121,7 @@ export interface ForecastResult {
   mape_holt_winters: number | null;
   mape_naive: number | null;
   backtest_days?: number;
+  gradient_boosting_active?: boolean;
   learning_status?: string;
   forecast: ForecastPoint[];
   insufficient?: boolean;

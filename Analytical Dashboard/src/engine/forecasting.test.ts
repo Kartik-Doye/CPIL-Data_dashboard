@@ -17,6 +17,16 @@ test('reports walk-forward metrics only when historical test days are available'
   assert.ok(Number.isFinite(result.mape_ensemble));
   assert.equal(result.models_metrics?.linear.mape, result.mape_linear);
   assert.ok(result.models_metrics?.linear.rmse !== null);
+  assert.ok(Number.isFinite(result.models_metrics?.gradient_boosting.mape));
+  assert.ok(Number.isFinite(result.forecast[0].gradient_boosting_pred));
+});
+
+test('keeps gradient boosting in benchmark mode until the minimum walk-forward sample size', () => {
+  const result = generateForecast(makeHistory(20, index => 100 + (index % 7) * 8 + index), 7);
+
+  assert.equal(result.backtest_days, 13);
+  assert.equal(result.gradient_boosting_active, false);
+  assert.ok(result.insights?.some(insight => /remains a trial candidate/.test(insight)));
 });
 
 test('does not present a fabricated accuracy when there are no holdout days', () => {
@@ -64,6 +74,14 @@ test('explains recent forecast misses using actual outcomes and model comparison
         predicted_naive: 130,
         predicted_weekday: 125,
         actual_sale_qty: 100,
+        station_remark_signals: [{
+          station_name: 'Sample Station',
+          erp_code: 'ST001',
+          sale_qty: 100,
+          prior_7d_avg: 150,
+          change_litres: -50,
+          remark: 'Supply interruption reported',
+        }],
       },
       {
         target_date: '2026-02-02',
@@ -83,6 +101,8 @@ test('explains recent forecast misses using actual outcomes and model comparison
   assert.equal(result.recent_forecast_outcomes?.[0].difference_pct, 50);
   assert.equal(result.recent_forecast_outcomes?.[0].closest_model, 'linear');
   assert.match(result.recent_forecast_outcomes?.[0].explanation || '', /overforecast by 50\.0%/);
+  assert.match(result.recent_forecast_outcomes?.[0].explanation || '', /Supply interruption reported/);
+  assert.match(result.recent_forecast_outcomes?.[0].explanation || '', /Sample Station \(ST001\) sold 50 L below its prior 7-day average/);
 });
 
 test('historical overprediction bias is damped for the matching forecast horizon', () => {

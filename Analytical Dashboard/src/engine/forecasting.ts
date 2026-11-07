@@ -186,7 +186,126 @@ class LinearRegressionModel {
   }
 }
 
-// =========================================================================== //
+interface RegressionTreeNode {
+  value: number;
+  featureIndex?: number;
+  threshold?: number;
+  left?: RegressionTreeNode;
+  right?: RegressionTreeNode;
+}
+
+function fitRegressionTree(
+  features: number[][],
+  targets: number[],
+  depth: number,
+  maxDepth: number,
+  minSamplesLeaf: number,
+): RegressionTreeNode {
+  const node: RegressionTreeNode = { value: mean(targets) };
+  if (depth >= maxDepth || targets.length < minSamplesLeaf * 2 || features.length === 0) return node;
+
+  const totalSum = targets.reduce((sum, target) => sum + target, 0);
+  const totalSquaredSum = targets.reduce((sum, target) => sum + target * target, 0);
+  let bestLoss = Infinity;
+  let bestFeature = -1;
+  let bestThreshold = 0;
+
+  for (let featureIndex = 0; featureIndex < features[0].length; featureIndex++) {
+    const sorted = features
+      .map((row, index) => ({ value: row[featureIndex], target: targets[index] }))
+      .sort((a, b) => a.value - b.value);
+    let leftSum = 0;
+    let leftSquaredSum = 0;
+
+    for (let split = 1; split < sorted.length; split++) {
+      const previous = sorted[split - 1];
+      leftSum += previous.target;
+      leftSquaredSum += previous.target * previous.target;
+      if (
+        split < minSamplesLeaf
+        || sorted.length - split < minSamplesLeaf
+        || previous.value === sorted[split].value
+      ) continue;
+
+      const rightCount = sorted.length - split;
+      const rightSum = totalSum - leftSum;
+      const loss = leftSquaredSum - (leftSum * leftSum) / split
+        + totalSquaredSum - leftSquaredSum - (rightSum * rightSum) / rightCount;
+      if (loss < bestLoss) {
+        bestLoss = loss;
+        bestFeature = featureIndex;
+        bestThreshold = (previous.value + sorted[split].value) / 2;
+      }
+    }
+  }
+
+  if (bestFeature < 0) return node;
+  const leftFeatures: number[][] = [];
+  const leftTargets: number[] = [];
+  const rightFeatures: number[][] = [];
+  const rightTargets: number[] = [];
+  features.forEach((row, index) => {
+    if (row[bestFeature] <= bestThreshold) {
+      leftFeatures.push(row);
+      leftTargets.push(targets[index]);
+    } else {
+      rightFeatures.push(row);
+      rightTargets.push(targets[index]);
+    }
+  });
+  if (leftTargets.length < minSamplesLeaf || rightTargets.length < minSamplesLeaf) return node;
+
+  node.featureIndex = bestFeature;
+  node.threshold = bestThreshold;
+  node.left = fitRegressionTree(leftFeatures, leftTargets, depth + 1, maxDepth, minSamplesLeaf);
+  node.right = fitRegressionTree(rightFeatures, rightTargets, depth + 1, maxDepth, minSamplesLeaf);
+  return node;
+}
+
+function predictRegressionTree(node: RegressionTreeNode, features: number[]): number {
+  if (node.featureIndex === undefined || node.threshold === undefined || !node.left || !node.right) {
+    return node.value;
+  }
+  return predictRegressionTree(
+    features[node.featureIndex] <= node.threshold ? node.left : node.right,
+    features,
+  );
+}
+
+class GradientBoostingModel {
+  private readonly learningRate = 0.05;
+  private readonly estimators = 30;
+  private readonly trees: RegressionTreeNode[] = [];
+  private baseValue = 0;
+
+  fit(features: number[][], targets: number[]): void {
+    this.trees.length = 0;
+    this.baseValue = mean(targets);
+    if (features.length === 0 || targets.length === 0) return;
+
+    const fitted = new Array(targets.length).fill(this.baseValue) as number[];
+    for (let estimator = 0; estimator < this.estimators; estimator++) {
+      const residuals = targets.map((target, index) => target - fitted[index]);
+      const tree = fitRegressionTree(features, residuals, 0, 2, 5);
+      this.trees.push(tree);
+      for (let index = 0; index < fitted.length; index++) {
+        fitted[index] += this.learningRate * predictRegressionTree(tree, features[index]);
+      }
+    }
+  }
+
+  predict(features: number[]): number {
+    return Math.max(
+      0,
+      this.baseValue + this.trees.reduce(
+        (prediction, tree) => prediction + this.learningRate * predictRegressionTree(tree, features),
+        0,
+      ),
+    );
+  }
+}
+
+// ===========================================================================
 // Holt-Winters Triple Exponential Smoothing
 // =========================================================================== //
 
@@ -273,7 +392,8 @@ function optimizeHoltWinters(data: number[], m = 7): [number, number, number] {
   return bestParams;
 }
 
-type ForecastModel = 'linear' | 'holt_winters' | 'naive_last_week' | 'same_weekday_avg';
+type EnsembleModel = 'linear' | 'holt_winters' | 'naive_last_week' | 'same_weekday_avg';
+type ForecastModel = EnsembleModel | 'gradient_boosting';
 
 interface BacktestErrors {
   percentage: Record<ForecastModel, number[]>;
@@ -281,6 +401,8 @@ interface BacktestErrors {
   ensemblePercentage: number[];
   ensembleSquared: number[];
   ensembleBiasPercentage: number[];
+  gradientBoostedEnsemblePercentage: number[];
+  gradientBoostingWins: number;
   scoredDays: number;
 }
 
@@ -296,6 +418,14 @@ export interface PersistedForecastErrors {
     predicted_naive: number;
     predicted_weekday: number;
     actual_sale_qty: number;
+    station_remark_signals?: Array<{
+      station_name: string;
+      erp_code: string;
+      sale_qty: number;
+      prior_7d_avg: number;
+      change_litres: number;
+      remark: string;
+    }>;
   }>;
 }
 
@@ -306,16 +436,20 @@ function createBacktestErrors(): BacktestErrors {
       holt_winters: [],
       naive_last_week: [],
       same_weekday_avg: [],
+      gradient_boosting: [],
     },
     squared: {
       linear: [],
       holt_winters: [],
       naive_last_week: [],
       same_weekday_avg: [],
+      gradient_boosting: [],
     },
     ensemblePercentage: [],
     ensembleSquared: [],
     ensembleBiasPercentage: [],
+    gradientBoostedEnsemblePercentage: [],
+    gradientBoostingWins: 0,
     scoredDays: 0,
   };
 }
@@ -326,8 +460,8 @@ function boundedBiasCorrection(biasPercentage: number): number {
 
 function inverseMapeWeights(
   errors: Record<ForecastModel, number[]>
-): Record<ForecastModel, number> {
-  const models: ForecastModel[] = ['linear', 'holt_winters', 'naive_last_week', 'same_weekday_avg'];
+): Record<EnsembleModel, number> {
+  const models: EnsembleModel[] = ['linear', 'holt_winters', 'naive_last_week', 'same_weekday_avg'];
   const inverseErrors = models.map(model => {
     const mape = errors[model].length > 0 ? mean(errors[model]) * 100 : null;
     return mape === null ? 0 : 1 / Math.max(mape, 1);
@@ -364,11 +498,15 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
     const trainFeatures = buildFeaturesNoLeak(trainDates, trainActuals);
     const linearModel = new LinearRegressionModel();
     linearModel.fit(trainFeatures, trainActuals);
+    const gradientBoostingModel = new GradientBoostingModel();
+    gradientBoostingModel.fit(trainFeatures, trainActuals);
     const testFeatures = buildFeaturesNoLeak(
       [...trainDates, testDate],
       [...trainActuals, 0]
     );
-    const linearPrediction = Math.max(linearModel.predict(testFeatures[testFeatures.length - 1]), 0);
+    const testFeature = testFeatures[testFeatures.length - 1];
+    const linearPrediction = Math.max(linearModel.predict(testFeature), 0);
+    const gradientBoostingPrediction = gradientBoostingModel.predict(testFeature);
 
     const [alpha, beta, gamma] = optimizeHoltWinters(trainActuals, 7);
     const { forecast: holtWintersForecast } = holtWinters(trainActuals, alpha, beta, gamma, 7, 1);
@@ -377,6 +515,7 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
       holt_winters: holtWintersForecast[0] ?? mean(trainActuals),
       naive_last_week: naiveLastWeek(trainDates, trainActuals, testDate),
       same_weekday_avg: sameWeekdayAvg(trainDates, trainActuals, testDate),
+      gradient_boosting: gradientBoostingPrediction,
     };
 
     if (actual > 0) {
@@ -397,6 +536,13 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
       }
 
       const ensembleDifference = ensemblePrediction - actual;
+      const gradientBoostedEnsemblePrediction = ensemblePrediction * 0.8
+        + modelPredictions.gradient_boosting * 0.2;
+      const gradientBoostedEnsembleDifference = gradientBoostedEnsemblePrediction - actual;
+      if (Math.abs(gradientBoostedEnsembleDifference) < Math.abs(ensembleDifference)) {
+        errors.gradientBoostingWins++;
+      }
+      errors.gradientBoostedEnsemblePercentage.push(Math.abs(gradientBoostedEnsembleDifference) / actual);
       errors.ensemblePercentage.push(Math.abs(ensembleDifference) / actual);
       errors.ensembleSquared.push(ensembleDifference ** 2);
       errors.ensembleBiasPercentage.push(ensembleDifference / actual);
@@ -418,7 +564,7 @@ function rootMeanSquaredError(errors: number[]): number | null {
 function adaptiveWeights(
   backtestErrors: Record<ForecastModel, number[]>,
   persistedErrors?: PersistedForecastErrors
-): Record<ForecastModel, number> {
+): Record<EnsembleModel, number> {
   const recentWeights = inverseMapeWeights(backtestErrors);
   if (!persistedErrors || persistedErrors.sample_count < 1) return recentWeights;
 
@@ -432,7 +578,7 @@ function adaptiveWeights(
   const historicalWeights = inverseMapeWeights(historicalErrors);
   const historicalShare = persistedErrors.sample_count / (persistedErrors.sample_count + 28);
   const blended = Object.fromEntries(
-    (Object.keys(recentWeights) as ForecastModel[]).map(model => [
+    (Object.keys(recentWeights) as EnsembleModel[]).map(model => [
       model,
       recentWeights[model] * (1 - historicalShare) + historicalWeights[model] * historicalShare,
     ])
@@ -440,7 +586,7 @@ function adaptiveWeights(
   const total = Object.values(blended).reduce((sum, weight) => sum + weight, 0);
 
   return Object.fromEntries(
-    (Object.keys(blended) as ForecastModel[]).map(model => [
+    (Object.keys(blended) as EnsembleModel[]).map(model => [
       model,
       Math.round((blended[model] / total) * 1000) / 1000,
     ])
@@ -515,6 +661,8 @@ export function generateForecast(
   const features = buildFeaturesNoLeak(dates, actuals);
   const linModel = new LinearRegressionModel();
   linModel.fit(features, actuals);
+  const gradientBoostingModel = new GradientBoostingModel();
+  gradientBoostingModel.fit(features, actuals);
 
   // 2. Train Holt-Winters
   const [alpha, beta, gamma] = optimizeHoltWinters(actuals, 7);
@@ -527,7 +675,15 @@ export function generateForecast(
   const hwMape = meanPercentageError(backtest.percentage.holt_winters);
   const naiveMape = meanPercentageError(backtest.percentage.naive_last_week);
   const weekdayMape = meanPercentageError(backtest.percentage.same_weekday_avg);
-  const ensembleMape = meanPercentageError(backtest.ensemblePercentage);
+  const baselineEnsembleMape = meanPercentageError(backtest.ensemblePercentage);
+  const gradientBoostingMape = meanPercentageError(backtest.percentage.gradient_boosting);
+  const gradientBoostedEnsembleMape = meanPercentageError(backtest.gradientBoostedEnsemblePercentage);
+  const gradientBoostingActive = backtest.scoredDays >= 14
+    && baselineEnsembleMape !== null
+    && gradientBoostedEnsembleMape !== null
+    && gradientBoostedEnsembleMape <= baselineEnsembleMape * 0.95
+    && backtest.gradientBoostingWins / backtest.scoredDays >= 0.6;
+  const ensembleMape = gradientBoostingActive ? gradientBoostedEnsembleMape : baselineEnsembleMape;
 
   // 4. Forecast Loop
   const extendedDates = [...dates];
@@ -571,7 +727,11 @@ export function generateForecast(
     ];
 
     const lp = Math.max(linModel.predict(feat), 0);
-    let ensemble = weights.linear * lp + weights.holt_winters * hp + weights.naive_last_week * nl + weights.same_weekday_avg * wa;
+    const gradientBoostingPrediction = gradientBoostingModel.predict(feat);
+    const baseEnsemble = weights.linear * lp + weights.holt_winters * hp + weights.naive_last_week * nl + weights.same_weekday_avg * wa;
+    let ensemble = gradientBoostingActive
+      ? baseEnsemble * 0.8 + gradientBoostingPrediction * 0.2
+      : baseEnsemble;
 
     if (festName) {
       ensemble *= 0.94;
@@ -606,6 +766,7 @@ export function generateForecast(
       linear_pred: Number(lp.toFixed(2)),
       holt_winters: Number(hp.toFixed(2)),
       holt_winters_pred: Number(hp.toFixed(2)),
+      gradient_boosting_pred: Number(gradientBoostingPrediction.toFixed(2)),
       naive_last_week: Number(nl.toFixed(2)),
       same_weekday_avg: Number(wa.toFixed(2)),
       ensemble: p50,
@@ -644,6 +805,13 @@ export function generateForecast(
       : direction === 'matched'
         ? 'The ensemble matched actual sales.'
         : `The ensemble ${direction} by ${Math.abs(differencePct).toFixed(1)}%; component-model predictions are unavailable for comparison.`;
+    const stationRemarkSignals = outcome.station_remark_signals ?? [];
+    const remarkContext = stationRemarkSignals.length > 0
+      ? ` Recorded station context: ${stationRemarkSignals.map(signal => {
+        const changeDirection = signal.change_litres > 0 ? 'above' : 'below';
+        return `${signal.station_name} (${signal.erp_code}) sold ${Math.abs(signal.change_litres).toLocaleString('en-IN', { maximumFractionDigits: 0 })} L ${changeDirection} its prior 7-day average (${signal.sale_qty.toLocaleString('en-IN', { maximumFractionDigits: 0 })} L vs ${signal.prior_7d_avg.toLocaleString('en-IN', { maximumFractionDigits: 0 })} L); remark: "${signal.remark}"`;
+      }).join('; ')}. These remarks are recorded operational context and may help explain the deviation.`
+      : ' No station remarks were recorded for stations with a measurable change from their prior 7-day average.';
 
     return {
       date: outcome.target_date,
@@ -653,12 +821,12 @@ export function generateForecast(
       difference_pct: differencePct,
       closest_model: closestModel?.[0].replace(/_/g, ' ') ?? 'Unavailable',
       closest_model_prediction: closestModel?.[1] ?? 0,
-      explanation,
+      explanation: `${explanation}${remarkContext}`,
     };
   });
 
   if (recentOutcomes.length > 0) {
-    const modelPredictions: Record<ForecastModel, (outcome: typeof recentOutcomes[number]) => number> = {
+    const modelPredictions: Record<EnsembleModel, (outcome: typeof recentOutcomes[number]) => number> = {
       linear: outcome => outcome.predicted_linear,
       holt_winters: outcome => outcome.predicted_holt_winters,
       naive_last_week: outcome => outcome.predicted_naive,
@@ -673,7 +841,7 @@ export function generateForecast(
       `Recent forecast review (${recentOutcomes.length} actual day(s)): ensemble average absolute error was ${averageAbsoluteError.toFixed(1)}%; it overforecast on ${overforecastDays} day(s) and underforecast on ${recentOutcomes.length - overforecastDays}.`,
     );
 
-    const modelMapes = (Object.keys(modelPredictions) as ForecastModel[])
+    const modelMapes = (Object.keys(modelPredictions) as EnsembleModel[])
       .map(model => ({
         model,
         mape: mean(recentOutcomes.map(outcome =>
@@ -713,6 +881,11 @@ export function generateForecast(
       `Model weights also incorporate ${persistedErrors.sample_count} saved forecast outcomes compared with actual sales.`
     );
   }
+  insights.push(
+    gradientBoostingActive
+      ? `Gradient boosting passed the walk-forward promotion gate (${gradientBoostedEnsembleMape}% blended MAPE versus ${baselineEnsembleMape}% for the current ensemble; it improved ${Math.round((backtest.gradientBoostingWins / backtest.scoredDays) * 100)}% of scored days) and contributes 20% to the forecast.`
+      : `Gradient boosting remains a trial candidate (${gradientBoostingMape === null ? 'not enough scored data' : `${gradientBoostingMape}% standalone MAPE`}; 20% blend MAPE ${gradientBoostedEnsembleMape === null ? 'unavailable' : `${gradientBoostedEnsembleMape}%`} versus ${baselineEnsembleMape === null ? 'unavailable' : `${baselineEnsembleMape}%`} current-ensemble MAPE). It is not used unless the blend improves MAPE by at least 5% and wins at least 60% of at least 14 walk-forward days.`,
+  );
 
   if (daysAvailable >= 60) {
     insights.push(
@@ -734,6 +907,7 @@ export function generateForecast(
     mape_holt_winters: hwMape,
     mape_naive: naiveMape,
     backtest_days: backtest.scoredDays,
+    gradient_boosting_active: gradientBoostingActive,
     learning_status: persistedErrors && persistedErrors.sample_count > 0
       ? `Adaptive weights learn from ${persistedErrors.sample_count} saved forecast outcomes; historical influence increases as more actuals are scored.`
       : 'No saved forecast outcomes are scored yet; learning will begin when actual sales arrive.',
@@ -746,8 +920,24 @@ export function generateForecast(
       holt_winters: { mape: hwMape, rmse: rootMeanSquaredError(backtest.squared.holt_winters) },
       naive_last_week: { mape: naiveMape, rmse: rootMeanSquaredError(backtest.squared.naive_last_week) },
       same_weekday_avg: { mape: weekdayMape, rmse: rootMeanSquaredError(backtest.squared.same_weekday_avg) },
+      gradient_boosting: {
+        mape: gradientBoostingMape,
+        rmse: rootMeanSquaredError(backtest.squared.gradient_boosting),
+      },
+      gradient_boosting_blend: {
+        mape: gradientBoostedEnsembleMape,
+        rmse: null,
+      },
     },
-    weights,
+    weights: {
+      ...Object.fromEntries(
+        (Object.keys(weights) as EnsembleModel[]).map(model => [
+          model,
+          Number((weights[model] * (gradientBoostingActive ? 0.8 : 1)).toFixed(3)),
+        ]),
+      ),
+      gradient_boosting: gradientBoostingActive ? 0.2 : 0,
+    },
     insights,
     reasons,
     data_quality: {
