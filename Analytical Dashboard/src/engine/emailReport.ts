@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { fileURLToPath } from 'node:url';
 import type {
   ExecutiveTelemetry,
   ForecastPoint,
@@ -34,6 +35,13 @@ const number = (value: number) => value.toLocaleString('en-IN', {
   maximumFractionDigits: 2,
 });
 
+const escapeHtml = (value: string) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   const paytmShare = telemetry.total_collection > 0
     ? (telemetry.total_paytm_collection / telemetry.total_collection) * 100
@@ -43,39 +51,34 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   const historicalAccuracy = mape === null || !Number.isFinite(mape)
     ? 'Not available yet'
     : `${Math.max(0, 100 - mape).toFixed(1)}% (MAPE ${mape.toFixed(1)}%, ${telemetry.forecast.backtest_days ?? 0} scored days)`;
-  const stockoutStations = telemetry.stockout_risk_stations.slice(0, 3);
-  const stockoutSummary = stockoutStations.length
-    ? stockoutStations.map((station) => `${station.name} (${station.code}, ${station.days_left.toFixed(1)} days)`).join('; ')
-    : 'None reported';
 
   const text = [
     'Dear Management Team,',
     '',
-    `Operational summary for ${telemetry.date}:`,
+    `Please find the operational summary for ${telemetry.date}.`,
     '',
-    'SALES & COLLECTIONS',
-    `• Total sales: ${number(telemetry.total_sale_qty)} L`,
-    `• Collections: ₹${number(telemetry.total_collection)} (effective rate ₹${telemetry.effective_rsp.toFixed(2)}/L)`,
-    `• Digital / Paytm: ₹${number(telemetry.total_paytm_collection)} (${paytmShare.toFixed(2)}% of collections)`,
-    `• Free sale: ${number(telemetry.total_free_sale_litres)} L`,
+    `Sales totalled ${number(telemetry.total_sale_qty)} L across ${telemetry.stations_with_sale} of ${telemetry.stations_total} stations. Collections were ₹${number(telemetry.total_collection)} (effective rate ₹${telemetry.effective_rsp.toFixed(2)}/L), including Paytm collections of ₹${number(telemetry.total_paytm_collection)} (${paytmShare.toFixed(2)}%) and free sales of ${number(telemetry.total_free_sale_litres)} L.`,
     '',
-    'NETWORK & OUTLOOK',
-    `• Stations reporting sales: ${telemetry.stations_with_sale}/${telemetry.stations_total}; zero-sale: ${telemetry.zero_sale_count}`,
-    `• Next-day forecast${nextForecast ? ` (${nextForecast.date})` : ''}: ${nextForecast ? `${number(nextForecast.predicted_qty)} L` : 'Not available'}`,
-    `• 7-day forecast total: ${number(telemetry.forecast.predicted_total_7d)} L`,
-    `• Historical validation accuracy: ${historicalAccuracy} (historical performance, not a guarantee)`,
+    `The next-day forecast${nextForecast ? ` for ${nextForecast.date}` : ''} is ${nextForecast ? `${number(nextForecast.predicted_qty)} L` : 'not available'}, and the seven-day forecast is ${number(telemetry.forecast.predicted_total_7d)} L. Historical forecast accuracy is ${historicalAccuracy}; this reflects past performance and is not a guarantee.`,
     '',
-    'PRIORITY ACTIONS',
-    `• Stockout risks (<3 days): ${telemetry.stockout_risk_stations.length}${stockoutStations.length ? ` — ${stockoutSummary}` : ''}`,
-    `• Zero-sale stations to review: ${telemetry.zero_sale_count}`,
+    `${telemetry.stockout_risk_stations.length} station(s) are at stockout risk (under three days of stock), and ${telemetry.zero_sale_count} reported no sales. Kindly review and take appropriate action.`,
     '',
-    'Regards,',
-    'GO Gas Operations Desk',
+    'Thank you for your continued support.',
+    '',
+    'Thanks,',
+    'Kartik Doye',
+    'Data Analyst (Sales & Marketing) - ALDS',
+    'Phone: 8087018975',
+    'Email: kartikdoye@confidencegroup.co',
+    'Website: https://www.confidencegroup.co/',
+    'Confidence Petroleum India Limited',
+    '34A Confidence Tower, Central Bazar Road, Ramdaspeth, Nagpur - 440010',
   ].join('\n');
 
   return {
     subject: `GO Gas Executive Daily Flash - ${telemetry.date}`,
     text,
+    html: `<div style="font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.6"><p style="margin:0 0 20px"><img src="cid:company-logo" alt="Confidence Group" width="240" style="display:block;width:240px;max-width:100%;height:auto"></p><div>${escapeHtml(text).replace(/\n/g, '<br>')}</div></div>`,
   };
 }
 
@@ -113,6 +116,11 @@ export async function sendExecutiveBriefing(telemetry: ExecutiveEmailTelemetry) 
     from: `"GO Gas Operations Desk" <${sender}>`,
     to: recipients,
     ...email,
+    attachments: [{
+      filename: 'company_logo.jpeg',
+      path: fileURLToPath(new URL('../../company_logo.jpeg', import.meta.url)),
+      cid: 'company-logo',
+    }],
   });
 
   return { recipientCount: recipients.length };

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { buildExecutiveEmail } from './emailReport.js';
 
 test('builds a concise executive email from live telemetry values', () => {
-  const { subject, text } = buildExecutiveEmail({
+  const { subject, text, html } = buildExecutiveEmail({
     date: '2026-11-05',
     stations_with_sale: 312,
     stations_total: 316,
@@ -28,10 +28,19 @@ test('builds a concise executive email from live telemetry values', () => {
   assert.equal(subject, 'GO Gas Executive Daily Flash - 2026-11-05');
   assert.match(text, /3,42,850\.00 L/);
   assert.match(text, /₹2,64,33,735\.00/);
-  assert.match(text, /₹78,20,500\.00 \(29\.59% of collections\)/);
+  assert.match(text, /₹78,20,500\.00 \(29\.59%\)/);
   assert.match(text, /3,48,200\.00 L/);
   assert.match(text, /93\.2% \(MAPE 6\.8%, 14 scored days\)/);
-  assert.match(text, /YUSUFGUDA \(JODO9, 0\.9 days\)/);
+  assert.match(text, /Kindly review and take appropriate action\./);
+  assert.match(text, /Thank you for your continued support\.\n\nThanks,/);
+  assert.match(text, /Kartik Doye\nData Analyst \(Sales & Marketing\) - ALDS/);
+  assert.match(text, /8087018975/);
+  assert.match(text, /kartikdoye@confidencegroup\.co/);
+  assert.match(text, /https:\/\/www\.confidencegroup\.co\//);
+  assert.match(text, /34A Confidence Tower, Central Bazar Road, Ramdaspeth, Nagpur - 440010/);
+  assert.ok(text.trim().split(/\s+/).length <= 150);
+  assert.match(html, /src="cid:company-logo"/);
+  assert.match(html, /alt="Confidence Group"/);
   assert.doesNotMatch(text, /95% Confidence Band|Top 10|STATE-WISE BREAKDOWN/);
 });
 
@@ -55,7 +64,8 @@ test('reports unavailable forecasts and empty priority lists clearly', () => {
     stockout_risk_stations: [],
   });
 
-  assert.match(text, /Next-day forecast: Not available/);
-  assert.match(text, /Historical validation accuracy: Not available yet/);
-  assert.match(text, /Stockout risks \(<3 days\): 0/);
+  assert.match(text, /next-day forecast is not available/);
+  assert.match(text, /Historical forecast accuracy is Not available yet/);
+  assert.match(text, /0 station\(s\) are at stockout risk/);
+  assert.ok(text.trim().split(/\s+/).length <= 150);
 });
