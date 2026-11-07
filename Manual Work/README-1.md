@@ -97,13 +97,15 @@ Use `.env.example` as a template:
 
 ```
 BOT_LOADER_PASSWORD=your_loader_password
+BOT_LOADER_USER=bot_loader
 DB_NAME=sale_alds
-DB_USER=bot_loader
 SALE_FILE=sale.xlsx
 ```
 
-The `BOT_LOADER_PASSWORD` must match the password you set for `bot_loader`
-in the SQL file. **Never commit `.env`** — it is in `.gitignore`.
+The `BOT_LOADER_USER` and `BOT_LOADER_PASSWORD` must match the loader role
+created in the SQL file. The loader uses its own credentials, separate from the
+dashboard's read-only `DB_USER` and `BOT_READER_PASSWORD`. **Never commit `.env`**
+— it is in `.gitignore`.
 
 ---
 

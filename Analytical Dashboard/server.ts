@@ -252,6 +252,42 @@ async function processDataset(
         AND forecast_origin_date >= $1::date - INTERVAL '90 days'
       GROUP BY horizon_day
     `, [stations[0]?.sale_date]);
+    const recentOutcomeRows = await queryLoader<{
+      target_date: string;
+      predicted_ensemble: number;
+      predicted_linear: number;
+      predicted_holt_winters: number;
+      predicted_naive: number;
+      predicted_weekday: number;
+      actual_sale_qty: number;
+    }>(`
+      SELECT
+        target_date::text,
+        predicted_ensemble::float,
+        predicted_linear::float,
+        predicted_holt_winters::float,
+        predicted_naive::float,
+        predicted_weekday::float,
+        actual_sale_qty::float
+      FROM (
+        SELECT DISTINCT ON (target_date)
+          target_date,
+          forecast_origin_date,
+          predicted_ensemble,
+          predicted_linear,
+          predicted_holt_winters,
+          predicted_naive,
+          predicted_weekday,
+          actual_sale_qty
+        FROM forecast_feedback
+        WHERE actual_sale_qty IS NOT NULL
+          AND actual_sale_qty > 0
+          AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+        ORDER BY target_date, forecast_origin_date DESC
+      ) AS latest_outcome_per_day
+      ORDER BY target_date DESC
+      LIMIT 7
+    `, [stations[0]?.sale_date]);
     if (feedbackRows.length > 0) {
       const evaluatedCount = feedbackRows.reduce((sum, row) => sum + Number(row.sample_count || 0), 0);
       const weightedModelMape = (key: 'linear_mape' | 'holt_winters_mape' | 'naive_mape' | 'weekday_mape') => {
@@ -274,6 +310,7 @@ async function processDataset(
             .filter(row => row.ensemble_bias_pct !== null)
             .map(row => [Number(row.horizon_day), Number(row.ensemble_bias_pct) / 100])
         ),
+        recent_outcomes: recentOutcomeRows,
       };
     }
     learningStatus = 'Forecast outcomes are being evaluated against actual network sales.';
@@ -308,9 +345,9 @@ async function processDataset(
           forecast.same_weekday_avg,
         ]);
       }
-      forecastEngineResult.learning_status = persistedErrors && persistedErrors.sample_count >= 7
-        ? `Saved forecasts are scored against network-wide actuals; model weights and horizon bias use ${persistedErrors.sample_count} evaluated outcomes.`
-        : 'Saved forecasts are scored against network-wide actuals; adaptive learning becomes active after 7 evaluated outcomes.';
+      forecastEngineResult.learning_status = persistedErrors && persistedErrors.sample_count > 0
+        ? `Saved forecasts are scored against network-wide actuals; learning is active with ${persistedErrors.sample_count} evaluated outcome(s) and strengthens as evidence grows.`
+        : 'Saved forecasts are scored against network-wide actuals; learning begins when actual outcomes are available.';
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

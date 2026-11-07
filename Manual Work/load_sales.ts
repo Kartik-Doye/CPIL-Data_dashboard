@@ -18,8 +18,8 @@ dotenv.config();
 const DB_HOST = process.env.DB_HOST || 'localhost';
 const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
 const DB_NAME = process.env.DB_NAME || 'sale_alds';
-const DB_USER = process.env.DB_USER || 'bot_loader';
-const DB_PASSWORD = process.env.BOT_LOADER_PASSWORD || process.env.DB_PASSWORD || '';
+const DB_USER = process.env.BOT_LOADER_USER || 'bot_loader';
+const DB_PASSWORD = process.env.BOT_LOADER_PASSWORD || '';
 
 function logMessage(msg: string) {
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);

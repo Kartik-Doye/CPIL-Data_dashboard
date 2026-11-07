@@ -34,11 +34,11 @@ test('excludes zero-sales days from percentage accuracy rather than claiming per
   assert.equal(result.mape_ensemble, null);
 });
 
-test('historical forecast outcomes adapt ensemble weights after enough evaluations', () => {
+test('historical forecast outcomes begin adapting ensemble weights with the first evaluation', () => {
   const history = makeHistory(35, index => 100 + (index % 7) * 10 + index);
   const recentOnly = generateForecast(history, 7);
   const adapted = generateForecast(history, 7, undefined, {
-    sample_count: 12,
+    sample_count: 1,
     mape: {
       linear: 100,
       holt_winters: 1,
@@ -48,7 +48,41 @@ test('historical forecast outcomes adapt ensemble weights after enough evaluatio
   });
 
   assert.ok((adapted.weights?.linear ?? 0) < (recentOnly.weights?.linear ?? 0));
-  assert.match(adapted.learning_status || '', /12/);
+  assert.match(adapted.learning_status || '', /1 saved forecast outcome/);
+});
+
+test('explains recent forecast misses using actual outcomes and model comparisons', () => {
+  const result = generateForecast(makeHistory(35, index => 100 + (index % 7) * 10 + index), 7, undefined, {
+    sample_count: 2,
+    mape: { linear: 10, holt_winters: 20, naive_last_week: 30, same_weekday_avg: 25 },
+    recent_outcomes: [
+      {
+        target_date: '2026-02-01',
+        predicted_ensemble: 150,
+        predicted_linear: 100,
+        predicted_holt_winters: 120,
+        predicted_naive: 130,
+        predicted_weekday: 125,
+        actual_sale_qty: 100,
+      },
+      {
+        target_date: '2026-02-02',
+        predicted_ensemble: 150,
+        predicted_linear: 100,
+        predicted_holt_winters: 120,
+        predicted_naive: 130,
+        predicted_weekday: 125,
+        actual_sale_qty: 100,
+      },
+    ],
+  });
+
+  assert.match(result.reasons?.[0] || '', /average absolute error was 50\.0%; it overforecast on 2 day\(s\)/);
+  assert.match(result.reasons?.[1] || '', /Best-performing model .* linear \(0\.0% MAPE\)/);
+  assert.equal(result.recent_forecast_outcomes?.[0].difference, 50);
+  assert.equal(result.recent_forecast_outcomes?.[0].difference_pct, 50);
+  assert.equal(result.recent_forecast_outcomes?.[0].closest_model, 'linear');
+  assert.match(result.recent_forecast_outcomes?.[0].explanation || '', /overforecast by 50\.0%/);
 });
 
 test('historical overprediction bias is damped for the matching forecast horizon', () => {

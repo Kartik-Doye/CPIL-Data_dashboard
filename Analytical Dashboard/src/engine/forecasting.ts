@@ -288,6 +288,15 @@ export interface PersistedForecastErrors {
   sample_count: number;
   mape: Partial<Record<ForecastModel, number>>;
   ensemble_bias_pct_by_horizon?: Partial<Record<number, number>>;
+  recent_outcomes?: Array<{
+    target_date: string;
+    predicted_ensemble: number;
+    predicted_linear: number;
+    predicted_holt_winters: number;
+    predicted_naive: number;
+    predicted_weekday: number;
+    actual_sale_qty: number;
+  }>;
 }
 
 function createBacktestErrors(): BacktestErrors {
@@ -411,7 +420,7 @@ function adaptiveWeights(
   persistedErrors?: PersistedForecastErrors
 ): Record<ForecastModel, number> {
   const recentWeights = inverseMapeWeights(backtestErrors);
-  if (!persistedErrors || persistedErrors.sample_count < 7) return recentWeights;
+  if (!persistedErrors || persistedErrors.sample_count < 1) return recentWeights;
 
   const historicalErrors = createBacktestErrors().percentage;
   for (const model of Object.keys(historicalErrors) as ForecastModel[]) {
@@ -421,10 +430,11 @@ function adaptiveWeights(
     }
   }
   const historicalWeights = inverseMapeWeights(historicalErrors);
+  const historicalShare = persistedErrors.sample_count / (persistedErrors.sample_count + 28);
   const blended = Object.fromEntries(
     (Object.keys(recentWeights) as ForecastModel[]).map(model => [
       model,
-      (recentWeights[model] + historicalWeights[model]) / 2,
+      recentWeights[model] * (1 - historicalShare) + historicalWeights[model] * historicalShare,
     ])
   ) as Record<ForecastModel, number>;
   const total = Object.values(blended).reduce((sum, weight) => sum + weight, 0);
@@ -613,6 +623,83 @@ export function generateForecast(
 
   const insights: string[] = [];
   const reasons: string[] = [];
+  const recentOutcomes = persistedErrors?.recent_outcomes?.filter(
+    outcome => outcome.actual_sale_qty > 0 && Number.isFinite(outcome.predicted_ensemble),
+  ) ?? [];
+  const recentForecastOutcomes = recentOutcomes.map(outcome => {
+    const componentPredictions: Array<[ForecastModel, number]> = ([
+      ['linear', outcome.predicted_linear],
+      ['holt_winters', outcome.predicted_holt_winters],
+      ['naive_last_week', outcome.predicted_naive],
+      ['same_weekday_avg', outcome.predicted_weekday],
+    ] as Array<[ForecastModel, number]>).filter(([, prediction]) => Number.isFinite(prediction));
+    const closestModel = componentPredictions.sort(
+      (a, b) => Math.abs(a[1] - outcome.actual_sale_qty) - Math.abs(b[1] - outcome.actual_sale_qty),
+    )[0];
+    const difference = outcome.predicted_ensemble - outcome.actual_sale_qty;
+    const differencePct = (difference / outcome.actual_sale_qty) * 100;
+    const direction = difference > 0 ? 'overforecast' : difference < 0 ? 'underforecast' : 'matched';
+    const explanation = closestModel
+      ? `${direction === 'matched' ? 'The ensemble matched actual sales.' : `The ensemble ${direction} by ${Math.abs(differencePct).toFixed(1)}%.`} The ${closestModel[0].replace(/_/g, ' ')} model was closest to actuals (${closestModel[1].toLocaleString('en-IN', { maximumFractionDigits: 0 })} L); model disagreement or weighting may have contributed.`
+      : direction === 'matched'
+        ? 'The ensemble matched actual sales.'
+        : `The ensemble ${direction} by ${Math.abs(differencePct).toFixed(1)}%; component-model predictions are unavailable for comparison.`;
+
+    return {
+      date: outcome.target_date,
+      predicted: outcome.predicted_ensemble,
+      actual: outcome.actual_sale_qty,
+      difference,
+      difference_pct: differencePct,
+      closest_model: closestModel?.[0].replace(/_/g, ' ') ?? 'Unavailable',
+      closest_model_prediction: closestModel?.[1] ?? 0,
+      explanation,
+    };
+  });
+
+  if (recentOutcomes.length > 0) {
+    const modelPredictions: Record<ForecastModel, (outcome: typeof recentOutcomes[number]) => number> = {
+      linear: outcome => outcome.predicted_linear,
+      holt_winters: outcome => outcome.predicted_holt_winters,
+      naive_last_week: outcome => outcome.predicted_naive,
+      same_weekday_avg: outcome => outcome.predicted_weekday,
+    };
+    const ensembleErrors = recentOutcomes.map(
+      outcome => (outcome.predicted_ensemble - outcome.actual_sale_qty) / outcome.actual_sale_qty,
+    );
+    const averageAbsoluteError = mean(ensembleErrors.map(Math.abs)) * 100;
+    const overforecastDays = ensembleErrors.filter(error => error > 0).length;
+    reasons.push(
+      `Recent forecast review (${recentOutcomes.length} actual day(s)): ensemble average absolute error was ${averageAbsoluteError.toFixed(1)}%; it overforecast on ${overforecastDays} day(s) and underforecast on ${recentOutcomes.length - overforecastDays}.`,
+    );
+
+    const modelMapes = (Object.keys(modelPredictions) as ForecastModel[])
+      .map(model => ({
+        model,
+        mape: mean(recentOutcomes.map(outcome =>
+          Math.abs(modelPredictions[model](outcome) - outcome.actual_sale_qty) / outcome.actual_sale_qty,
+        )) * 100,
+      }))
+      .sort((a, b) => a.mape - b.mape);
+    if (modelMapes.length > 0) {
+      reasons.push(
+        `Best-performing model in these saved outcomes was ${modelMapes[0].model.replace(/_/g, ' ')} (${modelMapes[0].mape.toFixed(1)}% MAPE); recent model errors are fed back into ensemble weights.`,
+      );
+    }
+  }
+
+  if (actuals.length >= 14) {
+    const recentAverage = mean(actuals.slice(-7));
+    const previousAverage = mean(actuals.slice(-14, -7));
+    if (previousAverage > 0) {
+      const changePct = ((recentAverage - previousAverage) / previousAverage) * 100;
+      if (Math.abs(changePct) >= 10) {
+        reasons.push(
+          `Potential miss signal: the latest 7-day average is ${Math.abs(changePct).toFixed(1)}% ${changePct > 0 ? 'above' : 'below'} the preceding 7-day average, indicating a recent demand shift.`,
+        );
+      }
+    }
+  }
 
   if (ensembleMape !== null) {
     insights.push(
@@ -621,7 +708,7 @@ export function generateForecast(
   } else {
     insights.push('Not enough positive-sales history is available to calculate a walk-forward accuracy score.');
   }
-  if (persistedErrors && persistedErrors.sample_count >= 7) {
+  if (persistedErrors && persistedErrors.sample_count > 0) {
     insights.push(
       `Model weights also incorporate ${persistedErrors.sample_count} saved forecast outcomes compared with actual sales.`
     );
@@ -647,12 +734,13 @@ export function generateForecast(
     mape_holt_winters: hwMape,
     mape_naive: naiveMape,
     backtest_days: backtest.scoredDays,
-    learning_status: persistedErrors && persistedErrors.sample_count >= 7
-      ? `Adaptive weights use ${persistedErrors.sample_count} saved forecast outcomes.`
-      : 'Collecting forecast outcomes; adaptive historical weighting starts after 7 scored outcomes.',
+    learning_status: persistedErrors && persistedErrors.sample_count > 0
+      ? `Adaptive weights learn from ${persistedErrors.sample_count} saved forecast outcomes; historical influence increases as more actuals are scored.`
+      : 'No saved forecast outcomes are scored yet; learning will begin when actual sales arrive.',
     dates: dates.map(d => d.toISOString().slice(0, 10)),
     historical_actuals: actuals,
     forecast: forecastPoints,
+    recent_forecast_outcomes: recentForecastOutcomes,
     models_metrics: {
       linear: { mape: linMape, rmse: rootMeanSquaredError(backtest.squared.linear) },
       holt_winters: { mape: hwMape, rmse: rootMeanSquaredError(backtest.squared.holt_winters) },

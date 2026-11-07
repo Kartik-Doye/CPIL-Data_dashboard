@@ -130,6 +130,16 @@ export interface ForecastResult {
   weights?: Record<string, number>;
   insights?: string[];
   reasons?: string[];
+  recent_forecast_outcomes?: Array<{
+    date: string;
+    predicted: number;
+    actual: number;
+    difference: number;
+    difference_pct: number;
+    closest_model: string;
+    closest_model_prediction: number;
+    explanation: string;
+  }>;
   data_quality?: {
     outages_imputed: number;
     gaps_filled: number;

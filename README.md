@@ -28,11 +28,21 @@ PostgreSQL must be available and `sale_tracker` must contain data for the
 dashboard to load. If the connection or data is unavailable, the UI reports an
 error instead of showing cached or spreadsheet values. Use `npm run load-sales`
 to validate and load `Manual Work/sale.xlsx` into PostgreSQL.
+The loader uses the separate `BOT_LOADER_USER` (default `bot_loader`) and
+`BOT_LOADER_PASSWORD` settings from `Manual Work/.env`; do not use the
+dashboard's read-only `DB_USER` credentials for loading.
 
 ### Forecast feedback learning
 
 The dashboard can retune ensemble weights from saved forecast-vs-actual
-outcomes. As a PostgreSQL administrator, run
+outcomes. Each forecast is saved by target date and compared with actual
+network sales when those sales are loaded. Model weights start adapting from
+the first scored outcome and become more evidence-based as outcomes accumulate.
+The AIML report also shows recent forecast error, over/underforecast direction,
+the best-performing component model, and notable week-to-week demand shifts as
+possible miss signals; these signals are diagnostic, not guaranteed causes.
+Learning runs when the dashboard refreshes its telemetry, including its daily
+background refresh. As a PostgreSQL administrator, run
 `Manual Work/02_forecast_feedback.sql` in the `sale_alds` database, then
 configure `BOT_LOADER_PASSWORD` (and optionally `BOT_LOADER_USER`) in
 `Analytical Dashboard/.env`. The dashboard's `bot_reader` role remains

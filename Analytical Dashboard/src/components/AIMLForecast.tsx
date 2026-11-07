@@ -75,6 +75,57 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
         </div>
       </div>
 
+      {forecast.reasons && forecast.reasons.length > 0 && (
+        <div className="bg-amber-950/20 border border-amber-500/25 rounded-xl p-4 text-xs text-slate-300 space-y-2">
+          <h3 className="font-semibold text-amber-300">Recent Forecast Review & Learning Signals</h3>
+          {forecast.reasons.map((reason) => <p key={reason}>{reason}</p>)}
+          <p className="text-slate-400">
+            These are data-based signals, not proof of cause. Model weights update as actual outcomes become available.
+          </p>
+        </div>
+      )}
+
+      {forecast.recent_forecast_outcomes && forecast.recent_forecast_outcomes.length > 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-white mb-1">Recent Prediction vs Actual</h3>
+          <p className="text-xs text-slate-400 mb-3">
+            Difference = predicted minus actual. The explanation compares component-model predictions; it suggests a likely model signal, not a confirmed real-world cause.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-slate-950/70 text-slate-400 font-semibold border-b border-slate-800">
+                <tr>
+                  <th className="py-3 px-3">Actual Date</th>
+                  <th className="py-3 px-3 text-right">Actual Sales</th>
+                  <th className="py-3 px-3 text-right">Predicted Sales</th>
+                  <th className="py-3 px-3 text-right">Difference (Pred − Actual)</th>
+                  <th className="py-3 px-3 text-right">Error</th>
+                  <th className="py-3 px-3">Why It May Have Missed</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {forecast.recent_forecast_outcomes.map((outcome) => (
+                  <tr key={outcome.date} className="align-top hover:bg-slate-800/40">
+                    <td className="py-3 px-3 font-medium text-white whitespace-nowrap">{outcome.date}</td>
+                    <td className="py-3 px-3 text-right font-mono text-slate-300">{exactLitres(outcome.actual)} L</td>
+                    <td className="py-3 px-3 text-right font-mono text-slate-300">{exactLitres(outcome.predicted)} L</td>
+                    <td className={`py-3 px-3 text-right font-mono ${outcome.difference > 0 ? 'text-rose-400' : outcome.difference < 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {outcome.difference > 0 ? '+' : ''}{exactLitres(outcome.difference)} L
+                    </td>
+                    <td className="py-3 px-3 text-right font-mono text-slate-300 whitespace-nowrap">
+                      {Math.abs(outcome.difference_pct).toFixed(1)}% {outcome.difference > 0 ? 'over' : outcome.difference < 0 ? 'under' : 'match'}
+                    </td>
+                    <td className="py-3 px-3 min-w-72 text-slate-400">
+                      {outcome.explanation}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Model Accuracy Comparison Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-slate-900/80 border border-indigo-500/30 rounded-xl p-4 shadow-sm bg-linear-to-b from-indigo-950/20 to-transparent">
