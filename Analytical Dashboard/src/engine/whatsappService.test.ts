@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   parseRecipientNumbers,
+  getWhatsAppStatus,
   maskPhoneNumber,
   buildExecutiveWhatsAppMessage,
   buildTankerDispatchWhatsAppMessage,
@@ -131,8 +132,15 @@ test('formats tanker dispatch WhatsApp manifest with prioritized critical orders
   assert.match(msg, /18-Ton \/ 33,000 L/);
 });
 
-test('dispatches messages to provided custom recipients', async () => {
-  const res = await sendWhatsAppMessage('test', 'Hello Test', ['+919876543210']);
-  assert.equal(res.success, true);
-  assert.equal(res.recipientCount, 1);
+test('reports WhatsApp Web as disconnected until a real session is authenticated', () => {
+  const status = getWhatsAppStatus();
+  assert.equal(status.connected, false);
+  assert.equal(status.status, 'pairing_required');
+});
+
+test('does not report a successful dispatch when WhatsApp Web is disconnected', async () => {
+  await assert.rejects(
+    sendWhatsAppMessage('test', 'Hello Test', ['+919876543210']),
+    /WhatsApp Web is not connected/
+  );
 });

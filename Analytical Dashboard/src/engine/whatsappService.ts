@@ -1,7 +1,11 @@
 import dotenv from 'dotenv';
+import path from 'path';
+import whatsappWeb from 'whatsapp-web.js';
 import type { ExecutiveTelemetry, StationRecord } from '../types.js';
 
 dotenv.config();
+
+const { Client, LocalAuth } = whatsappWeb;
 
 export interface WhatsAppLogEntry {
   id: string;
@@ -18,16 +22,141 @@ export interface WhatsAppServiceStatus {
   enabled: boolean;
   connected: boolean;
   status: 'ready' | 'pairing_required' | 'disabled';
-  provider: 'direct_gateway' | 'session_bridge';
+  provider: 'direct_gateway' | 'whatsapp_web';
   recipientCount: number;
   recipientsMasked: string[];
   qrCodeDataUrl?: string;
   lastSentAt?: string;
 }
 
+export interface WhatsAppSessionState {
+  connectionStatus: 'Disconnected' | 'Connecting (Scan QR)' | 'Ready' | 'Connection error';
+  qrCodeData: string;
+  connectionError?: string;
+}
+
 const dispatchLogs: WhatsAppLogEntry[] = [];
 let lastSentTimestamp = 0;
-const isSessionPaired = true; // Ready state for direct API / automated gateway mode
+let whatsappClient: InstanceType<typeof Client> | null = null;
+let whatsappClientReady = false;
+let initializingClient = false;
+let sessionState: WhatsAppSessionState = {
+  connectionStatus: 'Disconnected',
+  qrCodeData: '',
+};
+let sessionStateListener: ((state: WhatsAppSessionState) => void) | null = null;
+
+function updateSessionState(state: WhatsAppSessionState) {
+  sessionState = state;
+  sessionStateListener?.({ ...state });
+}
+
+export function getWhatsAppSessionState(): WhatsAppSessionState {
+  return { ...sessionState };
+}
+
+export function initializeWhatsAppClient(
+  onStateChange?: (state: WhatsAppSessionState) => void
+) {
+  if (onStateChange) sessionStateListener = onStateChange;
+  if (process.env.WHATSAPP_ENABLED === 'false' || whatsappClient || initializingClient) return;
+
+  initializingClient = true;
+  whatsappClientReady = false;
+  updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: '' });
+
+  const executablePath = process.env.WHATSAPP_CHROME_EXECUTABLE_PATH?.trim();
+  const activeClient = new Client({
+    authStrategy: new LocalAuth({
+      dataPath: path.resolve(process.cwd(), '.wwebjs_auth'),
+    }),
+    puppeteer: {
+      headless: true,
+      ...(executablePath ? { executablePath } : {}),
+    },
+  });
+  whatsappClient = activeClient;
+
+  activeClient.on('qr', (qrCode: string) => {
+    if (whatsappClient !== activeClient) return;
+    updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: qrCode });
+  });
+
+  activeClient.on('authenticated', () => {
+    if (whatsappClient !== activeClient) return;
+    updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: '' });
+  });
+
+  activeClient.on('ready', () => {
+    if (whatsappClient !== activeClient) return;
+    whatsappClientReady = true;
+    updateSessionState({ connectionStatus: 'Ready', qrCodeData: '' });
+    console.log('[WHATSAPP] WhatsApp Web session is ready.');
+  });
+
+  activeClient.on('auth_failure', (message: string) => {
+    if (whatsappClient !== activeClient) return;
+    whatsappClient = null;
+    initializingClient = false;
+    whatsappClientReady = false;
+    updateSessionState({
+      connectionStatus: 'Connection error',
+      qrCodeData: '',
+      connectionError: message,
+    });
+    console.error(`[WHATSAPP] Authentication failed: ${message}`);
+  });
+
+  activeClient.on('disconnected', (reason: string) => {
+    if (whatsappClient !== activeClient) return;
+    whatsappClient = null;
+    initializingClient = false;
+    whatsappClientReady = false;
+    updateSessionState({ connectionStatus: 'Disconnected', qrCodeData: '' });
+    console.warn(`[WHATSAPP] WhatsApp Web disconnected: ${reason}`);
+  });
+
+  void activeClient.initialize().then(
+    () => {
+      if (whatsappClient === activeClient) initializingClient = false;
+    },
+    (error: unknown) => {
+      if (whatsappClient !== activeClient) return;
+      initializingClient = false;
+      whatsappClient = null;
+      whatsappClientReady = false;
+      const message = error instanceof Error ? error.message : String(error);
+      updateSessionState({
+        connectionStatus: 'Connection error',
+        qrCodeData: '',
+        connectionError: message,
+      });
+      console.error(`[WHATSAPP] Failed to initialize WhatsApp Web: ${message}`);
+    }
+  );
+}
+
+export async function refreshWhatsAppClient() {
+  const activeClient = whatsappClient;
+  whatsappClient = null;
+  whatsappClientReady = false;
+  initializingClient = false;
+
+  if (activeClient) await activeClient.destroy();
+  initializeWhatsAppClient();
+}
+
+export async function disconnectWhatsAppClient() {
+  const activeClient = whatsappClient;
+  if (activeClient) await activeClient.logout();
+
+  if (whatsappClient === activeClient) {
+    whatsappClient = null;
+    whatsappClientReady = false;
+    initializingClient = false;
+    updateSessionState({ connectionStatus: 'Disconnected', qrCodeData: '' });
+  }
+}
 
 const numberFormat = (value: number) => value.toLocaleString('en-IN', {
   minimumFractionDigits: 2,
@@ -134,12 +263,14 @@ export function buildTankerDispatchWhatsAppMessage(
 export function getWhatsAppStatus(): WhatsAppServiceStatus {
   const recipients = parseRecipientNumbers();
   const hasGateway = Boolean(process.env.WHATSAPP_API_URL && process.env.WHATSAPP_API_TOKEN);
+  const enabled = process.env.WHATSAPP_ENABLED !== 'false';
+  const connected = enabled && (whatsappClientReady || hasGateway);
 
   return {
-    enabled: process.env.WHATSAPP_ENABLED !== 'false',
-    connected: isSessionPaired || hasGateway,
-    status: isSessionPaired || hasGateway ? 'ready' : 'pairing_required',
-    provider: hasGateway ? 'direct_gateway' : 'session_bridge',
+    enabled,
+    connected,
+    status: !enabled ? 'disabled' : connected ? 'ready' : 'pairing_required',
+    provider: hasGateway ? 'direct_gateway' : 'whatsapp_web',
     recipientCount: recipients.length,
     recipientsMasked: recipients.map(maskPhoneNumber),
     lastSentAt: lastSentTimestamp ? new Date(lastSentTimestamp).toISOString() : undefined,
@@ -155,6 +286,10 @@ export async function sendWhatsAppMessage(
   content: string,
   customRecipients?: string[]
 ): Promise<{ success: boolean; recipientCount: number; message: string }> {
+  if (process.env.WHATSAPP_ENABLED === 'false') {
+    throw new Error('WhatsApp sending is disabled. Set WHATSAPP_ENABLED=true to enable it.');
+  }
+
   const recipients = customRecipients && customRecipients.length > 0
     ? customRecipients
     : parseRecipientNumbers();
@@ -165,6 +300,12 @@ export async function sendWhatsAppMessage(
 
   const gatewayUrl = process.env.WHATSAPP_API_URL;
   const gatewayToken = process.env.WHATSAPP_API_TOKEN;
+  if (Boolean(gatewayUrl) !== Boolean(gatewayToken)) {
+    throw new Error('Both WHATSAPP_API_URL and WHATSAPP_API_TOKEN must be configured to use the WhatsApp gateway.');
+  }
+  if (!gatewayUrl && (!whatsappClient || !whatsappClientReady)) {
+    throw new Error('WhatsApp Web is not connected. Scan the pairing QR code before sending messages.');
+  }
 
   let deliveryCount = 0;
   const errors: string[] = [];
@@ -172,7 +313,6 @@ export async function sendWhatsAppMessage(
   for (const phone of recipients) {
     try {
       if (gatewayUrl && gatewayToken) {
-        // Direct REST API Gateway dispatch (e.g., Cloud API or WhatsApp Business HTTP bridge)
         const res = await fetch(gatewayUrl, {
           method: 'POST',
           headers: {
@@ -193,12 +333,21 @@ export async function sendWhatsAppMessage(
           throw new Error(`Gateway returned HTTP ${res.status}: ${errText.slice(0, 100)}`);
         }
       } else {
-        // Local Session Bridge dispatch
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        const client = whatsappClient;
+        if (!client || !whatsappClientReady) {
+          throw new Error('WhatsApp Web session disconnected during dispatch.');
+        }
+        const phoneNumber = phone.replace(/\D/g, '');
+        const contact = await client.getNumberId(phoneNumber);
+        if (!contact) {
+          throw new Error('This number is not registered on WhatsApp.');
+        }
+        await client.sendMessage(contact._serialized, content);
       }
       deliveryCount++;
-    } catch (err: any) {
-      errors.push(`${phone}: ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`${maskPhoneNumber(phone)}: ${message}`);
     }
   }
 
@@ -213,7 +362,7 @@ export async function sendWhatsAppMessage(
     error: errors.length > 0 ? errors.join('; ') : undefined,
   };
   dispatchLogs.push(logEntry);
-  lastSentTimestamp = Date.now();
+  if (deliveryCount > 0) lastSentTimestamp = Date.now();
 
   if (deliveryCount === 0 && errors.length > 0) {
     throw new Error(`Failed to dispatch WhatsApp messages: ${errors[0]}`);

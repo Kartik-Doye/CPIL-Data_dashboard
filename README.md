@@ -94,6 +94,25 @@ Task Scheduler uses the computer’s local time. If Windows is asleep or the
 dashboard/database is unavailable, the send can fail; configure Task Scheduler
 to wake the computer if supported by its power settings.
 
+### WhatsApp Web messages
+
+The WhatsApp portal can send through a linked WhatsApp Web account without a
+Meta API key. Set `WHATSAPP_ENABLED=true` and
+`WHATSAPP_RECIPIENT_NUMBERS` in the project-root `.env`, start the dashboard,
+and open the WhatsApp portal on this computer. Scan the live QR code with
+WhatsApp on your phone under **Linked devices** > **Link a device**. The app
+stores the linked session in `.wwebjs_auth/` so it can reconnect after restart;
+keep that folder private and do not share or commit it. The session QR and
+WhatsApp controls are restricted to local access.
+
+Puppeteer needs Chrome or Chromium installed. If it is not found automatically,
+set `WHATSAPP_CHROME_EXECUTABLE_PATH` in `.env` to the browser executable.
+Keep the computer and dashboard server running for the 11:00 a.m. and 7:00 p.m.
+scheduled sends. This uses unofficial WhatsApp Web automation, not the
+WhatsApp Business Platform; it may break when WhatsApp changes and may be
+subject to WhatsApp account restrictions. Use it only with recipients who
+expect these messages.
+
 ## Useful commands
 
 ```powershell

@@ -35,11 +35,13 @@ interface WhatsAppModalProps {
 export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose }) => {
   const [status, setStatus] = useState<string>('Connecting (Scan QR)');
   const [qrCodeData, setQrCodeData] = useState<string>('');
+  const [connectionError, setConnectionError] = useState<string>('');
   const [phone, setPhone] = useState<string>('918087018975');
   const [message, setMessage] = useState<string>(
     '*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_'
   );
   const [saveStatus, setSaveStatus] = useState<string>('');
+  const [saveStatusIsError, setSaveStatusIsError] = useState<boolean>(false);
   const [broadcastLoading, setBroadcastLoading] = useState<boolean>(false);
   const [broadcastResult, setBroadcastResult] = useState<{ message: string; success: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<'portal' | 'logs'>('portal');
@@ -55,6 +57,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
         if (data.targetPhoneNumber) setPhone(data.targetPhoneNumber);
         if (data.dailyMessageText) setMessage(data.dailyMessageText);
         if (data.connectionStatus) setStatus(data.connectionStatus);
+        setConnectionError(data.connectionError || '');
         if (data.qrCodeData && data.connectionStatus !== 'Ready') {
           setQrCodeData(data.qrCodeData);
         }
@@ -79,6 +82,10 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
 
     socket.on('qr-code', (qrCodeString: string) => {
       setQrCodeData(qrCodeString);
+    });
+
+    socket.on('connection-error', (error: string) => {
+      setConnectionError(error);
     });
 
     socket.on('broadcast-success', (payload: any) => {
@@ -108,10 +115,15 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       });
       const data = await response.json();
       if (data.success) {
+        setSaveStatusIsError(false);
         setSaveStatus('Configuration updated and saved!');
         setTimeout(() => setSaveStatus(''), 3500);
+      } else {
+        setSaveStatusIsError(true);
+        setSaveStatus(data.error || 'Error saving configurations.');
       }
     } catch {
+      setSaveStatusIsError(true);
       setSaveStatus('Error saving configurations.');
     }
   };
@@ -133,11 +145,13 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
 
   const handlePairDirectly = async () => {
     try {
-      await fetch('/api/whatsapp/pair', { method: 'POST' });
-      setStatus('Ready');
-      setQrCodeData('');
+      const res = await fetch('/api/whatsapp/pair', { method: 'POST' });
+      const data = await res.json();
+      setStatus(data.connectionStatus);
+      setConnectionError(data.connectionError || '');
+      setQrCodeData(data.qrCodeData || '');
     } catch (err) {
-      console.error(err);
+      setConnectionError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -145,10 +159,11 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
     try {
       const res = await fetch('/api/whatsapp/refresh-qr', { method: 'POST' });
       const data = await res.json();
-      setQrCodeData(data.qr);
-      setStatus(data.status);
+      setQrCodeData(data.qrCodeData || data.qr || '');
+      setStatus(data.connectionStatus || data.status);
+      setConnectionError(data.connectionError || '');
     } catch (err) {
-      console.error(err);
+      setConnectionError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -157,9 +172,10 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
       const data = await res.json();
       setStatus(data.status);
-      handleRefreshQr();
+      setQrCodeData('');
+      setConnectionError(data.error || '');
     } catch (err) {
-      console.error(err);
+      setConnectionError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -178,13 +194,13 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>WhatsApp Free Automation Portal</span>
+                <span>WhatsApp Web Automation</span>
                 <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30">
                   Node.js + Socket.IO
                 </span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                100% automated background WhatsApp delivery at 11:00 AM & 07:00 PM daily.
+                Sends through your linked WhatsApp Web account. Keep this server running for scheduled delivery.
               </p>
             </div>
           </div>
@@ -195,6 +211,12 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {connectionError && (
+          <p className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+            WhatsApp connection error: {connectionError}
+          </p>
+        )}
 
         {/* Tab Switcher */}
         <div className="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 px-6">
@@ -321,12 +343,12 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
 
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                    <span>Target Phone Number (Include country code, no + or spaces):</span>
-                    <span className="text-[10px] text-slate-400 font-normal">e.g. 918087018975</span>
+                    <span>Recipient Phone Numbers (include country code):</span>
+                    <span className="text-[10px] text-slate-400 font-normal">comma-separated if multiple</span>
                   </span>
                   <input
                     type="text"
-                    placeholder="e.g. 919876543210"
+                    placeholder="e.g. 919876543210,918087018975"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-mono focus:border-emerald-500 outline-none"
@@ -369,7 +391,11 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
               </form>
 
               {saveStatus && (
-                <p className="text-center text-xs text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-300 dark:border-emerald-800">
+                <p className={`text-center text-xs font-bold p-2.5 rounded-lg border ${
+                  saveStatusIsError
+                    ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800'
+                    : 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800'
+                }`}>
                   {saveStatus}
                 </p>
               )}

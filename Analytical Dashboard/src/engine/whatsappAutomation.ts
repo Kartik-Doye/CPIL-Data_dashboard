@@ -1,8 +1,15 @@
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cron, { ScheduledTask } from 'node-cron';
-import type { Express, Request, Response } from 'express';
-import { sendWhatsAppMessage } from './whatsappService.js';
+import type { Express, NextFunction, Request, Response } from 'express';
+import {
+  disconnectWhatsAppClient,
+  getWhatsAppSessionState,
+  initializeWhatsAppClient,
+  parseRecipientNumbers,
+  refreshWhatsAppClient,
+  sendWhatsAppMessage,
+} from './whatsappService.js';
 
 export interface WhatsAppConfig {
   targetPhoneNumber: string;
@@ -11,60 +18,72 @@ export interface WhatsAppConfig {
   autoSendEnabled: boolean;
 }
 
-let connectionStatus: 'Disconnected' | 'Connecting (Scan QR)' | 'Ready' = 'Disconnected';
+let connectionStatus: string = 'Disconnected';
 let currentQrCode = '';
-let targetPhoneNumber = process.env.WHATSAPP_RECIPIENT_NUMBERS?.split(',')[0]?.trim() || '918087018975';
+let connectionError: string | undefined;
+let targetPhoneNumber = parseRecipientNumbers().join(',');
 let dailyMessageText = '*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_';
 let ioInstance: SocketIOServer | null = null;
 let scheduledTask: ScheduledTask | null = null;
 
-// Initial QR code string representing a valid pairing challenge
-function generatePairingCode(): string {
-  const challenge = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-  return `2@${challenge},GO-Gas-Suite,${Date.now()}`;
+function isLoopbackAddress(address = '') {
+  const normalized = address.toLowerCase();
+  return normalized === '::1' ||
+    normalized === '127.0.0.1' ||
+    normalized.startsWith('127.') ||
+    normalized.startsWith('::ffff:127.');
+}
+
+function isLocalOrigin(origin?: string) {
+  if (!origin) return true;
+  const port = process.env.PORT && process.env.PORT !== '8080' ? process.env.PORT : '3000';
+  return [
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+    `http://[::1]:${port}`,
+  ].includes(origin);
+}
+
+function requireLocalWhatsAppAccess(req: Request, res: Response, next: NextFunction) {
+  if (!isLoopbackAddress(req.socket.remoteAddress) || !isLocalOrigin(req.get('origin'))) {
+    res.status(403).json({ success: false, error: 'WhatsApp controls are only available from this computer.' });
+    return;
+  }
+  next();
+}
+
+function updateConnectionState(state: ReturnType<typeof getWhatsAppSessionState>) {
+  connectionStatus = state.connectionStatus;
+  currentQrCode = state.qrCodeData;
+  connectionError = state.connectionError;
+  ioInstance?.emit('status-update', connectionStatus);
+  ioInstance?.emit('qr-code', currentQrCode);
+  ioInstance?.emit('connection-error', connectionError || '');
 }
 
 export function initWhatsAppAutomation(app: Express, server: http.Server) {
-  // 1. Socket.IO Setup
   const io = new SocketIOServer(server, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
+    cors: {
+      origin: (origin, callback) => callback(null, isLocalOrigin(origin)),
+      methods: ['GET', 'POST'],
+    },
+    allowRequest: (req, callback) => {
+      callback(null, isLoopbackAddress(req.socket.remoteAddress) && isLocalOrigin(req.headers.origin));
+    },
     path: '/socket.io',
   });
   ioInstance = io;
+  app.use('/api/whatsapp', requireLocalWhatsAppAccess);
 
-  // Set initial QR
-  currentQrCode = generatePairingCode();
-  connectionStatus = 'Connecting (Scan QR)';
+  initializeWhatsAppClient(updateConnectionState);
+  updateConnectionState(getWhatsAppSessionState());
 
   io.on('connection', (socket) => {
-    // Immediately send current status and QR to newly connected UI
     socket.emit('status-update', connectionStatus);
-    if (currentQrCode && connectionStatus !== 'Ready') {
-      socket.emit('qr-code', currentQrCode);
-    }
-
-    socket.on('request-qr', () => {
-      currentQrCode = generatePairingCode();
-      connectionStatus = 'Connecting (Scan QR)';
-      io.emit('status-update', connectionStatus);
-      io.emit('qr-code', currentQrCode);
-    });
-
-    socket.on('simulate-paired', () => {
-      connectionStatus = 'Ready';
-      currentQrCode = '';
-      io.emit('status-update', connectionStatus);
-      io.emit('qr-code', '');
-    });
-
-    socket.on('disconnect-session', () => {
-      connectionStatus = 'Disconnected';
-      currentQrCode = generatePairingCode();
-      io.emit('status-update', connectionStatus);
-    });
+    socket.emit('connection-error', connectionError || '');
+    socket.emit('qr-code', currentQrCode);
   });
 
-  // 2. Automated Daily Broadcast Function
   async function sendBroadcast(triggerType = 'scheduled') {
     if (connectionStatus !== 'Ready') {
       console.log(`[WHATSAPP AUTOMATION] ${triggerType} broadcast skipped: WhatsApp client is not logged in (Status: ${connectionStatus}).`);
@@ -72,52 +91,50 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
     }
 
     try {
-      console.log(`[WHATSAPP AUTOMATION] [${new Date().toLocaleTimeString()}] Executing automated daily broadcast to ${targetPhoneNumber}...`);
-      const result = await sendWhatsAppMessage('briefing', dailyMessageText, [targetPhoneNumber]);
+      const recipients = parseRecipientNumbers(targetPhoneNumber);
+      const result = await sendWhatsAppMessage('briefing', dailyMessageText, recipients);
       io.emit('broadcast-success', {
         timestamp: new Date().toISOString(),
-        recipient: targetPhoneNumber,
+        recipient: recipients.length ? recipients.join(', ') : 'configured recipients',
         type: triggerType,
       });
-      return { success: true, message: `Broadcast successfully dispatched to ${targetPhoneNumber}` };
-    } catch (err: any) {
-      console.error(`[WHATSAPP AUTOMATION] Failed to send broadcast:`, err.message);
-      return { success: false, message: err.message };
+      return result;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[WHATSAPP AUTOMATION] Failed to send broadcast:', message);
+      return { success: false, message };
     }
   }
 
-  // 3. Cron Job: Triggers twice daily at 11:00 AM and 07:00 PM
-  if (scheduledTask) {
-    scheduledTask.stop();
-  }
+  if (scheduledTask) scheduledTask.stop();
   scheduledTask = cron.schedule('0 11,19 * * *', () => {
     const timeLabel = new Date().getHours() < 15 ? '11:00 AM' : '07:00 PM';
     console.log(`[WHATSAPP CRON] Running automated daily broadcast at ${timeLabel}...`);
     void sendBroadcast(`scheduled-${timeLabel}`);
   });
 
-  // 4. REST API Endpoints for React UI Control
   app.get('/api/whatsapp/config', (_req: Request, res: Response) => {
     res.json({
       targetPhoneNumber,
       dailyMessageText,
       connectionStatus,
       qrCodeData: currentQrCode,
+      connectionError,
       scheduledTime: '11:00 AM & 07:00 PM Daily',
     });
   });
 
   app.post('/api/whatsapp/config', (req: Request, res: Response) => {
-    const { number, message, pairDirectly } = req.body || {};
-    if (number) targetPhoneNumber = String(number).replace(/[^\d+]/g, '').trim();
-    if (message) dailyMessageText = String(message).trim();
-
-    if (pairDirectly) {
-      connectionStatus = 'Ready';
-      currentQrCode = '';
-      io.emit('status-update', connectionStatus);
-      io.emit('qr-code', '');
+    const { number, message } = req.body || {};
+    if (number) {
+      const recipients = parseRecipientNumbers(String(number));
+      if (recipients.length === 0) {
+        res.status(400).json({ success: false, error: 'Enter at least one valid WhatsApp recipient number.' });
+        return;
+      }
+      targetPhoneNumber = recipients.join(',');
     }
+    if (message) dailyMessageText = String(message).trim();
 
     res.json({
       success: true,
@@ -128,11 +145,7 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
 
   app.post('/api/whatsapp/broadcast-now', async (_req: Request, res: Response) => {
     const outcome = await sendBroadcast('manual-trigger');
-    if (!outcome.success) {
-      res.status(400).json(outcome);
-    } else {
-      res.json(outcome);
-    }
+    res.status(outcome.success ? 200 : 400).json(outcome);
   });
 
   app.post('/api/whatsapp/send-message', async (req: Request, res: Response) => {
@@ -142,46 +155,57 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
       res.status(400).json({ success: false, error: 'Message text cannot be empty.' });
       return;
     }
-    const recipients = to ? [String(to).replace(/[^\d+]/g, '').trim()] : [targetPhoneNumber];
+    const recipients = to
+      ? parseRecipientNumbers(String(to))
+      : parseRecipientNumbers(targetPhoneNumber);
+    if (to && recipients.length === 0) {
+      res.status(400).json({ success: false, error: 'Enter at least one valid WhatsApp recipient number.' });
+      return;
+    }
     try {
       const result = await sendWhatsAppMessage('briefing', textToSend, recipients);
-      if (ioInstance) {
-        ioInstance.emit('broadcast-success', {
-          timestamp: new Date().toISOString(),
-          recipient: recipients.join(', '),
-          type: 'manual-dispatch',
-        });
-      }
+      io.emit('broadcast-success', {
+        timestamp: new Date().toISOString(),
+        recipient: recipients.join(', ') || 'configured recipients',
+        type: 'manual-dispatch',
+      });
       res.json({ success: true, message: result.message, recipientCount: result.recipientCount });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
     }
   });
 
   app.post('/api/whatsapp/pair', (_req: Request, res: Response) => {
-    connectionStatus = 'Ready';
-    currentQrCode = '';
-    io.emit('status-update', connectionStatus);
-    io.emit('qr-code', '');
-    res.json({ success: true, status: connectionStatus });
+    initializeWhatsAppClient(updateConnectionState);
+    const state = getWhatsAppSessionState();
+    res.json({ success: state.connectionStatus !== 'Connection error', ...state });
   });
 
-  app.post('/api/whatsapp/refresh-qr', (_req: Request, res: Response) => {
-    currentQrCode = generatePairingCode();
-    connectionStatus = 'Connecting (Scan QR)';
-    io.emit('status-update', connectionStatus);
-    io.emit('qr-code', currentQrCode);
-    res.json({ success: true, qr: currentQrCode, status: connectionStatus });
+  app.post('/api/whatsapp/refresh-qr', async (_req: Request, res: Response) => {
+    try {
+      await refreshWhatsAppClient();
+      const state = getWhatsAppSessionState();
+      res.json({ success: state.connectionStatus !== 'Connection error', qr: state.qrCodeData, ...state });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[WHATSAPP AUTOMATION] Failed to restart WhatsApp Web:', message);
+      res.status(500).json({ success: false, error: message });
+    }
   });
 
-  app.post('/api/whatsapp/disconnect', (_req: Request, res: Response) => {
-    connectionStatus = 'Disconnected';
-    currentQrCode = generatePairingCode();
-    io.emit('status-update', connectionStatus);
-    res.json({ success: true, status: connectionStatus });
+  app.post('/api/whatsapp/disconnect', async (_req: Request, res: Response) => {
+    try {
+      await disconnectWhatsAppClient();
+      res.json({ success: true, status: connectionStatus });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[WHATSAPP AUTOMATION] Failed to unlink WhatsApp Web:', message);
+      res.status(500).json({ success: false, error: message });
+    }
   });
 
-  console.log('[WHATSAPP AUTOMATION] Engine initialized with Socket.IO real-time stream & 11:00 AM / 07:00 PM daily cron schedule.');
+  console.log('[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO and an 11:00 AM / 07:00 PM daily cron schedule.');
 }
 
 export function updateAutomationMessage(newText: string) {
