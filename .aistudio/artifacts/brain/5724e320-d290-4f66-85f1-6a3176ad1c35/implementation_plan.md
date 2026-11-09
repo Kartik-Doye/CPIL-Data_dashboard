@@ -1,130 +1,156 @@
-# GO Gas Executive Suite: Proactive 48-Hour Inventory Burn Alert System, Reports Side Drawer & Full Suite Enhancements
+# 1-Click Automated WhatsApp Dispatch Engine & Control Center
 
-Implementation blueprint for adding a **48-Hour Low Inventory Burn Prediction Alert System** on the MasterDashboard, a **Collapsible Reports Side Drawer Navigation**, and executing a **Full Suite Upgrade** across existing modules (RSP Disparity Alerts, Free Sale Leakage Audit, TM Performance Leaderboard, and Churn Risk Model).
+A unified 1-click WhatsApp messaging architecture for GO Gas Executive Suite, enabling automated dispatch of the Executive Daily Flash and Tanker Replenishment Manifests from the dashboard UI via a Node.js backend service, complete with live QR pairing, delivery logging, and debounce protection.
 
 ---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions were confirmed during the Phase 1 interview:
+> The following operational decisions and technical foundations are established based on user feedback:
 
-* **Confirmed Choice 1 (48-Hour Inventory Alerts)**: Dedicated **48-Hour Critical Low Stock Panel** positioned on the MasterDashboard featuring real-time burn countdown timers, stockout hours left, and 1-click AutoLPG Tanker Dispatch CTA.
-* **Confirmed Choice 2 (Reports Navigation)**: **Collapsible Left Sidebar Drawer** with quick search bar, category grouping (Executive, Operations, Analytics, Forecasting), unboxed metadata badges, and smooth slide animation.
-* **Confirmed Choice 3 (Full Suite Feature Upgrade)**: Implementing all 4 core enhancements across existing report modules:
-  1. *RSP Disparity Alerts* (Price gap detection vs state baseline).
-  2. *Free Sale Leakage Audit* (Testing gas exceeding 0.5% threshold).
-  3. *TM & Field Coordinator Leaderboard* (Volume, efficiency & recovery scoring).
-  4. *Commercial Fleet Churn Predictor* (3-day consecutive volume drop model).
+- **1-Click Action Parity with Email**: Just like the existing "Send Test Email" button, operators will have direct **"Send WhatsApp Flash"** (in Daily Briefing) and **"Send WhatsApp Manifest"** (in Tanker Dispatch) buttons that dispatch live operational intelligence to configured stakeholders without manual clipboard copying.
+- **Dual Trigger Support**:
+  1. *On-Demand Dashboard Clicks*: Direct triggers from the React UI with instant feedback and toast alerts.
+  2. *Scheduled Automatic Morning Trigger*: Automated batch dispatch (scheduled alongside or after morning data ingestion at 9:30 AM).
+- **Dedicated WhatsApp Center Modal**:
+  - Accessible via a dedicated WhatsApp status icon in the top Navbar (🟢 Ready / 🟡 QR Required / 🔴 Disconnected).
+  - Displays QR code for initial WhatsApp device linking, recipient phone number preview, connection diagnostics, and recent dispatch logs.
+- **Backend Architecture & Protocol**:
+  - Express backend routes (`/api/whatsapp/status`, `/api/whatsapp/send-briefing`, `/api/whatsapp/send-dispatch`, `/api/whatsapp/qr`).
+  - Modular service adapter pattern: supports both local session pairing (`whatsapp-web.js` / headless bridge) and zero-footprint HTTP Gateway APIs (WhatsApp Cloud API / Green-API / Twilio) via environment configuration in `.env`.
+  - Rate limiting, origin authorization, and 30-second deduplication safeguards identical to `/api/email/send`.
 
 ---
 
 ## 1. Overview & Core Concept
 
-The **GO Gas Executive Suite** operational dashboard is being expanded with proactive supply chain predictive intelligence and executive navigation.
+### What It Does
+Operators and executives can click a single button to send high-priority daily flashes and tanker manifests directly to leadership and territory managers on WhatsApp. The Node.js backend handles message templating, formatting (monospaced metrics, bold headings, urgent warning badges), phone number routing, and real-time delivery tracking.
 
-### Key Value Delivered:
-1. **Predictive Supply Chain Safety**: Prevents dry-outs by flagging stations whose 3-day burn rate will deplete closing tank stock within 48 hours.
-2. **Instant Executive Navigation**: Slide-out reports drawer enables 1-click navigation across all 32 reports without sacrificing screen real estate.
-3. **Revenue Protection**: Audits Free Sale calibration gas, identifies RSP pricing disparities, and detects fleet customer churn before revenue is lost.
+### Target Audience & Persona
+- **CMD, MD, and Executive Leadership**: Receive concise 30-second network health summaries (volume, collections, realized rate, forecast, stockout risks).
+- **Supply Chain & Transport Officers**: Receive prioritized tanker manifests with exact refill litres and tanker sizes (12-Ton vs 18-Ton) for stations below 1.5 days of fuel coverage.
+- **Territory Managers (TMs)**: Receive automated alerts on low-stock stations within their respective states.
+
+### Key Value
+- **Zero Manual Effort**: Replaces manual clipboard copying and mobile app switching with verified, server-authoritative dispatches.
+- **Instant Escalation**: Replenishment warnings reach depot dispatchers within seconds of data loading.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-### Visual Identity & Theme Discipline:
-* **Dual-Theme Integrity**: Crisp Corporate Light mode default (`Slate-50` background, high-contrast text, `indigo-600`/`orange-600` accents) with seamless Dark Mode toggle (`.dark` class on root HTML).
-* **Zero-Pill Discipline**: Metadata rendered as clean unboxed text separated by typographic dots (`·`) or subtle hairline borders; filter buttons styled as structured segmented tabs.
-* **Tabular Figures**: All litres (`L`), rupee collections (`₹`), hours left (`h`), and drop percentages (`%`) enforce `font-mono tabular-nums` to ensure decimal alignment.
+### Key User Flows
 
-### Key Interactive Flows:
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ GO Gas Top Navbar (Theme Toggle, Live Telemetry Status, Load File, Quick CSV)           │
-├──────────────┬─────────────────────────────────────────────────────────────────────────┤
-│ Reports      │ 🚨 48-HOUR CRITICAL INVENTORY BURN ALERT PANEL                          │
-│ Drawer Toggle│ • Station AY046: 28.5h Stock Left (12-Ton Tanker Required) -> Dispatch │
-│              │ • Station MH012: 36.0h Stock Left (18-Ton Tanker Required) -> Dispatch │
-│ ┌──────────┐ │─────────────────────────────────────────────────────────────────────────│
-│ │ 🔍 Search│ │ 📊 MASTER DASHBOARD METRICS                                             │
-│ │ EXECUTIVE│ │ • 30-Day Sales Run-Rate Curve                                           │
-│ │ • Master │ │ • 3-Month Top Performers Trend Line Chart                               │
-│ │ • Briefing│ │ • 3-Month Rolling Average Sales Drop Alerts (>20% Drop Threshold)       │
-│ │OPERATIONS │ ├─────────────────────────────────────────────────────────────────────────┤
-│ │ • Tanker │ │ 🔍 FULL SUITE ENHANCEMENT TABS                                           │
-│ │ • RSP Gap│ │ • RSP Disparity Audit (State Price Variance)                            │
-│ │ • FreeSale│ │ • Free Sale Leakage Tracker (Calibration >0.5%)                         │
-│ │ • TM Team│ │ • TM Leaderboard & Commission Tracker                                   │
-│ │ • Churn  │ │ • Commercial Fleet Churn Risk Predictor AI                             │
-│ └──────────┘ │                                                                         │
-└──────────────┴─────────────────────────────────────────────────────────────────────────┘
-```
+1. **One-Time Pairing (WhatsApp Center)**:
+   - User clicks the WhatsApp icon on the top Navbar.
+   - If unlinked, a modal opens showing a real-time QR code.
+   - User scans with their phone's WhatsApp ("Linked Devices"). The status changes to "Connected" with a green pulse badge.
+2. **Sending Daily Briefing via WhatsApp**:
+   - Operator navigates to the **Daily Briefing** tab.
+   - Next to "Send Test Email", a prominent emerald button **"Send WhatsApp Flash"** is displayed.
+   - On click, the button shows an active sending spinner.
+   - Upon completion, an inline success pill appears: `✓ Executive briefing sent to 3 configured recipient(s) via WhatsApp.`
+3. **Sending Tanker Replenishment Manifest**:
+   - Operator opens **Report 32: Tanker Dispatch**.
+   - Operator clicks **"Send WhatsApp Manifest"**.
+   - The critical stations (<1.5 days dip) and recommended tanker capacities are parsed and sent directly to supply chain officers.
+
+### Visual Identity & Theme Discipline
+- **Emerald Accent Hierarchy**: Action buttons use Tailwind's `emerald-600` (`#059669`) with smooth hover transitions (`hover:bg-emerald-500`) and subtle shadows, visually distinguishing WhatsApp dispatches from email (`sky-700`) and clipboard actions.
+- **Zero-Pill Minimalist Badges**: Connection status uses clean typographic status indicators with glowing pulse dots (`bg-emerald-500 animate-pulse` vs `bg-amber-500`).
+- **Tabular Decimal Realignment**: All numbers in messages and logs are strictly formatted using Indian grouping (`en-IN`) with exact 2-decimal precision.
 
 ---
 
-## 3. Technical Architecture & Data Strategy
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Modular WhatsApp Provider Adapter**
+  - *Chosen Approach*: Implement `whatsappService.ts` with a provider abstraction:
+    1. **Primary / Direct HTTP Gateway**: Allows instant sending via HTTP REST call if `WHATSAPP_GATEWAY_URL` or `WHATSAPP_ACCESS_TOKEN` is set in `.env` (no browser dependencies).
+    2. **Local Session Bridge**: If no external API token is provided, uses a lightweight Node.js session pairing mechanism with QR code generation.
+  - *Why*: Cloud containers and developer laptops have differing support for heavy headless browsers. A dual-mode adapter ensures rock-solid reliability in any deployment environment.
+  - *Alternatives Considered*: Pure browser `window.open("https://wa.me/...")` was rejected because it requires operator manual intervention and cannot automate scheduled reports.
+
+- **Decision 2: Centralized Recipient Management in `.env`**
+  - *Chosen Approach*: Configure `WHATSAPP_RECIPIENT_NUMBERS` in `.env` (comma-separated with country code, e.g., `919876543210,918087018975`).
+  - *Why*: Keeps sensitive executive phone numbers out of client-side bundles and prevents unauthorized client mutations.
+
+---
+
+## 4. Technical Architecture & Data Strategy
 
 ### System Architecture & Data Flow
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                             EXECUTIVE TELEMETRY ENGINE                           │
-│                      (SQLite / JSON Data Store - T-1 Lagged Data)                │
-└────────────────────────────────────────┬─────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   REACT 19 FRONTEND                                    │
+│  ┌───────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────┐ │
+│  │ Navbar WhatsApp Icon  │   │ DailyBriefing Action Strip│   │ Tanker Dispatch Action│ │
+│  │ (Status Badge + Modal)│   │ [Send WhatsApp Flash]     │   │ [Send Manifest]       │ │
+│  └───────────┬───────────┘   └─────────────┬─────────────┘   └───────────┬───────────┘ │
+└──────────────┼─────────────────────────────┼─────────────────────────────┼─────────────┘
+               │                             │                             │
+               ▼                             ▼                             ▼
+       GET /api/whatsapp/status     POST /api/whatsapp/send-briefing   POST /api/whatsapp/send-dispatch
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              EXPRESS BACKEND (server.ts)                               │
+│  • Request Authorization Guard (`x-go-gas-request: authorized-client`)                 │
+│  • 30-Second Anti-Spam Debounce & Single-Execution Lock                                │
+│  • Rate Limiting & Origin Verification (Localhost Only)                                │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│                       WHATSAPP ENGINE (src/engine/whatsappService.ts)                  │
+│  • Telemetry Aggregation (Total Sales, Realized RSP, Stockout Count, 7-Day Forecast)   │
+│  • Message Formatter (Unicode Box Styling, Bold Indicators, Metric Grouping)           │
+│  • Delivery Dispatcher (Multi-recipient iterative loop with retry support)             │
+│  • In-Memory Delivery Audit Log (Timestamp, Recipient Count, Message Digest)           │
+└────────────────────────────────────────┬───────────────────────────────────────────────┘
                                          │
                                          ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                              APP STATE ROUTER (App.tsx)                          │
-│        • Active Tab Routing  • Theme State (Light/Dark)  • Compact View Toggle    │
-└────────┬───────────────────────────────┬────────────────────────────────┬────────┘
-         │                               │                                │
-         ▼                               ▼                                ▼
-┌──────────────────┐           ┌──────────────────┐            ┌───────────────────┐
-│  REPORTS SIDE    │           │  MASTER          │            │ FULL SUITE        │
-│  DRAWER COMPONENT│           │  DASHBOARD       │            │ ENHANCEMENTS      │
-│  (Drawer.tsx)    │           │  (Master.tsx)    │            │ (New Components)  │
-└──────────────────┘           └────────┬─────────┘            └─────────┬─────────┘
-                                        │                                │
-                       ┌────────────────┴──────────────┐       ┌─────────┴─────────┐
-                       │                               │       │                   │
-                       ▼                               ▼       ▼                   ▼
-             ┌──────────────────┐            ┌──────────────────┐ ┌────────────────┐ ┌────────────────┐
-             │ 48-HOUR BURN     │            │ 3-MONTH SALES    │ │ RSP DISPARITY  │ │ FREE SALE      │
-             │ PREDICTION PANEL │            │ DROP ALERTS (>20%)│ │ AUDIT PANEL    │ │ LEAKAGE AUDIT  │
-             └──────────────────┘            └──────────────────┘ └────────────────┘ └────────────────┘
+                      ┌────────────────────────────────────┐
+                      │    WHATSAPP DELIVERY PROTOCOL      │
+                      │  • Direct REST API (Cloud/Gateway) │
+                      │  • Local Linked-Device QR Bridge   │
+                      └────────────────────────────────────┘
 ```
 
-### New & Enhanced Components Mapping:
-1. **`CriticalBurnPredictionAlert.tsx`** (*MasterDashboard integration*):
-   - Calculates exact hours of fuel remaining: $\text{Hours Left} = (\text{Closing Dip Litres} / \text{Daily Burn Rate}) \times 24$.
-   - Highlights stations where $\text{Hours Left} \le 48.0$.
-   - Displays 48h countdown badge, recommended tanker size, and 1-click dispatch trigger.
+### Data Model & Environment Configuration
 
-2. **`ReportsSideDrawer.tsx`** (*Global Sidebar Drawer*):
-   - Collapsible drawer triggered by a side toggle icon in the Top Bar.
-   - Quick search input to filter 15+ dashboard report modules.
-   - Unboxed category sections with report status counters.
+```env
+# WhatsApp Delivery Configuration
+WHATSAPP_ENABLED=true
+WHATSAPP_RECIPIENT_NUMBERS=918087018975,919876543210
+# Optional: External Gateway URL / Token (e.g. Cloud API, Green-API, UltraMsg)
+WHATSAPP_API_URL=
+WHATSAPP_API_TOKEN=
+```
 
-3. **`RSPDisparityReport.tsx`** (*Report Module*):
-   - Audits station pricing vs state nominal rates, flagging revenue loss per litre due to local price gaps.
-
-4. **`FreeSaleLeakageAudit.tsx`** (*Report Module*):
-   - Identifies stations exceeding the 0.5% Free Sale / Return Calibration threshold.
-
-5. **`TMLeaderboard.tsx`** (*Report Module*):
-   - Territory Manager performance scoring based on total volume, zero-sale recovery, and collection efficiency.
-
-6. **`CustomerChurnPredictor.tsx`** (*Report Module*):
-   - Predicts commercial fleet churn by analyzing consecutive multi-day volume declines.
+### Interactive Components Mapping
+1. **`Navbar.tsx`**:
+   - Add WhatsApp connection status pill and button to open `WhatsAppModal`.
+2. **`WhatsAppModal.tsx`** (*New Component*):
+   - Status indicators (Connected / Awaiting QR / Disconnected).
+   - QR code canvas/image view when session is unlinked.
+   - Recipient list preview (masked for privacy).
+   - "Send Instant Test Message" trigger.
+   - Delivery log table showing past dispatches with timestamps and delivery outcomes.
+3. **`DailyBriefing.tsx`**:
+   - Add **"Send WhatsApp Flash"** button with loading state (`LoaderCircle`), error handling, and success notifications.
+4. **`TankerDispatchReport.tsx`**:
+   - Add **"Send WhatsApp Manifest"** button with critical candidate counts.
+5. **`whatsappService.ts`** (*New Engine*):
+   - Formats clean WhatsApp markdown messages for Executive Flash & Tanker Dispatch.
+   - Dispatches messages to configured numbers.
+   - Maintains connection state and recent activity history.
 
 ---
 
-## 4. Verification & Quality Plan
+## 5. Verification & Quality Plan
 
-1. **Build & Type Check**:
-   - Execute `compile_applet` and `lint_applet` together to verify 0 errors.
-2. **Theme & Density Verification**:
-   - Verify all new panels render with crisp contrast in both Light Mode (default) and Dark Mode.
-   - Ensure Compact View toggle dynamically adjusts table row padding across all new components.
-3. **Data Integrity Check**:
-   - Confirm burn rate calculations accurately reflect T-1 lagged telemetry metrics.
+1. **Static Validation**:
+   - Execute `compile_applet` and `lint_applet` to ensure zero compilation or TypeScript errors.
+2. **Unit Testing (`node:test`)**:
+   - Add unit tests for `whatsappService.ts` verifying message template output, number sanitization, and fallback error handling.
+3. **Live Execution Verification**:
+   - Verify that clicking the button in the UI triggers `/api/whatsapp/send-briefing` and updates status correctly without page reloads.

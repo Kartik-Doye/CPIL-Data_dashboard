@@ -46,11 +46,13 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   const freeSaleRs = filteredStations.reduce((a, b) => a + (b.free_sale_rupees || 0), 0);
   const paytmColl = filteredStations.reduce((a, b) => a + (b.paytm || 0), 0);
 
-  const weightedNominalRsp =
+  const rawNominal =
     totalVolume > 0
       ? filteredStations.reduce((a, b) => a + (b.new_rate || 77.2) * b.sale_qty, 0) / totalVolume
       : data.average_rsp;
-  const weightedEffRsp = totalVolume > 0 ? totalRevenue / totalVolume : data.effective_rsp;
+  const weightedNominalRsp = Number.isFinite(rawNominal) ? rawNominal : (data.average_rsp || 77.2);
+  const rawEff = totalVolume > 0 ? totalRevenue / totalVolume : data.effective_rsp;
+  const weightedEffRsp = Number.isFinite(rawEff) ? rawEff : (data.effective_rsp || 77.2);
   const collectionGap = Math.max(0, weightedNominalRsp - weightedEffRsp);
 
   // Top 5 & Bottom 5 among filtered

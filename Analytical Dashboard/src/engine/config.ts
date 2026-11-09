@@ -23,3 +23,13 @@ export const PORT = parseInt(process.env.PORT || '5000', 10);
 // DB hardening (read-only, 15s statement timeout)
 export const DB_CONNECT_TIMEOUT = parseInt(process.env.DB_CONNECT_TIMEOUT || '10', 10);
 export const DB_STATEMENT_TIMEOUT_MS = parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '15000', 10);
+
+// Email / SMTP Zero-Cost Reporting Configuration (Gmail or Workspace SMTP)
+export const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+export const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
+export const SMTP_SECURE = process.env.SMTP_SECURE === 'false' ? false : (parseInt(process.env.SMTP_PORT || '465', 10) === 465);
+export const SMTP_USER = process.env.SMTP_USER || '';
+export const SMTP_PASS = process.env.SMTP_PASS || '';
+export const SMTP_TO = process.env.SMTP_TO || '';
+export const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'GO Gas Executive Suite';
+

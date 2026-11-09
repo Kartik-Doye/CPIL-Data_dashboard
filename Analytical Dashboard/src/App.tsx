@@ -23,15 +23,18 @@ import { FreeSaleLeakageAudit } from './components/FreeSaleLeakageAudit';
 import { TMLeaderboard } from './components/TMLeaderboard';
 import { CustomerChurnPredictor } from './components/CustomerChurnPredictor';
 import { DatabaseInspectorModal } from './components/DatabaseInspectorModal';
-import { ExecutiveTelemetry, StationRecord } from './types';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { WhatsAppModal } from './components/WhatsAppModal';
+import { ExecutiveTelemetry, StationRecord, DatabaseDiagnostics } from './types';
+import { Loader2, AlertCircle, Database, RefreshCw } from 'lucide-react';
 
 export function App() {
   const [data, setData] = useState<ExecutiveTelemetry | null>(null);
+  const [dbDiagnostics, setDbDiagnostics] = useState<DatabaseDiagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ReportTab>('master');
   const [isDbInspectorOpen, setIsDbInspectorOpen] = useState(false);
+  const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isCompact, setIsCompact] = useState(false);
@@ -176,42 +179,88 @@ export function App() {
    * - Validates response content-type
    * - Triggers deep console logging of connection string, live DB stats, and discrepancy analysis
    */
-  const fetchData = async (forceRefresh = false) => {
+  const fetchData = async (forceRefresh = false, retryCount = 0) => {
     setLoading(true);
     setError(null);
+    let shouldRetry = false;
     try {
       const url = `/api/telemetry${forceRefresh ? '?refresh=true' : ''}`;
       const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`Failed to load telemetry (HTTP ${res.status})`);
-      }
       
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await res.text();
-        console.error('Non-JSON response received:', text.slice(0, 200));
-        throw new Error('Server returned an invalid response format (Expected JSON, got HTML). Please refresh or contact support.');
-      }
-
-      const telemetry: ExecutiveTelemetry = await res.json();
-      setData(telemetry);
-
-      // Execute deep verification logging
-      logDatabaseDiagnostics(telemetry);
-
-      if (forceRefresh) {
-        if (telemetry.db_diagnostics?.connected && telemetry.db_diagnostics.engine === 'external') {
-          showToast('Database connection and query audit re-verified successfully!');
-        } else {
-          showToast('External PostgreSQL is unavailable. Dashboard data is not being served.');
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || `Server error (HTTP ${res.status})`);
         }
+        if (json.db_diagnostics) {
+          setDbDiagnostics(json.db_diagnostics);
+        }
+        setData(json);
+        logDatabaseDiagnostics(json);
+
+        if (forceRefresh) {
+          if (json.db_diagnostics?.connected && json.db_diagnostics.engine === 'external') {
+            showToast('Database connection and query audit re-verified successfully!');
+          } else {
+            showToast('External PostgreSQL is unavailable. Dashboard data is not being served.');
+          }
+        }
+        return;
       }
+
+      // If response is HTML (e.g. cloud container startup splash screen or Vite building)
+      const text = await res.text();
+      const isStartupScreen = text.includes('Starting Server...') || text.includes('<!doctype html') || text.includes('<title>');
+      
+      if (isStartupScreen && retryCount < 6) {
+        console.info(`[Server Booting] Waiting for server engine to initialize (attempt ${retryCount + 1}/6). Retrying in 2s...`);
+        shouldRetry = true;
+        setTimeout(() => {
+          void fetchData(forceRefresh, retryCount + 1);
+        }, 2000);
+        return;
+      }
+
+      if (!res.ok) {
+        try {
+          const verifyRes = await fetch(`/api/db-verify${forceRefresh ? '?refresh=true' : ''}`);
+          if (verifyRes.ok) {
+            const verifyJson = await verifyRes.json();
+            setDbDiagnostics(verifyJson);
+          }
+        } catch {
+          // Ignore secondary failure
+        }
+        throw new Error(`Server returned HTTP ${res.status}. Please ensure the server is running.`);
+      }
+
+      throw new Error('Server returned an unexpected format. Please refresh in a few moments.');
     } catch (err: any) {
-      console.error('[API Telemetry Fetch Error]:', err);
+      if (retryCount < 4 && (err.name === 'TypeError' || err.message?.includes('fetch'))) {
+        console.info(`[Server Reconnecting] Connection pending (attempt ${retryCount + 1}/4). Retrying in 2s...`);
+        shouldRetry = true;
+        setTimeout(() => {
+          void fetchData(forceRefresh, retryCount + 1);
+        }, 2000);
+        return;
+      }
+      console.warn('[API Telemetry Fetch Notice]:', err.message);
+      try {
+        const verifyRes = await fetch(`/api/db-verify${forceRefresh ? '?refresh=true' : ''}`);
+        if (verifyRes.ok) {
+          const verifyJson = await verifyRes.json();
+          setDbDiagnostics(verifyJson);
+        }
+      } catch {
+        // Ignore fallback error
+      }
       setData(null);
       setError(err.message || 'Error connecting to server');
     } finally {
-      setLoading(false);
+      if (!shouldRetry) {
+        setLoading(false);
+      }
     }
   };
 
@@ -271,6 +320,7 @@ export function App() {
       {/* Navbar */}
       <Navbar
         data={data}
+        dbDiagnostics={dbDiagnostics || data?.db_diagnostics}
         loading={loading}
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -278,6 +328,7 @@ export function App() {
         onExportCSV={handleExportCSV}
         onOpenDrawer={() => setIsDrawerOpen(true)}
         onOpenDbInspector={() => setIsDbInspectorOpen(true)}
+        onOpenWhatsApp={() => setIsWhatsAppOpen(true)}
       />
 
       {/* Navigation Tabs */}
@@ -312,19 +363,45 @@ export function App() {
           </div>
         )}
 
-        {error && !data && (
-          <div className="py-16 max-w-md mx-auto text-center space-y-3">
-            <div className="p-3 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-xl inline-block">
-              <AlertCircle className="w-8 h-8 mx-auto" />
+        {!loading && error && !data && (
+          <div className="py-12 max-w-xl mx-auto space-y-6">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm text-center space-y-4">
+              <div className="p-3 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-xl inline-block">
+                <Database className="w-8 h-8 mx-auto" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">PostgreSQL Database Connection Required</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                  The dashboard is configured in strict database mode to pull directly from PostgreSQL (<code className="font-mono text-orange-600 dark:text-orange-400">sale_tracker</code>).
+                </p>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-xl border border-slate-200 dark:border-slate-800 text-left text-xs space-y-2">
+                <div className="font-semibold text-slate-700 dark:text-slate-300">Quick Connection Checklist:</div>
+                <ul className="space-y-1.5 text-slate-600 dark:text-slate-400 list-disc list-inside">
+                  <li><strong>Start PostgreSQL:</strong> Run <code className="bg-slate-200 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">net start postgresql-x64-16</code> or start it in Windows Services (<code className="font-mono">services.msc</code>).</li>
+                  <li><strong>Check Credentials:</strong> Open <code className="font-mono text-orange-600 dark:text-orange-400">Analytical Dashboard/.env</code> and enter your password for <code className="font-mono">BOT_READER_PASSWORD</code>.</li>
+                  <li><strong>Run 1-Click Tester:</strong> Double-click <code className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">run-test-db.bat</code> to verify your table and row count.</li>
+                </ul>
+              </div>
+
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={() => fetchData(true)}
+                  className="text-xs font-semibold px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition-colors cursor-pointer shadow-sm flex items-center gap-2"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Retry DB Connection</span>
+                </button>
+                <button
+                  onClick={() => setIsDbInspectorOpen(true)}
+                  className="text-xs font-semibold px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer flex items-center gap-2"
+                >
+                  <Database className="w-3.5 h-3.5" />
+                  <span>Open DB Inspector</span>
+                </button>
+              </div>
             </div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">Connection Error</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{error}</p>
-            <button
-              onClick={() => fetchData(true)}
-              className="text-xs font-semibold px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition-colors cursor-pointer"
-            >
-              Retry Connection
-            </button>
           </div>
         )}
 
@@ -443,10 +520,16 @@ export function App() {
       <DatabaseInspectorModal
         isOpen={isDbInspectorOpen}
         onClose={() => setIsDbInspectorOpen(false)}
-        diagnostics={data?.db_diagnostics}
+        diagnostics={dbDiagnostics || data?.db_diagnostics}
         telemetry={data}
         onReverify={() => fetchData(true)}
         loading={loading}
+      />
+
+      {/* WhatsApp Automation Center Modal */}
+      <WhatsAppModal
+        isOpen={isWhatsAppOpen}
+        onClose={() => setIsWhatsAppOpen(false)}
       />
     </div>
   );

@@ -24,6 +24,8 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   const [copied, setCopied] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
   const [emailStatus, setEmailStatus] = useState<{ message: string; success: boolean } | null>(null);
+  const [whatsAppSending, setWhatsAppSending] = useState(false);
+  const [whatsAppStatus, setWhatsAppStatus] = useState<{ message: string; success: boolean } | null>(null);
   const qty = (value: number) => value.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -145,6 +147,38 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
     }
   };
 
+  const handleSendWhatsApp = async () => {
+    setWhatsAppSending(true);
+    setWhatsAppStatus(null);
+    try {
+      const response = await fetch('/api/whatsapp/send-briefing', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-go-gas-whatsapp-request': 'authorized-client',
+        },
+        body: JSON.stringify({ message: generateBriefingText() }),
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json')
+        ? await response.json() as { message?: string; error?: string }
+        : null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `WhatsApp request failed (HTTP ${response.status}).`);
+      }
+      if (!payload?.message) {
+        throw new Error('The server returned an invalid WhatsApp response.');
+      }
+      setWhatsAppStatus({ message: payload.message, success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setWhatsAppStatus({ message: `WhatsApp not sent: ${message}`, success: false });
+    } finally {
+      setWhatsAppSending(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Briefing Top Banner */}
@@ -162,7 +196,7 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Condensed management intelligence formulated for CMD, MD, State Heads, and TMs.
+                Condensed management intelligence formulated for CMD, MD, State Heads, and TMs (Auto-dispatches at 11:00 AM &amp; 7:00 PM daily).
               </p>
             </div>
           </div>
@@ -185,10 +219,27 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    <span>Copy for WhatsApp / Email</span>
+                    <span>Copy Text</span>
                   </>
                 )}
               </button>
+
+              <button
+                onClick={handleSendWhatsApp}
+                disabled={whatsAppSending}
+                title="Dispatches the executive summary directly via WhatsApp to configured stakeholders."
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait shadow-xs"
+              >
+                {whatsAppSending ? (
+                  <LoaderCircle className="w-4 h-4 animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                    <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.664-.698c.97.534 1.769.813 2.796.813h.005c3.18 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.767-5.77-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.312.045-.634.072-1.802-.411-.979-.406-1.636-1.393-1.685-1.458-.048-.065-.399-.533-.399-1.018 0-.485.253-.724.343-.823.09-.099.196-.124.262-.124.066 0 .132.001.19.004.061.003.143-.023.223.17.082.198.28.684.305.733.025.049.041.107.008.172-.033.065-.05.105-.099.163-.049.058-.103.13-.147.175-.049.049-.1.102-.043.2.057.098.256.422.548.683.376.335.693.438.791.488.098.049.164.074.188.115.024.041.024.239-.12.644z" />
+                  </svg>
+                )}
+                <span>{whatsAppSending ? 'Sending WhatsApp...' : 'Send WhatsApp Flash'}</span>
+              </button>
+
               <button
                 onClick={handleSendEmail}
                 disabled={emailSending}
@@ -196,9 +247,20 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-sky-700 hover:bg-sky-600 disabled:bg-slate-700 disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait"
               >
                 {emailSending ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                <span>{emailSending ? 'Sending...' : 'Send Test Email'}</span>
+                <span>{emailSending ? 'Sending Email...' : 'Send Test Email'}</span>
               </button>
             </div>
+
+            {whatsAppStatus && (
+              <p
+                role="status"
+                aria-live="polite"
+                className={`max-w-md text-xs ${whatsAppStatus.success ? 'text-emerald-400' : 'text-rose-400'}`}
+              >
+                {whatsAppStatus.message}
+              </p>
+            )}
+
             {emailStatus && (
               <p
                 role="status"
@@ -209,7 +271,7 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
               </p>
             )}
             <p className="text-[10px] text-slate-500">
-              Test sends a real email to the configured recipient(s).
+              1-click dispatches to environment-configured leadership recipients.
             </p>
           </div>
         </div>

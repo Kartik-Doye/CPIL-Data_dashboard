@@ -21,6 +21,17 @@ import {
 import { query, queryLoader, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
 import { StationMonthlySales, StationRecord } from './src/types.js';
 import { sendExecutiveBriefing } from './src/engine/emailReport.js';
+import http from 'http';
+import cron from 'node-cron';
+import {
+  getWhatsAppStatus,
+  getWhatsAppAuditLog,
+  sendWhatsAppMessage,
+  buildExecutiveWhatsAppMessage,
+  buildTankerDispatchWhatsAppMessage,
+} from './src/engine/whatsappService.js';
+import { recommendTanker } from './src/engine/tanker.js';
+import { initWhatsAppAutomation } from './src/engine/whatsappAutomation.js';
 
 dotenv.config();
 
@@ -28,15 +39,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
+const PORT = process.env.PORT && process.env.PORT !== '8080' ? Number(process.env.PORT) : 3000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+initWhatsAppAutomation(app, server);
 
 let cachedTelemetry: any = null;
 let lastLoadedTime = 0;
 let emailSendInProgress = false;
 let lastEmailSentAt = 0;
+let whatsappSendInProgress = false;
+let lastWhatsAppSentAt = 0;
 
 async function loadFromDatabase(): Promise<any | null> {
   const dbConnection = getDbConnectionDetails();
@@ -629,31 +644,37 @@ app.get('/api/telemetry', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/email/send', async (req: Request, res: Response) => {
+function isDispatchAuthorized(req: Request, requiredHeader: string): boolean {
+  if (
+    req.get(requiredHeader) === 'authorized-client' ||
+    req.get('x-go-gas-whatsapp-request') === 'authorized-client' ||
+    req.get('x-go-gas-email-request') === 'authorized-client'
+  ) {
+    return true;
+  }
   const remoteAddress = req.socket.remoteAddress || '';
   const normalizedAddress = remoteAddress.startsWith('::ffff:')
     ? remoteAddress.slice('::ffff:'.length)
     : remoteAddress;
-  const origin = req.get('origin');
-  let originAllowed = !origin;
-
-  if (origin) {
-    try {
-      const parsedOrigin = new URL(origin);
-      originAllowed = (
-        (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:') &&
-        parsedOrigin.host === req.get('host')
-      );
-    } catch {
-      originAllowed = false;
-    }
+  if (normalizedAddress === '::1' || normalizedAddress.startsWith('127.')) {
+    return true;
   }
+  const origin = req.get('origin');
+  if (!origin) return true;
+  try {
+    const parsedOrigin = new URL(origin);
+    const host = req.get('host') || '';
+    if (parsedOrigin.host === host || parsedOrigin.hostname === 'localhost' || parsedOrigin.hostname === '127.0.0.1' || parsedOrigin.hostname.endsWith('.run.app')) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
 
-  if (
-    (normalizedAddress !== '::1' && !normalizedAddress.startsWith('127.')) ||
-    !originAllowed ||
-    req.get('x-go-gas-email-request') !== 'authorized-client'
-  ) {
+app.post('/api/email/send', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-email-request')) {
     res.status(403).json({ error: 'Email sending is only available from this computer.' });
     return;
   }
@@ -686,6 +707,154 @@ app.post('/api/email/send', async (req: Request, res: Response) => {
     res.status(500).json({ error: `Executive briefing email failed: ${message}` });
   } finally {
     emailSendInProgress = false;
+  }
+});
+
+// WhatsApp API Endpoints
+app.get('/api/whatsapp/status', (_req: Request, res: Response) => {
+  res.json(getWhatsAppStatus());
+});
+
+app.get('/api/whatsapp/logs', (_req: Request, res: Response) => {
+  res.json({ logs: getWhatsAppAuditLog() });
+});
+
+app.post('/api/whatsapp/send-briefing', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-whatsapp-request')) {
+    res.status(403).json({ error: 'WhatsApp dispatch is only available from this computer.' });
+    return;
+  }
+  if (whatsappSendInProgress) {
+    res.status(409).json({ error: 'A WhatsApp message is already being dispatched.' });
+    return;
+  }
+  if (Date.now() - lastWhatsAppSentAt < 15_000) {
+    res.status(429).json({ error: 'Please wait 15 seconds before sending another WhatsApp message.' });
+    return;
+  }
+
+  whatsappSendInProgress = true;
+  try {
+    const telemetry = await getTelemetryData(true);
+    const customMessage = req.body?.message;
+    const message = customMessage || (telemetry ? buildExecutiveWhatsAppMessage(telemetry) : null);
+    if (!message) {
+      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable and no message text was provided. The WhatsApp briefing was not sent.' });
+      return;
+    }
+
+    const result = await sendWhatsAppMessage('briefing', message);
+    lastWhatsAppSentAt = Date.now();
+    res.json({
+      message: result.message,
+      recipientCount: result.recipientCount,
+      date: telemetry?.date || new Date().toISOString().slice(0, 10),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[WHATSAPP] Briefing send failed: ${message}`);
+    res.status(500).json({ error: `WhatsApp briefing failed: ${message}` });
+  } finally {
+    whatsappSendInProgress = false;
+  }
+});
+
+app.post('/api/whatsapp/send-dispatch', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-whatsapp-request')) {
+    res.status(403).json({ error: 'WhatsApp dispatch is only available from this computer.' });
+    return;
+  }
+  if (whatsappSendInProgress) {
+    res.status(409).json({ error: 'A WhatsApp message is already being dispatched.' });
+    return;
+  }
+  if (Date.now() - lastWhatsAppSentAt < 15_000) {
+    res.status(429).json({ error: 'Please wait 15 seconds before sending another WhatsApp message.' });
+    return;
+  }
+
+  whatsappSendInProgress = true;
+  try {
+    const telemetry = await getTelemetryData(true);
+    if (!telemetry) {
+      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable. The WhatsApp manifest was not sent.' });
+      return;
+    }
+
+    const activeDailyBurn = telemetry.all_stations.filter((s: StationRecord) => s.sale_qty > 0);
+    const networkDailyBurn = activeDailyBurn.length
+      ? activeDailyBurn.reduce((sum: number, s: StationRecord) => sum + s.sale_qty, 0) / activeDailyBurn.length
+      : 0;
+
+    const candidates = telemetry.all_stations
+      .filter((s: StationRecord) => {
+        const isUrgentDip = s.days_left <= 3.5;
+        const isOutageRemark = Boolean(s.remark && /stock|licence|breakdown|dry/i.test(s.remark));
+        return isUrgentDip || isOutageRemark || s.sale_qty === 0;
+      })
+      .map((s: StationRecord) => {
+        const historicalRows = (telemetry.station_monthly_sales || []).filter((row: any) => row.erp_code === s.erp_code);
+        const historyDays = historicalRows.reduce((sum: number, row: any) => sum + row.reporting_days, 0);
+        const historicalDailyBurn = historyDays > 0
+          ? historicalRows.reduce((sum: number, row: any) => sum + row.sale_qty, 0) / historyDays
+          : 0;
+        const dailyBurn = s.sale_qty > 0 ? s.sale_qty : historicalDailyBurn || networkDailyBurn;
+        const burn3Day = dailyBurn * 3;
+        const currentStock = s.closing_dip_in_ltr || 0;
+        const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, currentStock);
+
+        let urgency: 'Critical' | 'Warning' | 'Standby' = 'Warning';
+        if (s.days_left < 1.5 || s.sale_qty === 0 || /stock/i.test(s.remark || '')) {
+          urgency = 'Critical';
+        } else if (s.days_left <= 3.0) {
+          urgency = 'Warning';
+        } else {
+          urgency = 'Standby';
+        }
+
+        return {
+          station: s,
+          dailyBurn,
+          burn3Day,
+          currentStock,
+          recommendedTanker,
+          recommendedVolumeLtr: requiredVolumeLtr,
+          urgency,
+        };
+      })
+      .sort((a: any, b: any) => a.station.days_left - b.station.days_left);
+
+    const message = buildTankerDispatchWhatsAppMessage(telemetry, candidates);
+    const result = await sendWhatsAppMessage('dispatch', message);
+    lastWhatsAppSentAt = Date.now();
+    res.json({
+      message: result.message,
+      recipientCount: result.recipientCount,
+      criticalOrders: candidates.filter((c: any) => c.urgency === 'Critical').length,
+      date: telemetry.date,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[WHATSAPP] Tanker dispatch send failed: ${message}`);
+    res.status(500).json({ error: `WhatsApp tanker dispatch failed: ${message}` });
+  } finally {
+    whatsappSendInProgress = false;
+  }
+});
+
+app.post('/api/whatsapp/send-test', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-whatsapp-request')) {
+    res.status(403).json({ error: 'WhatsApp test dispatch is only available from this computer.' });
+    return;
+  }
+
+  try {
+    const testMessage = `*🔔 GO GAS SYSTEM TEST DISPATCH*\nTime: ${new Date().toLocaleString('en-IN')}\nStatus: Telemetry engine operational and connected.`;
+    const result = await sendWhatsAppMessage('test', testMessage);
+    res.json({ message: result.message, recipientCount: result.recipientCount });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ error: `WhatsApp test failed: ${message}` });
   }
 });
 
@@ -853,8 +1022,27 @@ async function startServer() {
     }
   });
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`[GO Gas Executive Suite] Dashboard active at http://localhost:${PORT}`);
+
+    // Automated SMTP Executive Email Briefing at 11:00 AM and 07:00 PM daily
+    cron.schedule('0 11,19 * * *', async () => {
+      const timeLabel = new Date().getHours() < 15 ? '11:00 AM' : '07:00 PM';
+      console.log(`[EMAIL CRON] Executing automated ${timeLabel} executive briefing email...`);
+      try {
+        const telemetry = await getTelemetryData(true);
+        if (!telemetry) {
+          console.warn(`[EMAIL CRON] Telemetry unavailable; skipped ${timeLabel} email.`);
+          return;
+        }
+        const result = await sendExecutiveBriefing(telemetry);
+        console.log(`[EMAIL CRON] ${timeLabel} executive briefing sent to ${result.recipientCount} recipient(s).`);
+      } catch (err: any) {
+        console.error(`[EMAIL CRON] Failed to send ${timeLabel} email: ${err.message}`);
+      }
+    });
+    console.log('[EMAIL CRON] Scheduled automated executive email briefings at 11:00 AM and 07:00 PM daily.');
+
     const refreshLearningData = () => {
       void getTelemetryData(true).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);

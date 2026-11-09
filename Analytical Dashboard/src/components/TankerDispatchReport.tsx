@@ -9,6 +9,7 @@ import {
   Fuel,
   ShieldAlert,
   ArrowRight,
+  LoaderCircle,
 } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
 import { fmtQty } from '../engine/formatting';
@@ -27,6 +28,8 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
 }) => {
   const [selectedUrgency, setSelectedUrgency] = useState<'all' | 'critical' | 'warning'>('all');
   const [copied, setCopied] = useState(false);
+  const [whatsAppSending, setWhatsAppSending] = useState(false);
+  const [whatsAppStatus, setWhatsAppStatus] = useState<{ message: string; success: boolean } | null>(null);
   const exactLitres = (value: number) => value.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -161,6 +164,34 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
     document.body.removeChild(link);
   };
 
+  const handleSendWhatsAppManifest = async () => {
+    setWhatsAppSending(true);
+    setWhatsAppStatus(null);
+    try {
+      const response = await fetch('/api/whatsapp/send-dispatch', {
+        method: 'POST',
+        headers: { 'x-go-gas-whatsapp-request': 'authorized-client' },
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json')
+        ? await response.json() as { message?: string; error?: string }
+        : null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `WhatsApp manifest request failed (HTTP ${response.status}).`);
+      }
+      if (!payload?.message) {
+        throw new Error('The server returned an invalid WhatsApp response.');
+      }
+      setWhatsAppStatus({ message: payload.message, success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setWhatsAppStatus({ message: `WhatsApp manifest not sent: ${message}`, success: false });
+    } finally {
+      setWhatsAppSending(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* Header & Metric Strip */}
@@ -182,21 +213,48 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={handleCopyWhatsApp}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-xs"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              {copied ? 'Copied Manifest!' : '1-Click WhatsApp Manifest'}
-            </button>
-            <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800 dark:hover:bg-slate-700 border border-slate-700 transition-colors shadow-xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export Dispatch CSV
-            </button>
+          <div className="flex flex-col items-start lg:items-end gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleSendWhatsAppManifest}
+                disabled={whatsAppSending}
+                title="Directly dispatches the replenishment manifest to configured WhatsApp logistics recipients."
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white transition-colors shadow-xs cursor-pointer disabled:cursor-wait"
+              >
+                {whatsAppSending ? (
+                  <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+                    <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.664-.698c.97.534 1.769.813 2.796.813h.005c3.18 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.767-5.77-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.312.045-.634.072-1.802-.411-.979-.406-1.636-1.393-1.685-1.458-.048-.065-.399-.533-.399-1.018 0-.485.253-.724.343-.823.09-.099.196-.124.262-.124.066 0 .132.001.19.004.061.003.143-.023.223.17.082.198.28.684.305.733.025.049.041.107.008.172-.033.065-.05.105-.099.163-.049.058-.103.13-.147.175-.049.049-.1.102-.043.2.057.098.256.422.548.683.376.335.693.438.791.488.098.049.164.074.188.115.024.041.024.239-.12.644z" />
+                  </svg>
+                )}
+                <span>{whatsAppSending ? 'Sending Manifest...' : 'Send WhatsApp Manifest'}</span>
+              </button>
+              <button
+                onClick={handleCopyWhatsApp}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors shadow-xs cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {copied ? 'Copied Manifest!' : 'Copy Text'}
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800 dark:hover:bg-slate-700 border border-slate-700 transition-colors shadow-xs cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export CSV
+              </button>
+            </div>
+
+            {whatsAppStatus && (
+              <p
+                role="status"
+                aria-live="polite"
+                className={`max-w-md text-xs ${whatsAppStatus.success ? 'text-emerald-500 font-medium' : 'text-rose-500 font-medium'}`}
+              >
+                {whatsAppStatus.message}
+              </p>
+            )}
           </div>
         </div>
 

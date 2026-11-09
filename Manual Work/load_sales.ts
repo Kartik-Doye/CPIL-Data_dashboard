@@ -272,7 +272,7 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
 }
 
 // CLI Execution
-if (process.argv[1] && process.argv[1].endsWith('load_sales.ts')) {
+if (process.argv[1] && (process.argv[1].endsWith('load_sales.ts') || process.argv[1].endsWith('load_sales.js') || process.argv[1].includes('load_sales'))) {
   const args = process.argv.slice(2);
   const isDryRun = args.includes('--dry-run');
   const fileArgIdx = args.indexOf('--file');
