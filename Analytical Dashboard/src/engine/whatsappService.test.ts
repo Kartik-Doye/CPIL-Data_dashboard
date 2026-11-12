@@ -8,6 +8,7 @@ import {
   buildTankerDispatchWhatsAppMessage,
   sendWhatsAppMessage,
 } from './whatsappService.js';
+import { classifyZeroSaleReason } from './formatting.js';
 
 test('parses and cleans valid recipient phone numbers', () => {
   const result = parseRecipientNumbers('+91 98765 43210, 918087018975, invalid, 123');
@@ -21,7 +22,7 @@ test('masks phone numbers for privacy display in UI', () => {
   assert.equal(maskPhoneNumber('123'), '****');
 });
 
-test('formats executive briefing WhatsApp flash message with correct formatting and metrics', () => {
+test('formats a concise executive WhatsApp brief with risk bands and forecast context', () => {
   const msg = buildExecutiveWhatsAppMessage({
     date: '2026-11-06',
     total_sale_qty: 342850,
@@ -33,11 +34,22 @@ test('formats executive briefing WhatsApp flash message with correct formatting 
     zero_sale_count: 4,
     stockout_risk_stations: [
       { code: 'JODO9', name: 'YUSUFGUDA', days_left: 0.9, stock_ltr: 1200, daily_burn_ltr: 1333, state: 'TG', remark: '' },
+      { code: 'KA04', name: 'KAYRAMBEDU', days_left: 1.2, stock_ltr: 1660, daily_burn_ltr: 1383, state: 'KA', remark: '' },
     ],
+    history_30d: Array.from({ length: 7 }, (_, index) => ({
+      date: new Date(Date.UTC(2026, 9, 30 + index)).toISOString().slice(0, 10),
+      day_name: 'Monday',
+      sale_qty: 320000,
+      collection: 0,
+      effective_rsp: 77,
+      active_stations: 300,
+      zero_sale_count: 0,
+    })),
     forecast: {
       horizon_days: 7,
       predicted_total_7d: 2415400,
       mape_ensemble: 6.8,
+      backtest_days: 14,
       mape_linear: 7.2,
       mape_holt_winters: 7.0,
       mape_naive: 8.5,
@@ -70,13 +82,24 @@ test('formats executive briefing WhatsApp flash message with correct formatting 
     },
   });
 
-  assert.match(msg, /GO GAS EXECUTIVE DAILY FLASH/);
+  assert.match(msg, /GO GAS EXECUTIVE DAILY BRIEF/);
   assert.match(msg, /3,42,850\.00 L/);
   assert.match(msg, /₹2,64,33,735\.00/);
   assert.match(msg, /₹77\.10\/L/);
-  assert.match(msg, /₹1\.40\/L/); // Gap: 78.50 - 77.10
+  assert.match(msg, /vs prior 7-day avg \+7\.1%/);
+  assert.match(msg, /1 critical \(<1d\), 1 high \(1–2d\), 0 monitor/);
   assert.match(msg, /YUSUFGUDA/);
-  assert.match(msg, /3,48,200\.00 L/);
+  assert.match(msg, /3,48,200\.00 L \(P10–P90 3,20,000\.00–3,75,000\.00 L\)/);
+  assert.match(msg, /Historical MAPE 6\.8% across 14 scored days; planning input only/);
+  assert.ok(msg.split('\n').length <= 15);
+});
+
+test('classifies zero-sale reasons without treating unknown remarks as reporting gaps', () => {
+  assert.equal(classifyZeroSaleReason('No TM', ''), 'No salesperson');
+  assert.equal(classifyZeroSaleReason('Suresh', 'No Stock'), 'Stock unavailable');
+  assert.equal(classifyZeroSaleReason('Suresh', 'Sale Stop'), 'Commercial stop');
+  assert.equal(classifyZeroSaleReason('No TM', 'No Stock'), 'Stock unavailable');
+  assert.equal(classifyZeroSaleReason('Suresh', ''), 'Unclassified — verify');
 });
 
 test('formats tanker dispatch WhatsApp manifest with prioritized critical orders', () => {

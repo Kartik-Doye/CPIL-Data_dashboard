@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import whatsappWeb from 'whatsapp-web.js';
 import type { ExecutiveTelemetry, StationRecord } from '../types.js';
+import { classifyZeroSaleReason } from './formatting.js';
 
 dotenv.config();
 
@@ -190,37 +191,78 @@ export function buildExecutiveWhatsAppMessage(telemetry: Pick<
   | 'zero_sale_count'
   | 'stockout_risk_stations'
   | 'forecast'
->): string {
-  const nextForecast = telemetry.forecast?.forecast?.[0];
-  const stockoutCount = telemetry.stockout_risk_stations?.length || 0;
-  const topStockout = (telemetry.stockout_risk_stations || []).slice(0, 3);
+> & Partial<Pick<
+ ExecutiveTelemetry,
+ | 'history_30d'
+ | 'zero_sale_stations'
+ | 'top_declining_stations'
+ | 'top_performing_stations'
+ | 'all_stations'
+>>): string {
+ const nextForecast = telemetry.forecast?.forecast?.[0];
+ const stockRisks = telemetry.stockout_risk_stations || [];
+ const critical = stockRisks.filter((station) => station.stock_ltr <= 0 || station.days_left < 1);
+ const highRisk = stockRisks.filter((station) => station.stock_ltr > 0 && station.days_left >= 1 && station.days_left < 2);
+ const monitor = stockRisks.filter((station) => station.stock_ltr > 0 && station.days_left >= 2 && station.days_left < 3);
+ const stationByCode = new Map((telemetry.all_stations || []).map((station) => [station.erp_code, station]));
+ const urgentActions = critical.slice(0, 2).map((station) => {
+   const owner = stationByCode.get(station.code)?.tm;
+   return `${station.name}${owner && owner !== 'No TM' ? ` (${owner})` : ''}`;
+ });
+ const priorDays = (telemetry.history_30d || [])
+   .filter((point) => point.date < telemetry.date)
+   .slice(-7);
+ const priorAverage = priorDays.length > 0
+   ? priorDays.reduce((sum, point) => sum + point.sale_qty, 0) / priorDays.length
+   : null;
+ const changeVsPrior = priorAverage && priorAverage > 0
+   ? `vs prior ${priorDays.length}-day avg ${((telemetry.total_sale_qty / priorAverage - 1) * 100 >= 0 ? '+' : '')}${((telemetry.total_sale_qty / priorAverage - 1) * 100).toFixed(1)}%`
+   : 'N/A';
+ const zeroSaleReasons = (telemetry.zero_sale_stations || []).reduce((counts, station) => {
+   const reason = classifyZeroSaleReason(station.tm, station.remark);
+   counts[reason] = (counts[reason] || 0) + 1;
+   return counts;
+ }, {} as Record<string, number>);
+ const reasonSummary = Object.entries(zeroSaleReasons)
+   .map(([reason, count]) => `${reason} ${count}`)
+   .join(', ') || (telemetry.zero_sale_count > 0 ? 'reason breakdown unavailable' : '');
+ const topTenStations = telemetry.top_performing_stations || [];
+ const topTenVolume = topTenStations
+   .reduce((sum, station) => sum + station.sale_qty, 0);
+ const topTenShare = topTenStations.length > 0 && telemetry.total_sale_qty > 0
+   ? (topTenVolume / telemetry.total_sale_qty) * 100
+   : null;
+ const forecastRange = nextForecast
+   && Number.isFinite(nextForecast.p10)
+   && Number.isFinite(nextForecast.p90)
+   ? ` (P10–P90 ${numberFormat(nextForecast.p10)}–${numberFormat(nextForecast.p90)} L)`
+   : '';
+ const mape = telemetry.forecast?.mape_ensemble;
+ const forecastAccuracy = mape !== null && Number.isFinite(mape)
+   ? `Historical MAPE ${mape.toFixed(1)}%${telemetry.forecast.backtest_days === undefined ? '' : ` across ${telemetry.forecast.backtest_days} scored days`}; planning input only.`
+   : 'Historical forecast accuracy not available yet.';
+ const declineSummary = telemetry.top_declining_stations
+   ? `Top decline list: ${telemetry.top_declining_stations.filter((station) => station.drop_pct >= 48).length}/10 down ≥48% vs recent monthly average`
+   : 'Declining-station detail unavailable';
+ const actionLine = urgentActions.length > 0
+   ? `• *Act today:* Replenish ${urgentActions.join(', ')}; TM to confirm dispatch by EOD.`
+   : '• *Act today:* Review all zero-sale exceptions with the assigned TM by EOD.';
 
-  const stockoutLines = topStockout.length > 0
-    ? topStockout.map((s) => `  • *${s.name}* (${s.code}): ${s.days_left.toFixed(1)} days fuel left`).join('\n')
-    : '  • None flagged (all stations >3 days)';
-
-  return [
-    `*⚡ GO GAS EXECUTIVE DAILY FLASH*`,
-    `📅 *Operational Date:* ${telemetry.date}`,
-    `🏢 *Network Coverage:* ${telemetry.stations_with_sale}/${telemetry.stations_total} Active Stations`,
-    ``,
-    `*📊 KEY METRICS:*`,
-    `• *Sales Volume:* ${numberFormat(telemetry.total_sale_qty)} L`,
-    `• *Net Collections:* ₹${numberFormat(telemetry.total_collection)}`,
-    `• *Effective RSP:* ₹${telemetry.effective_rsp.toFixed(2)}/L (Nominal: ₹${telemetry.average_rsp.toFixed(2)}/L)`,
-    `• *Pricing Realization Gap:* ₹${Math.max(0, telemetry.average_rsp - telemetry.effective_rsp).toFixed(2)}/L`,
-    ``,
-    `*📈 DEMAND FORECAST:*`,
-    `• *Tomorrow's Predicted:* ${nextForecast ? `${numberFormat(nextForecast.predicted_qty)} L` : 'N/A'}`,
-    `• *7-Day Forward Demand:* ${numberFormat(telemetry.forecast?.predicted_total_7d || 0)} L`,
-    ``,
-    `*🚨 SUPPLY CHAIN & STOCKOUT ALERTS (${stockoutCount} stations <3 days):*`,
-    stockoutLines,
-    ``,
-    `*⚠️ ZERO SALE STATIONS:* ${telemetry.zero_sale_count} stations reported zero volume`,
-    ``,
-    `_Dispatched via GO Gas Executive Telemetry Engine_`,
-  ].join('\n');
+ return [
+   `*GO GAS EXECUTIVE DAILY BRIEF — ${telemetry.date}*`,
+   `• Sales ${numberFormat(telemetry.total_sale_qty)} L | Collections ₹${numberFormat(telemetry.total_collection)}`,
+   `• Realization ₹${telemetry.effective_rsp.toFixed(2)}/L | ${changeVsPrior}`,
+   `• Reporting coverage ${telemetry.stations_with_sale}/${telemetry.stations_total} stations`,
+   `• Zero sales ${telemetry.zero_sale_count}${reasonSummary ? ` — ${reasonSummary}` : ''}`,
+   `• Low cover: ${critical.length} critical (<1d), ${highRisk.length} high (1–2d), ${monitor.length} monitor (2–3d)`,
+   actionLine,
+   `• Zero-sale follow-up: TM/coordinator to resolve each exception by EOD.`,
+   `• ${declineSummary}.`,
+   `• Top 10 stations: ${topTenShare === null ? 'N/A' : `${topTenShare.toFixed(1)}%`} of network volume.`,
+   `• Forecast ${nextForecast ? `${nextForecast.date}: ${numberFormat(nextForecast.predicted_qty)} L${forecastRange}` : 'unavailable'}.`,
+   `• ${forecastAccuracy}`,
+   `_Station-level owners, reasons and actions: see the dashboard/email workbook._`,
+ ].join('\n');
 }
 
 export function buildTankerDispatchWhatsAppMessage(

@@ -64,6 +64,22 @@ export function formatIndianNumber(x: number): string {
   return (isNegative ? '-' : '') + formatted;
 }
 
+export function classifyZeroSaleReason(tm: string, remark: string): string {
+  const normalizedRemark = remark.trim().toLowerCase();
+  if (/licen[cs]e|permit|compliance/.test(normalizedRemark)) return 'License/compliance stop';
+  if (/sale stop|commercial stop|closed|shutdown/.test(normalizedRemark)) return 'Commercial stop';
+  if (/no stock|out of stock|stock unavailable|stock not available|stock shortage|dry|stockout/.test(normalizedRemark)) {
+    return 'Stock unavailable';
+  }
+  if (/sale not received|not received|data|report|upload|pending/.test(normalizedRemark)) {
+    return 'Data/reporting gap';
+  }
+  if (/no tm|no salesperson|missing tm/.test(normalizedRemark) || !tm.trim() || /^no tm$/i.test(tm.trim())) {
+    return 'No salesperson';
+  }
+  return 'Unclassified — verify';
+}
+
 // Aliases for component ergonomics
 export const formatINR = fmtCurrency;
 export const formatVolume = fmtQty;

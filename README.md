@@ -59,6 +59,18 @@ applied.
 ### Daily executive email
 
 The dashboard can send a concise live-telemetry briefing through Gmail SMTP.
+The email includes sales and reporting coverage, seven-day comparison when
+history is available, stock-cover bands (critical under one day, high risk
+under two days, monitor under three days), zero-sale reason categories, and
+historical forecast error. Forecast history is planning context, not a
+commitment. Each email also attaches a filterable Excel workbook with station
+sales, collections, stock cover, zero-sale reason, TM/coordinator, proposed
+action, and proposed deadline. Owners and deadlines are suggestions based on
+available station assignments and require operational confirmation.
+
+The current PostgreSQL telemetry does not include daily targets, margin,
+receivables, credit exposure, or cash deposited, so the briefing explicitly
+identifies those metrics as unavailable rather than estimating them.
 Add these settings to the project-root `.env` file (see `.env.example` for the
 names), using your Gmail sender, recipient address(es), and a Google
 App Password:
@@ -104,6 +116,10 @@ WhatsApp on your phone under **Linked devices** > **Link a device**. The app
 stores the linked session in `.wwebjs_auth/` so it can reconnect after restart;
 keep that folder private and do not share or commit it. The session QR and
 WhatsApp controls are restricted to local access.
+
+The executive WhatsApp brief is limited to network KPIs, stock-cover bands,
+zero-sale causes, priority actions, and forecast context; use the emailed
+workbook or dashboard for full station-level follow-up.
 
 Puppeteer needs Chrome or Chromium installed. If it is not found automatically,
 set `WHATSAPP_CHROME_EXECUTABLE_PATH` in `.env` to the browser executable.

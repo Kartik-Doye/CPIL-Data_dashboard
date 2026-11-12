@@ -137,7 +137,9 @@ async function loadFromDatabase(): Promise<any | null> {
     const stations: StationRecord[] = latestStations.map((r: any, i: number) => {
       const dailyBurn = r.sale_qty > 0 ? r.sale_qty : networkAvgSale;
       const closingDip = r.closing_dip_in_ltr || 0;
-      const daysLeft = closingDip > 0 && dailyBurn > 0 ? Number((closingDip / dailyBurn).toFixed(1)) : 99;
+      const daysLeft = dailyBurn > 0
+        ? Number((Math.max(0, closingDip) / dailyBurn).toFixed(1))
+        : 99;
       
       // Calculate trend slope dynamically based on network mean
       const trendSlope = r.sale_qty === 0 ? -100 : Number(((r.sale_qty - networkAvgSale) / networkAvgSale * 100).toFixed(1));
