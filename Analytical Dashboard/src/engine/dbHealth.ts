@@ -1,4 +1,5 @@
 import { DatabaseDiagnostics } from '../types.js';
+import productConfig from '../../../product-config.json';
 
 export type DbHealthStatus = 'healthy' | 'warning' | 'error' | 'checking';
 
@@ -45,18 +46,18 @@ export function getDbConnectionHealth(
       dotColor: 'bg-sky-500',
       pingColor: 'bg-sky-400',
       iconType: 'loading',
-      host: 'localhost',
-      port: 5432,
-      database: 'sale_alds',
-      user: 'bot_reader',
+      host: productConfig.database.host,
+      port: productConfig.database.port,
+      database: productConfig.database.name,
+      user: productConfig.database.readerUser,
       hasDiscrepancy: false,
     };
   }
 
-  const host = diagnostics?.host || 'localhost';
-  const port = diagnostics?.port || 5432;
-  const database = diagnostics?.database || 'sale_alds';
-  const user = diagnostics?.user || 'bot_reader';
+  const host = diagnostics?.host || productConfig.database.host;
+  const port = diagnostics?.port || productConfig.database.port;
+  const database = diagnostics?.database || productConfig.database.name;
+  const user = diagnostics?.user || productConfig.database.readerUser;
   const isConnected = Boolean(diagnostics?.connected);
   const hasDiscrepancy = Boolean(diagnostics?.discrepancy_analysis?.has_discrepancy);
   const discrepancyReason = diagnostics?.discrepancy_analysis?.reason;

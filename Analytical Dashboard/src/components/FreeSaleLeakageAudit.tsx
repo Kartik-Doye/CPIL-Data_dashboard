@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Fuel, AlertTriangle, CheckCircle2, ShieldAlert, Download, Filter } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
 import { fmtQty, fmtCurrency, fmtLakhs } from '../engine/formatting';
+import productConfig from '../../../product-config.json';
 
 interface FreeSaleLeakageAuditProps {
   stations: StationRecord[];
@@ -14,12 +15,13 @@ export const FreeSaleLeakageAudit: React.FC<FreeSaleLeakageAuditProps> = ({
   telemetry,
   isCompact = false,
 }) => {
-  const [filterThresholdPct, setFilterThresholdPct] = useState<number>(0.5); // 0.5% standard threshold
+  const [filterThresholdPct, setFilterThresholdPct] = useState<number>(productConfig.ui.freeSaleThresholdPct);
 
   const auditRows = stations
     .map((s) => {
       const freeLtrs = s.free_sale_litres || s.free_sale || 0;
-      const freeRs = s.free_sale_rupees || freeLtrs * (s.new_rate || 77.2);
+      const freeRs = s.free_sale_rupees ||
+        freeLtrs * (s.new_rate || productConfig.analytics.fallbackRetailPricePerLitre);
       const freePct = s.sale_qty > 0 ? (freeLtrs / s.sale_qty) * 100 : 0;
       const isExcessive = freePct >= filterThresholdPct && freeLtrs > 0;
 

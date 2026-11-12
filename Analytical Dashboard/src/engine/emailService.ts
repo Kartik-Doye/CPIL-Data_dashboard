@@ -19,6 +19,9 @@ import {
   SMTP_PASS,
   SMTP_TO,
   SMTP_FROM_NAME,
+  APP_BASE_URL,
+  APP_NAME,
+  EMAIL_SCHEDULE_LABEL,
 } from './config.js';
 
 export interface EmailBriefingContent {
@@ -112,8 +115,8 @@ ${
 }
 ${zeroCount > 8 ? `...and ${zeroCount - 8} additional zero-sale stations listed on dashboard.\n` : ''}
 ───────────────────────────────────────────────────────────────────
-Dashboard Access: http://localhost:3000
-GO Gas Executive Suite · Automated Daily Morning Dispatch
+Dashboard Access: ${APP_BASE_URL}
+${APP_NAME} · ${EMAIL_SCHEDULE_LABEL}
 `;
 
   // 2. High-Readability Corporate HTML Version
@@ -146,7 +149,7 @@ GO Gas Executive Suite · Automated Daily Morning Dispatch
   <div class="container">
     <div class="header">
       <h1>GO Gas Executive Daily Briefing</h1>
-      <p>Operational Date: <strong>${dateStr}</strong> · Automated 11:00 AM &amp; 7:00 PM Dispatch</p>
+      <p>Operational Date: <strong>${dateStr}</strong> · ${EMAIL_SCHEDULE_LABEL}</p>
     </div>
 
     <!-- Section 1: KPI Matrix -->
@@ -251,8 +254,8 @@ GO Gas Executive Suite · Automated Daily Morning Dispatch
     </div>
 
     <div class="footer">
-      Generated automatically by <strong>GO Gas Executive Suite Intelligence Engine</strong>.<br>
-      To view real-time charts or inspect station-level details, visit your dashboard at <a href="http://localhost:3000" style="color: #ea580c; text-decoration: none;">http://localhost:3000</a>.
+      Generated automatically by <strong>${APP_NAME} Intelligence Engine</strong>.<br>
+      Dashboard: <a href="${APP_BASE_URL}" style="color: #ea580c; text-decoration: none;">${APP_BASE_URL}</a>.
     </div>
   </div>
 </body>

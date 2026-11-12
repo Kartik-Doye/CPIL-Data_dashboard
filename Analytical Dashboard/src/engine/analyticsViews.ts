@@ -20,6 +20,7 @@ import {
   TMSummary,
   TypeSummary,
 } from '../types.js';
+import productConfig from '../../../product-config.json';
 
 export const STATE_MAP: Record<string, string> = {
   MS: 'MH',
@@ -340,7 +341,7 @@ export function aggregateByState(stations: StationRecord[]): StateAggregate[] {
     }
     map[st].count++;
     map[st].qty += s.sale_qty;
-    map[st].amount += s.sale_amount || s.sale_qty * (s.new_rate || 77.2);
+    map[st].amount += s.sale_amount || s.sale_qty * (s.new_rate || productConfig.analytics.fallbackRetailPricePerLitre);
     map[st].collection += s.collection;
     if (s.sale_qty > 0) map[st].active++;
   }
@@ -416,7 +417,7 @@ export function aggregateByCoordinator(stations: StationRecord[]): CoordinatorAg
   const result: CoordinatorAggregate[] = [];
   for (const c in map) {
     const data = map[c];
-    const totalAmount = data.qty * 77.2;
+    const totalAmount = data.qty * productConfig.analytics.fallbackRetailPricePerLitre;
     const collPct = totalAmount > 0 ? Math.round((data.collection / totalAmount) * 100) : 100;
     result.push({
       coordinator: c,
@@ -440,16 +441,17 @@ export function aggregateByOperatingModel(stations: StationRecord[]): OperatingM
     }
     map[t].count++;
     map[t].qty += s.sale_qty;
-    map[t].amount += s.sale_amount || s.sale_qty * (s.new_rate || 77.2);
+    map[t].amount += s.sale_amount || s.sale_qty * (s.new_rate || productConfig.analytics.fallbackRetailPricePerLitre);
     map[t].freeSale += s.free_sale || s.free_sale_litres || 0;
   }
 
   const result: OperatingModelAggregate[] = [];
   for (const t in map) {
     const data = map[t];
-    const avgRsp = data.qty > 0 ? data.amount / data.qty : 77.2;
+    const avgRsp = data.qty > 0 ? data.amount / data.qty : productConfig.analytics.fallbackRetailPricePerLitre;
     const freePct = data.qty > 0 ? (data.freeSale / data.qty) * 100 : 0;
-    const margin = t === 'COCO' ? 4.8 : t === 'LOCO' ? 3.5 : t === 'DODO' ? 2.2 : 2.8;
+    const margins = productConfig.analytics.operatingModelMarginsPerLitre;
+    const margin = t === 'COCO' ? margins.COCO : t === 'LOCO' ? margins.LOCO : t === 'DODO' ? margins.DODO : margins.default;
 
     result.push({
       type: t,
@@ -469,17 +471,21 @@ export function aggregateDailyTrend(stations: StationRecord[]): DayAggregate[] {
   const map: Record<string, { qty: number; amount: number; collection: number; active: number; free: number; stockouts: number; count: number }> = {};
 
   for (const s of stations) {
-    const d = s.sale_date || '2026-10-30';
+    if (!s.sale_date) continue;
+    const d = s.sale_date;
     if (!map[d]) {
       map[d] = { qty: 0, amount: 0, collection: 0, active: 0, free: 0, stockouts: 0, count: 0 };
     }
     map[d].count++;
     map[d].qty += s.sale_qty;
-    map[d].amount += s.sale_amount || s.sale_qty * (s.new_rate || 77.2);
+    map[d].amount += s.sale_amount || s.sale_qty * (s.new_rate || productConfig.analytics.fallbackRetailPricePerLitre);
     map[d].collection += s.collection;
     map[d].free += s.free_sale || s.free_sale_litres || 0;
     if (s.sale_qty > 0) map[d].active++;
-    if ((s.closing_dip_in_ltr ?? s.closing_dip ?? 0) < 2000 || (s.remark && /stock/i.test(s.remark))) map[d].stockouts++;
+    if (
+      (s.closing_dip_in_ltr ?? s.closing_dip ?? 0) < productConfig.analytics.stockoutDipThresholdLitres ||
+      (s.remark && /stock/i.test(s.remark))
+    ) map[d].stockouts++;
   }
 
   const result: DayAggregate[] = [];
@@ -491,7 +497,9 @@ export function aggregateDailyTrend(stations: StationRecord[]): DayAggregate[] {
       total_amount: Math.round(data.amount),
       total_collection: Math.round(data.collection),
       active_stations: data.active,
-      avg_rsp: data.qty > 0 ? Math.round((data.amount / data.qty) * 100) / 100 : 77.2,
+      avg_rsp: data.qty > 0
+        ? Math.round((data.amount / data.qty) * 100) / 100
+        : productConfig.analytics.fallbackRetailPricePerLitre,
       free_sale_total: Math.round(data.free),
       stockout_stations: data.stockouts,
     });

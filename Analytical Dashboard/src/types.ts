@@ -111,6 +111,7 @@ export interface ForecastPoint {
   is_today: boolean;
   days_from_now: number;
   festival_name?: string;
+  festival_note?: string;
 }
 
 export interface ForecastResult {
@@ -121,6 +122,15 @@ export interface ForecastResult {
   mape_holt_winters: number | null;
   mape_naive: number | null;
   backtest_days?: number;
+  backtest_diagnostics?: {
+    first_scored_date: string | null;
+    last_scored_date: string | null;
+    ensemble_wape: number | null;
+    ensemble_bias: number | null;
+    naive_last_week_wape: number | null;
+    same_weekday_3wk_wape: number | null;
+    model_wape: Record<string, number | null>;
+  };
   gradient_boosting_active?: boolean;
   learning_status?: string;
   forecast: ForecastPoint[];

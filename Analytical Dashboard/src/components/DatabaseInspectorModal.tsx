@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Database, CheckCircle2, AlertCircle, Copy, Check, RefreshCw, X, Server, Layers, HelpCircle, ArrowRight } from 'lucide-react';
 import { DatabaseDiagnostics, ExecutiveTelemetry } from '../types';
 import { fmtQty, fmtCurrency } from '../engine/formatting';
+import productConfig from '../../../product-config.json';
 
 interface DatabaseInspectorModalProps {
   isOpen: boolean;
@@ -24,7 +25,8 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
 
   if (!isOpen) return null;
 
-  const connString = diagnostics?.connection_string || 'postgresql://bot_reader:****@localhost:5432/sale_alds';
+  const connString = diagnostics?.connection_string ||
+    `postgresql://${productConfig.database.readerUser}:****@${productConfig.database.host}:${productConfig.database.port}/${productConfig.database.name}`;
   const isConnected = diagnostics?.connected === true && diagnostics.engine === 'external';
   const isExternalConnected = isConnected;
   const discrepancy = diagnostics?.discrepancy_analysis;
@@ -32,7 +34,7 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
   const copyConnectionString = () => {
     navigator.clipboard.writeText(connString);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), productConfig.ui.connectionCopyNoticeDurationMs);
   };
 
   return (
@@ -95,10 +97,10 @@ export const DatabaseInspectorModal: React.FC<DatabaseInspectorModalProps> = ({
               {connString}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              <div>Host: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.host || 'localhost'}</span></div>
-              <div>Port: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.port || 5432}</span></div>
-              <div>Database: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.database || 'sale_alds'}</span></div>
-              <div>User: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.user || 'bot_reader'}</span></div>
+              <div>Host: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.host || productConfig.database.host}</span></div>
+              <div>Port: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.port || productConfig.database.port}</span></div>
+              <div>Database: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.database || productConfig.database.name}</span></div>
+              <div>User: <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{diagnostics?.user || productConfig.database.readerUser}</span></div>
             </div>
           </div>
 

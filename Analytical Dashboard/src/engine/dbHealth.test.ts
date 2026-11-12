@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getDbConnectionHealth } from './dbHealth.js';
 import { DatabaseDiagnostics } from '../types.js';
+import productConfig from '../../../product-config.json';
+
+const connectionString =
+  `postgresql://${productConfig.database.readerUser}:****@${productConfig.database.host}:` +
+  `${productConfig.database.port}/${productConfig.database.name}`;
 
 test('returns checking state when loading with no diagnostics', () => {
   const health = getDbConnectionHealth(null, true);
@@ -15,13 +20,13 @@ test('returns checking state when loading with no diagnostics', () => {
 test('returns error/offline state when disconnected or connection refused', () => {
   const offlineDiagnostics: DatabaseDiagnostics = {
     connected: false,
-    connection_string: 'postgresql://bot_reader:****@localhost:5432/sale_alds',
-    host: 'localhost',
-    port: 5432,
-    database: 'sale_alds',
-    user: 'bot_reader',
+    connection_string: connectionString,
+    host: productConfig.database.host,
+    port: productConfig.database.port,
+    database: productConfig.database.name,
+    user: productConfig.database.readerUser,
     active_source: 'PostgreSQL',
-    error: 'connect ECONNREFUSED 127.0.0.1:5432',
+    error: `connect ECONNREFUSED ${productConfig.database.host}:${productConfig.database.port}`,
     server_timestamp: '2026-11-09T11:43:01.528Z',
   };
 
@@ -31,19 +36,19 @@ test('returns error/offline state when disconnected or connection refused', () =
   assert.equal(health.shortLabel, 'DB Offline');
   assert.match(health.label, /Offline/);
   assert.match(health.barGradient, /from-rose-500/);
-  assert.equal(health.host, 'localhost');
-  assert.equal(health.port, 5432);
+  assert.equal(health.host, productConfig.database.host);
+  assert.equal(health.port, productConfig.database.port);
 });
 
 test('returns warning state when connected with discrepancy in data', () => {
   const warningDiagnostics: DatabaseDiagnostics = {
     connected: true,
     engine: 'external',
-    connection_string: 'postgresql://bot_reader:****@localhost:5432/sale_alds',
-    host: 'localhost',
-    port: 5432,
-    database: 'sale_alds',
-    user: 'bot_reader',
+    connection_string: connectionString,
+    host: productConfig.database.host,
+    port: productConfig.database.port,
+    database: productConfig.database.name,
+    user: productConfig.database.readerUser,
     active_source: 'PostgreSQL',
     total_rows: 5000,
     server_timestamp: '2026-11-09T11:43:01.528Z',
@@ -72,11 +77,11 @@ test('returns healthy/online state when connected with no discrepancies', () => 
   const healthyDiagnostics: DatabaseDiagnostics = {
     connected: true,
     engine: 'external',
-    connection_string: 'postgresql://bot_reader:****@localhost:5432/sale_alds',
-    host: 'localhost',
-    port: 5432,
-    database: 'sale_alds',
-    user: 'bot_reader',
+    connection_string: connectionString,
+    host: productConfig.database.host,
+    port: productConfig.database.port,
+    database: productConfig.database.name,
+    user: productConfig.database.readerUser,
     active_source: 'PostgreSQL',
     total_rows: 9540,
     latest_date: '2026-11-07',

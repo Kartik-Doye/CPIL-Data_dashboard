@@ -1,15 +1,16 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const productConfig = require('./product-config.json');
 
 // 1. Parse .env manually (no dependencies required)
 function loadEnv() {
   const envPath = path.resolve(process.cwd(), 'Analytical Dashboard/.env');
   const env = {
-    DB_HOST: 'localhost',
-    DB_PORT: 5432,
-    DB_NAME: 'sale_alds',
-    DB_USER: 'bot_reader',
+    DB_HOST: productConfig.database.host,
+    DB_PORT: productConfig.database.port,
+    DB_NAME: productConfig.database.name,
+    DB_USER: productConfig.database.readerUser,
     DB_PASSWORD: '',
   };
 
@@ -23,7 +24,7 @@ function loadEnv() {
         const key = trimmed.slice(0, idx).trim();
         const val = trimmed.slice(idx + 1).trim();
         if (key === 'DB_HOST') env.DB_HOST = val;
-        if (key === 'DB_PORT') env.DB_PORT = parseInt(val, 10) || 5432;
+        if (key === 'DB_PORT') env.DB_PORT = parseInt(val, 10) || productConfig.database.port;
         if (key === 'DB_NAME') env.DB_NAME = val;
         if (key === 'DB_USER') env.DB_USER = val;
         if (key === 'BOT_READER_PASSWORD' || key === 'DB_PASSWORD') env.DB_PASSWORD = val;
@@ -47,7 +48,7 @@ console.log(` - Password : ${config.DB_PASSWORD ? (config.DB_PASSWORD === 'CHANG
 console.log('--------------------------------------------------------');
 
 // Step 1: Raw TCP Socket Check (detects if PostgreSQL is even running)
-function probePort(host, port, timeout = 2500) {
+function probePort(host, port, timeout = productConfig.database.connectTimeoutCeilingMs) {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     let isConnected = false;

@@ -12,6 +12,11 @@ unavailable.
 
 ## Run locally
 
+Operational defaults, schedules, and product copy are stored in
+`product-config.json`. Environment variables in `.env` override those defaults;
+use `.env.example` as the list of supported overrides. Keep credentials and
+other secrets in `.env`, not in the JSON file.
+
 From the project root:
 
 ```powershell
@@ -20,9 +25,10 @@ npm run test-db
 npm run dev
 ```
 
-Open `http://localhost:5000`. The DB test verifies the PostgreSQL connection
-and the required `sale_tracker` and `state_map` tables. Configure connection
-settings in `Analytical Dashboard/.env`; never commit environment files.
+Open the URL from `APP_BASE_URL` (default: `http://localhost:3000`). The DB
+test verifies the PostgreSQL connection and the required `sale_tracker` and
+`state_map` tables. Configure connection settings in
+`Analytical Dashboard/.env`; never commit environment files.
 
 PostgreSQL must be available and `sale_tracker` must contain data for the
 dashboard to load. If the connection or data is unavailable, the UI reports an
@@ -55,6 +61,23 @@ configure `BOT_LOADER_PASSWORD` (and optionally `BOT_LOADER_USER`) in
 read-only. Until the migration and loader credentials are available, forecast
 feedback storage is reported as unavailable and no saved-history learning is
 applied.
+
+### Editable festival calendar
+
+Forecast festival dates and names are maintained in the project-root
+`festival-calendar.json`. The forecast feature builder uses these exact dates
+as a calendar input; festival dates are shown in the forecast and their
+estimated ranges are widened by 50% as a planning buffer. This buffer is a
+caution, not a historically calibrated festival effect, and the forecast does
+not automatically raise or lower the point prediction for a festival.
+
+Update the date and name entries in this JSON file each January 1 using the
+dates applicable to the new year, then restart the dashboard server to load
+the updated calendar. Dates must use `YYYY-MM-DD`; do not use recurring
+month/day dates, because many festival dates move each year. Confirm regional
+dates before relying on them for operational decisions. The included 2026
+calendar is based on the dates supplied for this project; Dhanteras is marked
+as approximate / regional.
 
 ### Daily executive email
 
@@ -123,6 +146,10 @@ workbook or dashboard for full station-level follow-up.
 
 Puppeteer needs Chrome or Chromium installed. If it is not found automatically,
 set `WHATSAPP_CHROME_EXECUTABLE_PATH` in `.env` to the browser executable.
+The app pins a locally cached WhatsApp Web version because the live page can
+change its internal modules without notice. Keep `.wwebjs_cache/` on this
+computer; `WHATSAPP_WEB_VERSION` can override the pinned version only when a
+matching `<version>.html` file is present in that cache.
 Keep the computer and dashboard server running for the 11:00 a.m. and 7:00 p.m.
 scheduled sends. This uses unofficial WhatsApp Web automation, not the
 WhatsApp Business Platform; it may break when WhatsApp changes and may be

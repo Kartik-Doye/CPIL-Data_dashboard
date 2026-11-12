@@ -6,15 +6,61 @@ import {
   maskPhoneNumber,
   buildExecutiveWhatsAppMessage,
   buildTankerDispatchWhatsAppMessage,
+  setWhatsAppRecipients,
   sendWhatsAppMessage,
 } from './whatsappService.js';
 import { classifyZeroSaleReason } from './formatting.js';
+import type { StationRecord } from '../types.js';
+
+function makeStation(overrides: Partial<StationRecord>): StationRecord {
+  return {
+    id: 'station',
+    erp_code: 'ST001',
+    alds_name: 'Station',
+    type: 'COCO',
+    coordinator: 'Maya',
+    state: 'TG',
+    tm: 'Suresh',
+    tank_cap: '10KL',
+    sale_qty: 0,
+    collection: 0,
+    new_rate: 0,
+    other: 0,
+    diff: 0,
+    erp_rate: 0,
+    ret_test_cal: 0,
+    free_sale_litres: 0,
+    free_sale_rupees: 0,
+    scheme: 0,
+    paytm: 0,
+    net_cash_collection: 0,
+    closing_dip_in_ltr: 0,
+    remark: '',
+    net_total_collection: 0,
+    effective_rsp: 0,
+    collection_check: 0,
+    scheme_as_per_ho: 0,
+    free_sale_pct: 0,
+    sale_date: '2026-11-06',
+    days_left: 0,
+    trend_slope: 0,
+    status_band: 'On track',
+    ...overrides,
+  };
+}
 
 test('parses and cleans valid recipient phone numbers', () => {
   const result = parseRecipientNumbers('+91 98765 43210, 918087018975, invalid, 123');
   assert.equal(result.length, 2);
   assert.equal(result[0], '+919876543210');
   assert.equal(result[1], '918087018975');
+});
+
+test('uses the saved recipient list for later WhatsApp sends', () => {
+  const previousRecipients = parseRecipientNumbers();
+  setWhatsAppRecipients(['+919876543210', '447700900123']);
+  assert.deepEqual(parseRecipientNumbers(), ['+919876543210', '447700900123']);
+  setWhatsAppRecipients(previousRecipients);
 });
 
 test('masks phone numbers for privacy display in UI', () => {
@@ -31,7 +77,7 @@ test('formats a concise executive WhatsApp brief with risk bands and forecast co
     average_rsp: 78.50,
     stations_with_sale: 312,
     stations_total: 316,
-    zero_sale_count: 4,
+    zero_sale_count: 5,
     stockout_risk_stations: [
       { code: 'JODO9', name: 'YUSUFGUDA', days_left: 0.9, stock_ltr: 1200, daily_burn_ltr: 1333, state: 'TG', remark: '' },
       { code: 'KA04', name: 'KAYRAMBEDU', days_left: 1.2, stock_ltr: 1660, daily_burn_ltr: 1383, state: 'KA', remark: '' },
@@ -45,6 +91,15 @@ test('formats a concise executive WhatsApp brief with risk bands and forecast co
       active_stations: 300,
       zero_sale_count: 0,
     })),
+    all_stations: [makeStation({ erp_code: 'JODO9', alds_name: 'YUSUFGUDA', tm: 'Suresh' })],
+    zero_sale_stations: [
+      makeStation({ erp_code: 'ZERO1', tm: 'No TM' }),
+      makeStation({ erp_code: 'ZERO2', remark: 'No Stock' }),
+      makeStation({ erp_code: 'ZERO3', remark: 'Sale Stop' }),
+      makeStation({ erp_code: 'ZERO4', remark: 'License issue' }),
+      makeStation({ erp_code: 'ZERO5', remark: 'Sale not received' }),
+    ],
+    top_performing_stations: [],
     forecast: {
       horizon_days: 7,
       predicted_total_7d: 2415400,
@@ -83,14 +138,18 @@ test('formats a concise executive WhatsApp brief with risk bands and forecast co
   });
 
   assert.match(msg, /GO GAS EXECUTIVE DAILY BRIEF/);
-  assert.match(msg, /3,42,850\.00 L/);
-  assert.match(msg, /₹2,64,33,735\.00/);
+  assert.match(msg, /Sales 3\.43 L \| Collections ₹2\.64 Cr/);
   assert.match(msg, /₹77\.10\/L/);
-  assert.match(msg, /vs prior 7-day avg \+7\.1%/);
+  assert.match(msg, /Sales vs prior 7-day average: \+7\.1%/);
   assert.match(msg, /1 critical \(<1d\), 1 high \(1–2d\), 0 monitor/);
+  assert.match(msg, /No salesperson: 1; Stock unavailable: 1; Data\/reporting gap: 1; License\/compliance stop: 1; Commercial stop: 1/);
+  assert.match(msg, /YUSUFGUDA \(TM Suresh\): replenish by EOD/);
+  assert.match(msg, /Station \(Coordinator Maya\): assign coverage by EOD/);
   assert.match(msg, /YUSUFGUDA/);
-  assert.match(msg, /3,48,200\.00 L \(P10–P90 3,20,000\.00–3,75,000\.00 L\)/);
+  assert.match(msg, /3\.48 L \(P10–P90 3\.20 L–3\.75 L\)/);
   assert.match(msg, /Historical MAPE 6\.8% across 14 scored days; planning input only/);
+  assert.match(msg, /Plan\/variance, margin, credit, receivables and cash banked: unavailable/);
+  assert.match(msg, /Festival dates widen the range only/);
   assert.ok(msg.split('\n').length <= 15);
 });
 

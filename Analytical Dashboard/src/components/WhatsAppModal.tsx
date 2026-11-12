@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { QRCodeSVG } from 'qrcode.react';
+import productConfig from '../../../product-config.json';
 import {
   X,
   CheckCircle,
@@ -13,7 +14,6 @@ import {
   Clock,
   Sparkles,
   Smartphone,
-  Check,
 } from 'lucide-react';
 
 interface WhatsAppLog {
@@ -33,13 +33,15 @@ interface WhatsAppModalProps {
 }
 
 export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose }) => {
-  const [status, setStatus] = useState<string>('Connecting (Scan QR)');
+  const [status, setStatus] = useState<string>('');
   const [qrCodeData, setQrCodeData] = useState<string>('');
+  const [showQr, setShowQr] = useState<boolean>(false);
+  const [pairingLoading, setPairingLoading] = useState<boolean>(false);
   const [connectionError, setConnectionError] = useState<string>('');
-  const [phone, setPhone] = useState<string>('918087018975');
-  const [message, setMessage] = useState<string>(
-    '*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_'
-  );
+  const [recipientNumbers, setRecipientNumbers] = useState<string[]>([]);
+  const [recipientDraft, setRecipientDraft] = useState('');
+  const [message, setMessage] = useState<string>('');
+  const [scheduledTime, setScheduledTime] = useState<string>('');
   const [saveStatus, setSaveStatus] = useState<string>('');
   const [saveStatusIsError, setSaveStatusIsError] = useState<boolean>(false);
   const [broadcastLoading, setBroadcastLoading] = useState<boolean>(false);
@@ -54,12 +56,18 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
     fetch('/api/whatsapp/config')
       .then((res) => res.json())
       .then((data) => {
-        if (data.targetPhoneNumber) setPhone(data.targetPhoneNumber);
+        setRecipientNumbers(
+          typeof data.targetPhoneNumber === 'string'
+            ? data.targetPhoneNumber.split(',').map((number: string) => number.trim()).filter(Boolean)
+            : []
+        );
         if (data.dailyMessageText) setMessage(data.dailyMessageText);
         if (data.connectionStatus) setStatus(data.connectionStatus);
+        if (data.scheduledTime) setScheduledTime(data.scheduledTime);
         setConnectionError(data.connectionError || '');
         if (data.qrCodeData && data.connectionStatus !== 'Ready') {
           setQrCodeData(data.qrCodeData);
+          setShowQr(true);
         }
       })
       .catch((err) => console.warn('[WhatsApp] Config load warning:', err));
@@ -77,11 +85,13 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       setStatus(latestStatus);
       if (latestStatus === 'Ready') {
         setQrCodeData(''); // Wipe QR code once authenticated
+        setShowQr(false);
       }
     });
 
     socket.on('qr-code', (qrCodeString: string) => {
       setQrCodeData(qrCodeString);
+      if (qrCodeString) setShowQr(true);
     });
 
     socket.on('connection-error', (error: string) => {
@@ -107,17 +117,27 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (recipientNumbers.length === 0) {
+      setSaveStatusIsError(true);
+      setSaveStatus('Add at least one recipient number before saving.');
+      return;
+    }
     try {
       const response = await fetch('/api/whatsapp/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: phone, message }),
+        body: JSON.stringify({ number: recipientNumbers.join(','), message }),
       });
       const data = await response.json();
-      if (data.success) {
+      if (response.ok && data.success) {
+        setRecipientNumbers(
+          typeof data.config?.targetPhoneNumber === 'string'
+            ? data.config.targetPhoneNumber.split(',').map((number: string) => number.trim()).filter(Boolean)
+            : recipientNumbers
+        );
         setSaveStatusIsError(false);
-        setSaveStatus('Configuration updated and saved!');
-        setTimeout(() => setSaveStatus(''), 3500);
+        setSaveStatus('Configuration saved for this server session.');
+        setTimeout(() => setSaveStatus(''), productConfig.ui.saveStatusDurationMs);
       } else {
         setSaveStatusIsError(true);
         setSaveStatus(data.error || 'Error saving configurations.');
@@ -126,6 +146,28 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       setSaveStatusIsError(true);
       setSaveStatus('Error saving configurations.');
     }
+  };
+
+  const handleAddRecipient = () => {
+    const normalized = recipientDraft.trim().replace(/[\s()-]/g, '');
+    const valid = normalized.startsWith('+')
+      ? /^\+[1-9]\d{9,14}$/.test(normalized)
+      : /^[1-9]\d{10,14}$/.test(normalized);
+
+    if (!valid) {
+      setSaveStatusIsError(true);
+      setSaveStatus('Enter a valid phone number with its country code.');
+      return;
+    }
+    if (recipientNumbers.includes(normalized)) {
+      setSaveStatusIsError(true);
+      setSaveStatus('That recipient is already in the list.');
+      return;
+    }
+
+    setRecipientNumbers((current) => [...current, normalized]);
+    setRecipientDraft('');
+    setSaveStatus('');
   };
 
   const handleRunBroadcastNow = async () => {
@@ -144,26 +186,43 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
   };
 
   const handlePairDirectly = async () => {
+    setPairingLoading(true);
+    setShowQr(true);
+    setConnectionError('');
     try {
       const res = await fetch('/api/whatsapp/pair', { method: 'POST' });
       const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.connectionError || data.error || 'Could not start WhatsApp pairing.');
+      }
       setStatus(data.connectionStatus);
       setConnectionError(data.connectionError || '');
       setQrCodeData(data.qrCodeData || '');
     } catch (err) {
       setConnectionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPairingLoading(false);
     }
   };
 
   const handleRefreshQr = async () => {
+    setPairingLoading(true);
+    setShowQr(true);
+    setQrCodeData('');
+    setConnectionError('');
     try {
       const res = await fetch('/api/whatsapp/refresh-qr', { method: 'POST' });
       const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.connectionError || data.error || 'Could not refresh the WhatsApp QR code.');
+      }
       setQrCodeData(data.qrCodeData || data.qr || '');
       setStatus(data.connectionStatus || data.status);
       setConnectionError(data.connectionError || '');
     } catch (err) {
       setConnectionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPairingLoading(false);
     }
   };
 
@@ -173,6 +232,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       const data = await res.json();
       setStatus(data.status);
       setQrCodeData('');
+      setShowQr(false);
       setConnectionError(data.error || '');
     } catch (err) {
       setConnectionError(err instanceof Error ? err.message : String(err));
@@ -277,7 +337,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                   </div>
                   <p className="text-slate-500 dark:text-slate-400 text-[11px] flex items-center gap-1.5">
                     <Clock className="w-3 h-3 text-orange-400" />
-                    <span>Daily Cron Schedule: <strong>11:00 AM & 07:00 PM (Automated)</strong></span>
+                    <span>Daily Schedule: <strong>{scheduledTime}</strong></span>
                   </p>
                 </div>
 
@@ -286,11 +346,12 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                     <button
                       type="button"
                       onClick={handlePairDirectly}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-colors cursor-pointer text-xs flex items-center gap-1 shadow-xs"
+                      disabled={pairingLoading}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold transition-colors cursor-pointer text-xs flex items-center gap-1 shadow-xs"
                       title="Pair session directly to enable automated daily delivery"
                     >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Pair Account</span>
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>{pairingLoading ? 'Connecting…' : 'Show Pairing QR'}</span>
                     </button>
                   ) : (
                     <button
@@ -304,29 +365,52 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                   <button
                     type="button"
                     onClick={handleRefreshQr}
-                    className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    disabled={pairingLoading}
+                    className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
                     title="Refresh QR code"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
+                  {status !== 'Ready' && qrCodeData && (
+                    <button
+                      type="button"
+                      onClick={() => setShowQr((visible) => !visible)}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-xs cursor-pointer"
+                    >
+                      {showQr ? 'Hide QR' : 'Show QR'}
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Dynamic QR Code Box */}
-              {qrCodeData && status !== 'Ready' && (
+              {showQr && status !== 'Ready' && (
                 <div className="text-center p-5 rounded-xl border border-dashed border-emerald-400/60 dark:border-emerald-500/40 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-3">
-                  <div className="flex items-center justify-center gap-2 font-semibold text-slate-900 dark:text-white text-sm">
-                    <QrCode className="w-4 h-4 text-emerald-500" />
-                    <span>Scan QR Code to Link WhatsApp Account</span>
-                  </div>
+                  {qrCodeData ? (
+                    <>
+                      <div className="flex items-center justify-center gap-2 font-semibold text-slate-900 dark:text-white text-sm">
+                        <QrCode className="w-4 h-4 text-emerald-500" />
+                        <span>Scan QR Code to Link WhatsApp Account</span>
+                      </div>
 
-                  <div className="inline-block p-3 bg-white rounded-xl shadow-md border border-slate-200">
-                    <QRCodeSVG value={qrCodeData} size={180} level="M" />
-                  </div>
+                      <div className="inline-block p-3 bg-white rounded-xl shadow-md border border-slate-200">
+                        <QRCodeSVG value={qrCodeData} size={220} level="M" />
+                      </div>
 
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                    Open WhatsApp on your mobile phone &gt; <strong>Linked Devices</strong> &gt; <strong>Link a Device</strong> and point your camera at this code.
-                  </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                        Open WhatsApp on your mobile phone &gt; <strong>Linked Devices</strong> &gt; <strong>Link a Device</strong> and scan this code.
+                      </p>
+                    </>
+                  ) : (
+                    <div className="space-y-2 py-4">
+                      <p className="font-semibold text-slate-900 dark:text-white">
+                        {pairingLoading || status.includes('Scan') ? 'Waiting for WhatsApp QR code…' : 'QR code is not available yet.'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Keep this window open. If the code does not appear, select Refresh QR to try again.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -337,28 +421,66 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                     Daily Broadcast Settings
                   </h4>
                   <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                    Auto-sends at 11:00 AM & 7:00 PM
+                    Auto-sends: {scheduledTime}
                   </span>
                 </div>
 
-                <label className="block space-y-1">
+                <div className="space-y-2">
                   <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
                     <span>Recipient Phone Numbers (include country code):</span>
-                    <span className="text-[10px] text-slate-400 font-normal">comma-separated if multiple</span>
                   </span>
-                  <input
-                    type="text"
-                    placeholder="e.g. 919876543210,918087018975"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-mono focus:border-emerald-500 outline-none"
-                    required
-                  />
-                </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      placeholder="+919876543210"
+                      value={recipientDraft}
+                      onChange={(e) => setRecipientDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddRecipient();
+                        }
+                      }}
+                      className="min-w-0 flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-mono focus:border-emerald-500 outline-none"
+                      aria-label="Phone number with country code"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddRecipient}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {recipientNumbers.length > 0 && (
+                    <ul className="flex flex-wrap gap-2" aria-label="Recipients to receive the broadcast">
+                      {recipientNumbers.map((number) => (
+                        <li
+                          key={number}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1 text-[11px] font-mono text-emerald-800 dark:text-emerald-200"
+                        >
+                          {number}
+                          <button
+                            type="button"
+                            onClick={() => setRecipientNumbers((current) => current.filter((entry) => entry !== number))}
+                            className="rounded-full hover:bg-emerald-200 dark:hover:bg-emerald-800 p-0.5"
+                            aria-label={`Remove ${number}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-[10px] text-slate-500">
+                    Add each recipient separately, then save. Scheduled broadcasts go to every saved number. A server restart reloads the environment-file list.
+                  </p>
+                </div>
 
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">
-                    Daily Message Broadcast Copy:
+                    Manual/Test Broadcast Copy:
                   </span>
                   <textarea
                     rows={4}
@@ -368,6 +490,9 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs focus:border-emerald-500 outline-none resize-y"
                     required
                   />
+                  <p className="text-[10px] text-slate-500">
+                    Scheduled broadcasts use the live executive summary; this text is only used for manual test broadcasts.
+                  </p>
                 </label>
 
                 <div className="flex flex-col sm:flex-row items-center gap-3 pt-1">
@@ -482,7 +607,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
 
         {/* Footer */}
         <div className="px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex items-center justify-between text-[11px] text-slate-400">
-          <span>GO Gas Automated WhatsApp Engine (Port 3000 / Socket.IO)</span>
+          <span>WhatsApp Web Automation</span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-medium transition-colors cursor-pointer"

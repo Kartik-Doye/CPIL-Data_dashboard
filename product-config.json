@@ -1,0 +1,73 @@
+{
+  "application": {
+    "name": "GO Gas Executive Suite",
+    "port": 3000,
+    "flaskPort": 5000,
+    "baseUrl": "http://localhost:3000",
+    "timezone": "Asia/Kolkata",
+    "requestBodyLimit": "50mb",
+    "localHostnames": ["localhost", "127.0.0.1", "::1"],
+    "localAddressPrefixes": ["127.", "::ffff:127."],
+    "trustedHostSuffixes": [".run.app"]
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "sale_alds",
+    "readerUser": "bot_reader",
+    "loaderUser": "bot_loader",
+    "connectTimeoutSeconds": 10,
+    "connectTimeoutCeilingMs": 3000,
+    "statementTimeoutMs": 15000,
+    "maxConnections": 15,
+    "loaderMaxConnections": 3,
+    "idleTimeoutMs": 30000
+  },
+  "email": {
+    "smtpHost": "smtp.gmail.com",
+    "smtpPort": 465,
+    "smtpSecure": true,
+    "fromName": "GO Gas Executive Suite",
+    "cronExpression": "0 11,19 * * *",
+    "scheduleLabel": "11:00 AM & 07:00 PM Daily",
+    "sendCooldownSeconds": 30,
+    "apiTimeoutMs": 30000
+  },
+  "whatsapp": {
+    "enabled": true,
+    "webVersion": "2.3000.1053709401",
+    "chromeExecutablePath": "",
+    "authDirectory": ".wwebjs_auth",
+    "webVersionCacheDirectory": ".wwebjs_cache",
+    "dailyMessage": "*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_",
+    "cronExpression": "0 11,19 * * *",
+    "scheduleLabel": "11:00 AM & 07:00 PM Daily",
+    "sendCooldownSeconds": 15
+  },
+  "telemetry": {
+    "cacheDurationMs": 30000,
+    "historyWindowDays": 90,
+    "learningRefreshIntervalMs": 86400000
+  },
+  "analytics": {
+    "fallbackRetailPricePerLitre": 77.2,
+    "operatingModelMarginsPerLitre": {
+      "COCO": 4.8,
+      "LOCO": 3.5,
+      "DODO": 2.2,
+      "default": 2.8
+    },
+    "stockoutDipThresholdLitres": 2000
+  },
+  "ui": {
+    "copyNoticeDurationMs": 3000,
+    "connectionCopyNoticeDurationMs": 2000,
+    "saveStatusDurationMs": 3500,
+    "toastDurationMs": 4000,
+    "retryDelayMs": 2000,
+    "startupMaxRetries": 6,
+    "networkMaxRetries": 4,
+    "freeSaleThresholdPct": 0.5,
+    "databaseServiceStartHelp": "Start the PostgreSQL Windows service configured for your installation. The service name and version vary by setup."
+  }
+}

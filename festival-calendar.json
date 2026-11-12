@@ -1,0 +1,26 @@
+{
+  "festivals": [
+    { "date": "2026-01-14", "name": "Makar Sankranti / Pongal" },
+    { "date": "2026-01-23", "name": "Vasant Panchami" },
+    { "date": "2026-02-15", "name": "Maha Shivaratri" },
+    { "date": "2026-03-04", "name": "Holi" },
+    { "date": "2026-03-19", "name": "Ugadi / Gudi Padwa" },
+    { "date": "2026-03-26", "name": "Rama Navami" },
+    { "date": "2026-04-14", "name": "Vaisakhi / Tamil New Year / Vishu" },
+    { "date": "2026-05-01", "name": "Buddha Purnima" },
+    { "date": "2026-07-16", "name": "Jagannath Rath Yatra" },
+    { "date": "2026-08-28", "name": "Raksha Bandhan" },
+    { "date": "2026-09-04", "name": "Krishna Janmashtami" },
+    { "date": "2026-09-14", "name": "Ganesh Chaturthi" },
+    { "date": "2026-10-11", "name": "Sharad Navratri Start" },
+    { "date": "2026-10-20", "name": "Dussehra (Vijayadashami)" },
+    { "date": "2026-11-06", "name": "Dhanteras", "note": "Approximate / regional variant" },
+    { "date": "2026-11-08", "name": "Diwali & Lakshmi Puja" },
+    { "date": "2026-11-10", "name": "Govardhan Puja" },
+    { "date": "2026-11-11", "name": "Bhai Dooj" },
+    { "date": "2026-11-15", "name": "Chhath Puja" },
+    { "date": "2026-11-24", "name": "Guru Nanak Jayanti" },
+    { "date": "2026-12-20", "name": "Gita Jayanti / Mokada Ekadashi" },
+    { "date": "2026-12-25", "name": "Christmas" }
+  ]
+}

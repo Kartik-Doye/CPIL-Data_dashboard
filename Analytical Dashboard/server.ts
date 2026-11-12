@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -32,19 +31,36 @@ import {
 } from './src/engine/whatsappService.js';
 import { recommendTanker } from './src/engine/tanker.js';
 import { initWhatsAppAutomation } from './src/engine/whatsappAutomation.js';
-
-dotenv.config();
+import {
+  APP_BASE_URL,
+  APP_LOCAL_HOSTNAMES,
+  APP_NAME,
+  APP_REQUEST_BODY_LIMIT,
+  APP_TIMEZONE,
+  APP_TRUSTED_HOST_SUFFIXES,
+  EMAIL_CRON_EXPRESSION,
+  EMAIL_SCHEDULE_LABEL,
+  EMAIL_SEND_COOLDOWN_SECONDS,
+  LEARNING_REFRESH_INTERVAL_MS,
+  PORT,
+  TELEMETRY_CACHE_DURATION_MS,
+  TELEMETRY_HISTORY_WINDOW_DAYS,
+  WHATSAPP_SEND_COOLDOWN_SECONDS,
+} from './src/engine/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT && process.env.PORT !== '8080' ? Number(process.env.PORT) : 3000;
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-initWhatsAppAutomation(app, server);
+app.use(express.json({ limit: APP_REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: APP_REQUEST_BODY_LIMIT }));
+initWhatsAppAutomation(app, server, async () => {
+  const telemetry = await getTelemetryData(true);
+  if (!telemetry) throw new Error('PostgreSQL telemetry is unavailable; the scheduled briefing was not sent.');
+  return buildExecutiveWhatsAppMessage(telemetry);
+});
 
 let cachedTelemetry: any = null;
 let lastLoadedTime = 0;
@@ -266,9 +282,9 @@ async function processDataset(
       FROM forecast_feedback
       WHERE actual_sale_qty IS NOT NULL
         AND actual_sale_qty > 0
-        AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+        AND forecast_origin_date >= $1::date - ($2 * INTERVAL '1 day')
       GROUP BY horizon_day
-    `, [stations[0]?.sale_date]);
+    `, [stations[0]?.sale_date, TELEMETRY_HISTORY_WINDOW_DAYS]);
     const recentOutcomeRows = await queryLoader<{
       target_date: string;
       predicted_ensemble: number;
@@ -307,12 +323,12 @@ async function processDataset(
         FROM forecast_feedback
         WHERE actual_sale_qty IS NOT NULL
           AND actual_sale_qty > 0
-          AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+          AND forecast_origin_date >= $1::date - ($2 * INTERVAL '1 day')
         ORDER BY target_date, forecast_origin_date DESC
       ) AS latest_outcome_per_day
       ORDER BY target_date DESC
       LIMIT 7
-    `, [stations[0]?.sale_date]);
+    `, [stations[0]?.sale_date, TELEMETRY_HISTORY_WINDOW_DAYS]);
     const stationRemarkRows = await queryLoader<{
       target_date: string;
       station_name: string;
@@ -331,7 +347,7 @@ async function processDataset(
           FROM forecast_feedback
           WHERE actual_sale_qty IS NOT NULL
             AND actual_sale_qty > 0
-            AND forecast_origin_date >= $1::date - INTERVAL '90 days'
+            AND forecast_origin_date >= $1::date - ($2 * INTERVAL '1 day')
           ORDER BY target_date, forecast_origin_date DESC
         ) AS latest_outcome_per_day
         ORDER BY target_date DESC
@@ -367,7 +383,7 @@ async function processDataset(
       FROM station_context
       WHERE remark_rank <= 3
       ORDER BY target_date DESC, remark_rank
-    `, [stations[0]?.sale_date]);
+    `, [stations[0]?.sale_date, TELEMETRY_HISTORY_WINDOW_DAYS]);
     const remarkSignalsByDate = new Map<string, NonNullable<typeof recentOutcomeRows[number]['station_remark_signals']>>();
     for (const row of stationRemarkRows) {
       const signals = remarkSignalsByDate.get(row.target_date) ?? [];
@@ -547,7 +563,7 @@ async function getTelemetryData(forceRefresh = false) {
   }
 
   const now = Date.now();
-  if (cachedTelemetry && !forceRefresh && now - lastLoadedTime < 30000) {
+  if (cachedTelemetry && !forceRefresh && now - lastLoadedTime < TELEMETRY_CACHE_DURATION_MS) {
     return cachedTelemetry;
   }
 
@@ -666,7 +682,12 @@ function isDispatchAuthorized(req: Request, requiredHeader: string): boolean {
   try {
     const parsedOrigin = new URL(origin);
     const host = req.get('host') || '';
-    if (parsedOrigin.host === host || parsedOrigin.hostname === 'localhost' || parsedOrigin.hostname === '127.0.0.1' || parsedOrigin.hostname.endsWith('.run.app')) {
+    const hostname = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
+    if (
+      parsedOrigin.host === host ||
+      APP_LOCAL_HOSTNAMES.includes(hostname) ||
+      APP_TRUSTED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
+    ) {
       return true;
     }
   } catch {
@@ -684,8 +705,8 @@ app.post('/api/email/send', async (req: Request, res: Response) => {
     res.status(409).json({ error: 'An executive briefing email is already being sent.' });
     return;
   }
-  if (Date.now() - lastEmailSentAt < 30_000) {
-    res.status(429).json({ error: 'Please wait 30 seconds before sending another briefing.' });
+  if (Date.now() - lastEmailSentAt < EMAIL_SEND_COOLDOWN_SECONDS * 1000) {
+    res.status(429).json({ error: `Please wait ${EMAIL_SEND_COOLDOWN_SECONDS} seconds before sending another briefing.` });
     return;
   }
 
@@ -730,8 +751,8 @@ app.post('/api/whatsapp/send-briefing', async (req: Request, res: Response) => {
     res.status(409).json({ error: 'A WhatsApp message is already being dispatched.' });
     return;
   }
-  if (Date.now() - lastWhatsAppSentAt < 15_000) {
-    res.status(429).json({ error: 'Please wait 15 seconds before sending another WhatsApp message.' });
+  if (Date.now() - lastWhatsAppSentAt < WHATSAPP_SEND_COOLDOWN_SECONDS * 1000) {
+    res.status(429).json({ error: `Please wait ${WHATSAPP_SEND_COOLDOWN_SECONDS} seconds before sending another WhatsApp message.` });
     return;
   }
 
@@ -770,8 +791,8 @@ app.post('/api/whatsapp/send-dispatch', async (req: Request, res: Response) => {
     res.status(409).json({ error: 'A WhatsApp message is already being dispatched.' });
     return;
   }
-  if (Date.now() - lastWhatsAppSentAt < 15_000) {
-    res.status(429).json({ error: 'Please wait 15 seconds before sending another WhatsApp message.' });
+  if (Date.now() - lastWhatsAppSentAt < WHATSAPP_SEND_COOLDOWN_SECONDS * 1000) {
+    res.status(429).json({ error: `Please wait ${WHATSAPP_SEND_COOLDOWN_SECONDS} seconds before sending another WhatsApp message.` });
     return;
   }
 
@@ -1025,11 +1046,14 @@ async function startServer() {
   });
 
   server.listen(PORT, () => {
-    console.log(`[GO Gas Executive Suite] Dashboard active at http://localhost:${PORT}`);
+    console.log(`[${APP_NAME}] Dashboard active at ${APP_BASE_URL}`);
 
-    // Automated SMTP Executive Email Briefing at 11:00 AM and 07:00 PM daily
-    cron.schedule('0 11,19 * * *', async () => {
-      const timeLabel = new Date().getHours() < 15 ? '11:00 AM' : '07:00 PM';
+    cron.schedule(EMAIL_CRON_EXPRESSION, async () => {
+      const timeLabel = new Date().toLocaleTimeString('en-IN', {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: APP_TIMEZONE,
+      });
       console.log(`[EMAIL CRON] Executing automated ${timeLabel} executive briefing email...`);
       try {
         const telemetry = await getTelemetryData(true);
@@ -1043,7 +1067,7 @@ async function startServer() {
         console.error(`[EMAIL CRON] Failed to send ${timeLabel} email: ${err.message}`);
       }
     });
-    console.log('[EMAIL CRON] Scheduled automated executive email briefings at 11:00 AM and 07:00 PM daily.');
+    console.log(`[EMAIL CRON] Scheduled automated executive email briefings: ${EMAIL_SCHEDULE_LABEL}.`);
 
     const refreshLearningData = () => {
       void getTelemetryData(true).catch((error) => {
@@ -1052,7 +1076,7 @@ async function startServer() {
       });
     };
     refreshLearningData();
-    setInterval(refreshLearningData, 24 * 60 * 60 * 1000);
+    setInterval(refreshLearningData, LEARNING_REFRESH_INTERVAL_MS);
   });
 }
 

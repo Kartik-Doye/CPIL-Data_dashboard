@@ -3,11 +3,21 @@ import { Server as SocketIOServer } from 'socket.io';
 import cron, { ScheduledTask } from 'node-cron';
 import type { Express, NextFunction, Request, Response } from 'express';
 import {
+  APP_LOCAL_ADDRESS_PREFIXES,
+  APP_LOCAL_HOSTNAMES,
+  APP_TIMEZONE,
+  PORT,
+  WHATSAPP_CRON_EXPRESSION,
+  WHATSAPP_DAILY_MESSAGE,
+  WHATSAPP_SCHEDULE_LABEL,
+} from './config.js';
+import {
   disconnectWhatsAppClient,
   getWhatsAppSessionState,
   initializeWhatsAppClient,
   parseRecipientNumbers,
   refreshWhatsAppClient,
+  setWhatsAppRecipients,
   sendWhatsAppMessage,
 } from './whatsappService.js';
 
@@ -22,26 +32,25 @@ let connectionStatus: string = 'Disconnected';
 let currentQrCode = '';
 let connectionError: string | undefined;
 let targetPhoneNumber = parseRecipientNumbers().join(',');
-let dailyMessageText = '*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_';
+let dailyMessageText = WHATSAPP_DAILY_MESSAGE;
 let ioInstance: SocketIOServer | null = null;
 let scheduledTask: ScheduledTask | null = null;
 
 function isLoopbackAddress(address = '') {
   const normalized = address.toLowerCase();
-  return normalized === '::1' ||
-    normalized === '127.0.0.1' ||
-    normalized.startsWith('127.') ||
-    normalized.startsWith('::ffff:127.');
+  return APP_LOCAL_HOSTNAMES.includes(normalized) ||
+    APP_LOCAL_ADDRESS_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function isLocalOrigin(origin?: string) {
   if (!origin) return true;
-  const port = process.env.PORT && process.env.PORT !== '8080' ? process.env.PORT : '3000';
-  return [
-    `http://localhost:${port}`,
-    `http://127.0.0.1:${port}`,
-    `http://[::1]:${port}`,
-  ].includes(origin);
+  try {
+    const parsedOrigin = new URL(origin);
+    const hostname = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
+    return APP_LOCAL_HOSTNAMES.includes(hostname) && parsedOrigin.port === String(PORT);
+  } catch {
+    return false;
+  }
 }
 
 function requireLocalWhatsAppAccess(req: Request, res: Response, next: NextFunction) {
@@ -61,7 +70,11 @@ function updateConnectionState(state: ReturnType<typeof getWhatsAppSessionState>
   ioInstance?.emit('connection-error', connectionError || '');
 }
 
-export function initWhatsAppAutomation(app: Express, server: http.Server) {
+export function initWhatsAppAutomation(
+  app: Express,
+  server: http.Server,
+  buildExecutiveMessage?: () => Promise<string>
+) {
   const io = new SocketIOServer(server, {
     cors: {
       origin: (origin, callback) => callback(null, isLocalOrigin(origin)),
@@ -92,7 +105,10 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
 
     try {
       const recipients = parseRecipientNumbers(targetPhoneNumber);
-      const result = await sendWhatsAppMessage('briefing', dailyMessageText, recipients);
+      const message = triggerType.startsWith('scheduled') && buildExecutiveMessage
+        ? await buildExecutiveMessage()
+        : dailyMessageText;
+      const result = await sendWhatsAppMessage('briefing', message, recipients);
       io.emit('broadcast-success', {
         timestamp: new Date().toISOString(),
         recipient: recipients.length ? recipients.join(', ') : 'configured recipients',
@@ -107,8 +123,12 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
   }
 
   if (scheduledTask) scheduledTask.stop();
-  scheduledTask = cron.schedule('0 11,19 * * *', () => {
-    const timeLabel = new Date().getHours() < 15 ? '11:00 AM' : '07:00 PM';
+  scheduledTask = cron.schedule(WHATSAPP_CRON_EXPRESSION, () => {
+    const timeLabel = new Date().toLocaleTimeString('en-IN', {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: APP_TIMEZONE,
+    });
     console.log(`[WHATSAPP CRON] Running automated daily broadcast at ${timeLabel}...`);
     void sendBroadcast(`scheduled-${timeLabel}`);
   });
@@ -120,20 +140,19 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
       connectionStatus,
       qrCodeData: currentQrCode,
       connectionError,
-      scheduledTime: '11:00 AM & 07:00 PM Daily',
+      scheduledTime: WHATSAPP_SCHEDULE_LABEL,
     });
   });
 
   app.post('/api/whatsapp/config', (req: Request, res: Response) => {
     const { number, message } = req.body || {};
-    if (number) {
-      const recipients = parseRecipientNumbers(String(number));
-      if (recipients.length === 0) {
-        res.status(400).json({ success: false, error: 'Enter at least one valid WhatsApp recipient number.' });
-        return;
-      }
-      targetPhoneNumber = recipients.join(',');
+    const recipients = parseRecipientNumbers(typeof number === 'string' ? number : '');
+    if (recipients.length === 0) {
+      res.status(400).json({ success: false, error: 'Add at least one valid WhatsApp recipient number.' });
+      return;
     }
+    targetPhoneNumber = recipients.join(',');
+    setWhatsAppRecipients(recipients);
     if (message) dailyMessageText = String(message).trim();
 
     res.json({
@@ -205,7 +224,7 @@ export function initWhatsAppAutomation(app: Express, server: http.Server) {
     }
   });
 
-  console.log('[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO and an 11:00 AM / 07:00 PM daily cron schedule.');
+  console.log(`[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO and daily schedule: ${WHATSAPP_SCHEDULE_LABEL}.`);
 }
 
 export function updateAutomationMessage(newText: string) {

@@ -5,6 +5,9 @@
  * Ensures no target leakage: Day t features use strictly data from Day t-1 and prior.
  */
 
+import { isFestivalDate } from './festivalCalendar.js';
+export { getFestivalName, isFestivalDate } from './festivalCalendar.js';
+
 export interface RollingEvalResult {
   wape: number;
   bias: number;
@@ -175,45 +178,4 @@ export function rollingEval(
     n_windows: predictions.length,
     predictions,
   };
-}
-
-export const FESTIVAL_DATES: Record<string, string> = {
-  // August Festivals
-  '08-15': 'Independence Day',
-  '08-19': 'Raksha Bandhan',
-  '08-26': 'Janmashtami',
-  '08-28': 'Raksha Bandhan (Ext)',
-  // September Festivals
-  '09-04': 'Janmashtami Observance',
-  '09-07': 'Ganesh Chaturthi',
-  '09-14': 'Ganesh Visarjan',
-  '09-17': 'Anant Chaturdashi',
-  // October Festivals
-  '10-02': 'Gandhi Jayanti',
-  '10-11': 'Maha Navami',
-  '10-12': 'Dussehra / Vijayadashami',
-  '10-20': 'Karwa Chauth',
-  '10-31': 'Diwali / Deepavali',
-  // November Festivals
-  '11-01': 'Govardhan Puja',
-  '11-02': 'Bhai Dooj',
-  '11-08': 'Chhath Puja',
-  '11-15': 'Guru Nanak Jayanti',
-  '11-24': 'Guru Tegh Bahadur Martyrdom',
-  // December Festivals
-  '12-25': 'Christmas',
-};
-
-export function isFestivalDate(d: Date): boolean {
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const key = `${mm}-${dd}`;
-  return Boolean(FESTIVAL_DATES[key]);
-}
-
-export function getFestivalName(d: Date): string | undefined {
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const key = `${mm}-${dd}`;
-  return FESTIVAL_DATES[key];
 }

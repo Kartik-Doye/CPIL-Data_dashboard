@@ -15,6 +15,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { ExecutiveTelemetry } from '../types';
+import productConfig from '../../../product-config.json';
 
 interface DailyBriefingProps {
   data: ExecutiveTelemetry;
@@ -110,13 +111,13 @@ ${stockoutLines}
 📉 *DECLINING STATIONS (${data.top_declining_stations?.length || 0})*
 ${decliningLines || '   None flagged.'}
 
-_Generated via GO Gas Executive Suite Intelligence Engine_`;
+_Generated via ${productConfig.application.name} Intelligence Engine_`;
   };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generateBriefingText());
     setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    setTimeout(() => setCopied(false), productConfig.ui.copyNoticeDurationMs);
   };
 
   const handleSendEmail = async () => {
@@ -196,7 +197,7 @@ _Generated via GO Gas Executive Suite Intelligence Engine_`;
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Condensed management intelligence formulated for CMD, MD, State Heads, and TMs (Auto-dispatches at 11:00 AM &amp; 7:00 PM daily).
+                Condensed management intelligence formulated for CMD, MD, State Heads, and TMs (Auto-dispatches at {productConfig.email.scheduleLabel}).
               </p>
             </div>
           </div>

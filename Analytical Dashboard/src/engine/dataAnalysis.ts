@@ -19,6 +19,7 @@ import {
   WhatIfInput,
   WhatIfOutput,
 } from '../types.js';
+import productConfig from '../../../product-config.json';
 
 export interface CorrelationPair {
   field_a: string;
@@ -170,7 +171,7 @@ export function computeCorrelationMatrix(stations: StationRecord[]): Correlation
   const active = stations.filter((s) => s.sale_qty > 0);
   const sales = active.map((s) => s.sale_qty);
   const collections = active.map((s) => s.net_total_collection || s.collection);
-  const effRsps = active.map((s) => s.effective_rsp || (s.new_rate || 77.2));
+  const effRsps = active.map((s) => s.effective_rsp || (s.new_rate || productConfig.analytics.fallbackRetailPricePerLitre));
   const dips = active.map((s) => s.closing_dip_in_ltr ?? s.closing_dip ?? 0);
   const paytms = active.map((s) => s.paytm || 0);
   const freeSales = active.map((s) => s.free_sale_litres || s.free_sale || 0);
@@ -267,9 +268,12 @@ export function simulateWhatIf(
 ): WhatIfOutput {
   const totalSale = stations.reduce((a, b) => a + b.sale_qty, 0);
   const totalColl = stations.reduce((a, b) => a + (b.net_total_collection || b.collection), 0);
-  const effRsp = totalSale > 0 ? totalColl / totalSale : 77.2;
+  const effRsp = totalSale > 0 ? totalColl / totalSale : productConfig.analytics.fallbackRetailPricePerLitre;
   const freeSaleRs = stations.reduce((a, b) => a + (b.free_sale_rupees || 0), 0);
-  const totalNominalRev = stations.reduce((a, b) => a + (b.new_rate || 77.2) * b.sale_qty, 0);
+  const totalNominalRev = stations.reduce(
+    (a, b) => a + (b.new_rate || productConfig.analytics.fallbackRetailPricePerLitre) * b.sale_qty,
+    0
+  );
   const nominalRsp = totalSale > 0 ? totalNominalRev / totalSale : 77.3;
   const gapPerL = Math.max(0, nominalRsp - effRsp);
 

@@ -26,6 +26,7 @@ import { DatabaseInspectorModal } from './components/DatabaseInspectorModal';
 import { WhatsAppModal } from './components/WhatsAppModal';
 import { ExecutiveTelemetry, StationRecord, DatabaseDiagnostics } from './types';
 import { Loader2, AlertCircle, Database, RefreshCw } from 'lucide-react';
+import productConfig from '../../product-config.json';
 
 export function App() {
   const [data, setData] = useState<ExecutiveTelemetry | null>(null);
@@ -213,12 +214,14 @@ export function App() {
       const text = await res.text();
       const isStartupScreen = text.includes('Starting Server...') || text.includes('<!doctype html') || text.includes('<title>');
       
-      if (isStartupScreen && retryCount < 6) {
-        console.info(`[Server Booting] Waiting for server engine to initialize (attempt ${retryCount + 1}/6). Retrying in 2s...`);
+      if (isStartupScreen && retryCount < productConfig.ui.startupMaxRetries) {
+        console.info(
+          `[Server Booting] Waiting for server engine to initialize (attempt ${retryCount + 1}/${productConfig.ui.startupMaxRetries}). Retrying in ${productConfig.ui.retryDelayMs / 1000}s...`
+        );
         shouldRetry = true;
         setTimeout(() => {
           void fetchData(forceRefresh, retryCount + 1);
-        }, 2000);
+        }, productConfig.ui.retryDelayMs);
         return;
       }
 
@@ -237,12 +240,17 @@ export function App() {
 
       throw new Error('Server returned an unexpected format. Please refresh in a few moments.');
     } catch (err: any) {
-      if (retryCount < 4 && (err.name === 'TypeError' || err.message?.includes('fetch'))) {
-        console.info(`[Server Reconnecting] Connection pending (attempt ${retryCount + 1}/4). Retrying in 2s...`);
+      if (
+        retryCount < productConfig.ui.networkMaxRetries &&
+        (err.name === 'TypeError' || err.message?.includes('fetch'))
+      ) {
+        console.info(
+          `[Server Reconnecting] Connection pending (attempt ${retryCount + 1}/${productConfig.ui.networkMaxRetries}). Retrying in ${productConfig.ui.retryDelayMs / 1000}s...`
+        );
         shouldRetry = true;
         setTimeout(() => {
           void fetchData(forceRefresh, retryCount + 1);
-        }, 2000);
+        }, productConfig.ui.retryDelayMs);
         return;
       }
       console.warn('[API Telemetry Fetch Notice]:', err.message);
@@ -270,7 +278,7 @@ export function App() {
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+    setTimeout(() => setToastMessage(null), productConfig.ui.toastDurationMs);
   };
 
   const filteredStations = useMemo(() => {
@@ -379,7 +387,7 @@ export function App() {
               <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-xl border border-slate-200 dark:border-slate-800 text-left text-xs space-y-2">
                 <div className="font-semibold text-slate-700 dark:text-slate-300">Quick Connection Checklist:</div>
                 <ul className="space-y-1.5 text-slate-600 dark:text-slate-400 list-disc list-inside">
-                  <li><strong>Start PostgreSQL:</strong> Run <code className="bg-slate-200 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">net start postgresql-x64-16</code> or start it in Windows Services (<code className="font-mono">services.msc</code>).</li>
+                  <li><strong>Start PostgreSQL:</strong> {productConfig.ui.databaseServiceStartHelp}</li>
                   <li><strong>Check Credentials:</strong> Open <code className="font-mono text-orange-600 dark:text-orange-400">Analytical Dashboard/.env</code> and enter your password for <code className="font-mono">BOT_READER_PASSWORD</code>.</li>
                   <li><strong>Run 1-Click Tester:</strong> Double-click <code className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">run-test-db.bat</code> to verify your table and row count.</li>
                 </ul>

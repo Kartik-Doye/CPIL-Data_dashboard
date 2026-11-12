@@ -1,43 +1,29 @@
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { APP_BASE_URL, EMAIL_API_TIMEOUT_MS } from './src/engine/config.js';
 
 async function sendMorningReport() {
-  const primaryPort = process.env.PORT || '3000';
-  const candidatePorts = Array.from(new Set([primaryPort, '3000', '5000']));
-  let lastError: Error | null = null;
+  const endpoint = new URL('/api/email/send', APP_BASE_URL);
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'X-GO-Gas-Email-Request': 'authorized-client',
+    },
+    signal: AbortSignal.timeout(EMAIL_API_TIMEOUT_MS),
+  });
+  const contentType = response.headers.get('content-type') || '';
+  const responseText = await response.text();
+  const payload = contentType.includes('application/json')
+    ? (JSON.parse(responseText) as { message?: string; error?: string })
+    : null;
 
-  for (const port of candidatePorts) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/email/send`, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'X-GO-Gas-Email-Request': 'authorized-client',
-        },
-        signal: AbortSignal.timeout(30_000),
-      });
-      const contentType = response.headers.get('content-type') || '';
-      const responseText = await response.text();
-      const payload = contentType.includes('application/json')
-        ? (JSON.parse(responseText) as { message?: string; error?: string })
-        : null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || `Dashboard email endpoint returned HTTP ${response.status}.`);
-      }
-      if (!payload?.message) {
-        throw new Error('Dashboard email endpoint returned an invalid response.');
-      }
-
-      console.log(payload.message);
-      return;
-    } catch (error: unknown) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-    }
+  if (!response.ok) {
+    throw new Error(payload?.error || `Dashboard email endpoint returned HTTP ${response.status}.`);
+  }
+  if (!payload?.message) {
+    throw new Error('Dashboard email endpoint returned an invalid response.');
   }
 
-  throw lastError ?? new Error('Failed to connect to dashboard email endpoint.');
+  console.log(payload.message);
 }
 
 sendMorningReport().catch((error: unknown) => {

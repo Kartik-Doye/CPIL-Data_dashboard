@@ -4,7 +4,7 @@
  * 1. Supply-Adjusted Demand Imputation (corrects outage zero-sales before training)
  * 2. Leak-Free Feature Engineered Multivariate Linear Regression (Normal Equation + L2 Ridge)
  * 3. Holt-Winters Triple Exponential Smoothing with parameter grid search
- * 4. Indian Festival Calendar Integration (Aug, Sept, Oct, Nov)
+ * 4. Year-specific festival calendar feature integration
  * 5. Empirical Baselines (Same Day Last Week & Same Weekday Mean)
  * 6. Dynamic Inverse-MAPE Weighted Ensemble
  * 7. P10 / P50 / P90 Probabilistic Confidence Envelopes
@@ -16,8 +16,8 @@ import {
   buildFeaturesNoLeak,
   naiveLastWeek,
   sameWeekdayAvg,
-  getFestivalName,
 } from './forecastFixes.js';
+import { getFestivalEntry } from './festivalCalendar.js';
 
 export interface HistoricalDay {
   date: string;
@@ -402,6 +402,13 @@ interface BacktestErrors {
   ensembleSquared: number[];
   ensembleBiasPercentage: number[];
   gradientBoostedEnsemblePercentage: number[];
+  modelAbsoluteErrorTotal: Record<ForecastModel, number>;
+  scoredDates: string[];
+  ensembleAbsoluteErrorTotal: number;
+  ensembleSignedErrorTotal: number;
+  naiveLastWeekAbsoluteErrorTotal: number;
+  sameWeekday3wkAbsoluteErrorTotal: number;
+  actualTotal: number;
   gradientBoostingWins: number;
   scoredDays: number;
 }
@@ -449,6 +456,19 @@ function createBacktestErrors(): BacktestErrors {
     ensembleSquared: [],
     ensembleBiasPercentage: [],
     gradientBoostedEnsemblePercentage: [],
+    modelAbsoluteErrorTotal: {
+      linear: 0,
+      holt_winters: 0,
+      naive_last_week: 0,
+      same_weekday_avg: 0,
+      gradient_boosting: 0,
+    },
+    scoredDates: [],
+    ensembleAbsoluteErrorTotal: 0,
+    ensembleSignedErrorTotal: 0,
+    naiveLastWeekAbsoluteErrorTotal: 0,
+    sameWeekday3wkAbsoluteErrorTotal: 0,
+    actualTotal: 0,
     gradientBoostingWins: 0,
     scoredDays: 0,
   };
@@ -517,6 +537,14 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
       same_weekday_avg: sameWeekdayAvg(trainDates, trainActuals, testDate),
       gradient_boosting: gradientBoostingPrediction,
     };
+    const sameWeekdayLastThreeWeeks = dates
+      .slice(0, testIndex)
+      .map((date, index) => ({ date, sale: trainActuals[index] }))
+      .filter(({ date }) => date.getDay() === testDate.getDay())
+      .slice(-3);
+    const sameWeekdayThreeWeekPrediction = sameWeekdayLastThreeWeeks.length > 0
+      ? mean(sameWeekdayLastThreeWeeks.map(({ sale }) => sale))
+      : mean(trainActuals);
 
     if (actual > 0) {
       const weights = inverseMapeWeights(errors.percentage);
@@ -524,13 +552,13 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
         (sum, [model, weight]) => sum + modelPredictions[model as ForecastModel] * weight,
         0
       );
-      if (getFestivalName(testDate)) ensemblePrediction *= 0.94;
       if (errors.ensembleBiasPercentage.length > 0) {
         ensemblePrediction *= 1 - boundedBiasCorrection(mean(errors.ensembleBiasPercentage));
       }
 
       for (const model of Object.keys(modelPredictions) as ForecastModel[]) {
         const difference = modelPredictions[model] - actual;
+        errors.modelAbsoluteErrorTotal[model] += Math.abs(difference);
         errors.percentage[model].push(Math.abs(difference) / actual);
         errors.squared[model].push(difference ** 2);
       }
@@ -546,6 +574,12 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
       errors.ensemblePercentage.push(Math.abs(ensembleDifference) / actual);
       errors.ensembleSquared.push(ensembleDifference ** 2);
       errors.ensembleBiasPercentage.push(ensembleDifference / actual);
+      errors.scoredDates.push(testDate.toISOString().slice(0, 10));
+      errors.ensembleAbsoluteErrorTotal += Math.abs(ensembleDifference);
+      errors.ensembleSignedErrorTotal += ensembleDifference;
+      errors.naiveLastWeekAbsoluteErrorTotal += Math.abs(modelPredictions.naive_last_week - actual);
+      errors.sameWeekday3wkAbsoluteErrorTotal += Math.abs(sameWeekdayThreeWeekPrediction - actual);
+      errors.actualTotal += actual;
       errors.scoredDays++;
     }
   }
@@ -635,6 +669,21 @@ export function generateForecast(
       mape_holt_winters: null,
       mape_naive: null,
       backtest_days: 0,
+      backtest_diagnostics: {
+        first_scored_date: null,
+        last_scored_date: null,
+        ensemble_wape: null,
+        ensemble_bias: null,
+        naive_last_week_wape: null,
+        same_weekday_3wk_wape: null,
+        model_wape: {
+          linear: null,
+          holt_winters: null,
+          naive_last_week: null,
+          same_weekday_avg: null,
+          gradient_boosting: null,
+        },
+      },
       dates: dates.map(d => d.toISOString().slice(0, 10)),
       historical_actuals: actuals,
       forecast: [],
@@ -700,7 +749,8 @@ export function generateForecast(
     const futureDate = new Date(lastDate.getTime() + (j + 1) * 86400000);
     const dow = futureDate.getDay();
     const isWeekend = dow === 0 || dow === 6;
-    const festName = getFestivalName(futureDate);
+    const festival = getFestivalEntry(futureDate);
+    const festName = festival?.name;
 
     const nl = naiveLastWeek(dates, actuals, futureDate);
     const wa = sameWeekdayAvg(dates, actuals, futureDate);
@@ -733,16 +783,14 @@ export function generateForecast(
       ? baseEnsemble * 0.8 + gradientBoostingPrediction * 0.2
       : baseEnsemble;
 
-    if (festName) {
-      ensemble *= 0.94;
-    }
     const historicalBias = persistedErrors?.ensemble_bias_pct_by_horizon?.[j + 1];
     if (historicalBias !== undefined && Number.isFinite(historicalBias)) {
       ensemble *= 1 - boundedBiasCorrection(historicalBias);
     }
 
     const horizonFactor = 1.0 + j * 0.05;
-    const uncertainty = recentStd * horizonFactor;
+    const festivalRangeFactor = festName ? 1.5 : 1;
+    const uncertainty = recentStd * horizonFactor * festivalRangeFactor;
 
     const p10 = Math.max(Number((ensemble - 1.28 * uncertainty).toFixed(2)), 0);
     const p50 = Number(ensemble.toFixed(2));
@@ -776,6 +824,7 @@ export function generateForecast(
       is_today: j === 0,
       days_from_now: j + 1,
       festival_name: festName,
+      festival_note: festival?.note,
     });
 
     extendedActuals.push(p50);
@@ -907,6 +956,30 @@ export function generateForecast(
     mape_holt_winters: hwMape,
     mape_naive: naiveMape,
     backtest_days: backtest.scoredDays,
+    backtest_diagnostics: {
+      first_scored_date: backtest.scoredDates[0] ?? null,
+      last_scored_date: backtest.scoredDates.at(-1) ?? null,
+      ensemble_wape: backtest.actualTotal > 0
+        ? Number(((backtest.ensembleAbsoluteErrorTotal / backtest.actualTotal) * 100).toFixed(2))
+        : null,
+      ensemble_bias: backtest.actualTotal > 0
+        ? Number(((backtest.ensembleSignedErrorTotal / backtest.actualTotal) * 100).toFixed(2))
+        : null,
+      naive_last_week_wape: backtest.actualTotal > 0
+        ? Number(((backtest.naiveLastWeekAbsoluteErrorTotal / backtest.actualTotal) * 100).toFixed(2))
+        : null,
+      same_weekday_3wk_wape: backtest.actualTotal > 0
+        ? Number(((backtest.sameWeekday3wkAbsoluteErrorTotal / backtest.actualTotal) * 100).toFixed(2))
+        : null,
+      model_wape: Object.fromEntries(
+        (Object.keys(backtest.modelAbsoluteErrorTotal) as ForecastModel[]).map((model) => [
+          model,
+          backtest.actualTotal > 0
+            ? Number(((backtest.modelAbsoluteErrorTotal[model] / backtest.actualTotal) * 100).toFixed(2))
+            : null,
+        ]),
+      ),
+    },
     gradient_boosting_active: gradientBoostingActive,
     learning_status: persistedErrors && persistedErrors.sample_count > 0
       ? `Adaptive weights learn from ${persistedErrors.sample_count} saved forecast outcomes; historical influence increases as more actuals are scored.`

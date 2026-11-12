@@ -15,7 +15,11 @@ import {
   DB_LOADER_USER,
   DB_LOADER_PASSWORD,
   DB_CONNECT_TIMEOUT,
+  DB_CONNECT_TIMEOUT_CEILING_MS,
   DB_STATEMENT_TIMEOUT_MS,
+  DB_POOL_MAX,
+  DB_LOADER_POOL_MAX,
+  DB_IDLE_TIMEOUT_MS,
 } from './config.js';
 
 const { Pool } = pg;
@@ -50,10 +54,10 @@ export function getPool(): pg.Pool | null {
       database: DB_NAME,
       user: DB_USER,
       password: DB_PASSWORD || '',
-      connectionTimeoutMillis: Math.min(DB_CONNECT_TIMEOUT * 1000, 3000),
+      connectionTimeoutMillis: Math.min(DB_CONNECT_TIMEOUT * 1000, DB_CONNECT_TIMEOUT_CEILING_MS),
       statement_timeout: DB_STATEMENT_TIMEOUT_MS,
-      max: 15,
-      idleTimeoutMillis: 30000,
+      max: DB_POOL_MAX,
+      idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
     });
 
     pool.on('error', (err: Error) => {
@@ -75,10 +79,10 @@ function getLoaderPool(): pg.Pool {
       database: DB_NAME,
       user: DB_LOADER_USER,
       password: DB_LOADER_PASSWORD,
-      connectionTimeoutMillis: Math.min(DB_CONNECT_TIMEOUT * 1000, 3000),
+      connectionTimeoutMillis: Math.min(DB_CONNECT_TIMEOUT * 1000, DB_CONNECT_TIMEOUT_CEILING_MS),
       statement_timeout: DB_STATEMENT_TIMEOUT_MS,
-      max: 3,
-      idleTimeoutMillis: 30000,
+      max: DB_LOADER_POOL_MAX,
+      idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
     });
     loaderPool.on('error', (err: Error) => {
       console.warn('[DB Loader Pool Warning]', err.message);

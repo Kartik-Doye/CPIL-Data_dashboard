@@ -22,6 +22,7 @@ import { SalesDropAlerts } from './SalesDropAlerts';
 import { CriticalBurnPredictionAlert } from './CriticalBurnPredictionAlert';
 import { SmartAnomalyDetectionCard } from './SmartAnomalyDetectionCard';
 import { fmtQty, fmtCurrency, fmtLakhs, fmtCrores, fmtPct } from '../engine/formatting';
+import productConfig from '../../../product-config.json';
 
 interface MasterDashboardProps {
   data: ExecutiveTelemetry;
@@ -48,11 +49,18 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
 
   const rawNominal =
     totalVolume > 0
-      ? filteredStations.reduce((a, b) => a + (b.new_rate || 77.2) * b.sale_qty, 0) / totalVolume
+      ? filteredStations.reduce(
+          (a, b) => a + (b.new_rate || productConfig.analytics.fallbackRetailPricePerLitre) * b.sale_qty,
+          0
+        ) / totalVolume
       : data.average_rsp;
-  const weightedNominalRsp = Number.isFinite(rawNominal) ? rawNominal : (data.average_rsp || 77.2);
+  const weightedNominalRsp = Number.isFinite(rawNominal)
+    ? rawNominal
+    : (data.average_rsp || productConfig.analytics.fallbackRetailPricePerLitre);
   const rawEff = totalVolume > 0 ? totalRevenue / totalVolume : data.effective_rsp;
-  const weightedEffRsp = Number.isFinite(rawEff) ? rawEff : (data.effective_rsp || 77.2);
+  const weightedEffRsp = Number.isFinite(rawEff)
+    ? rawEff
+    : (data.effective_rsp || productConfig.analytics.fallbackRetailPricePerLitre);
   const collectionGap = Math.max(0, weightedNominalRsp - weightedEffRsp);
 
   // Top 5 & Bottom 5 among filtered

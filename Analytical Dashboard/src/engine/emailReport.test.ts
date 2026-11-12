@@ -27,21 +27,23 @@ test('builds a concise executive email with risk bands, actions, and forecast co
     ],
   });
 
-  assert.equal(subject, 'GO Gas Executive Daily Flash - 2026-11-05');
+  assert.equal(subject, 'GO Gas Daily Operations Brief | 05 Nov 2026');
   assert.match(text, /3,42,850\.00 L/);
   assert.match(text, /₹2,64,33,735\.00/);
-  assert.match(text, /1 critical \(<1d\), 1 high \(1–2d\)/);
-  assert.match(text, /Forecast 2026-11-06: 3,48,200\.00 L \(P10–P90 3,20,000\.00–3,75,000\.00 L\)/);
-  assert.match(text, /MAPE 6\.8% across 14 scored days; planning input only/);
-  assert.match(text, /Plan, margin, credit, receivables and banked-cash data are unavailable/);
-  assert.match(text, /Attached Excel: station detail and proposed actions/);
-  assert.match(text, /Kartik Doye \| Data Analyst \(Sales & Marketing\) - ALDS/);
+  assert.match(text, /1 critical \(<1 day\), 1 high \(1–2 days\)/);
+  assert.match(text, /GO GAS \| DAILY OPERATIONS BRIEF \| 05 Nov 2026/);
+  assert.match(text, /Tomorrow \(06 Nov 2026\): 3,48,200\.00 L \(P10–P90 3,20,000\.00–3,75,000\.00 L\)/);
+  assert.match(text, /Historical MAPE 6\.8% over 14 days; forecast is for planning, not a commitment/);
+  assert.match(text, /Targets and financial KPIs are not included/);
+  assert.match(text, /Attached workbook: station details and suggested actions/);
+  assert.match(text, /Regards,\nKartik Doye\nData Analyst \(Sales & Marketing\) - ALDS/);
   assert.match(text, /8087018975/);
   assert.match(text, /kartikdoye@confidencegroup\.co/);
   assert.ok(text.trim().split(/\s+/).length <= 150);
   assert.match(html, /src="cid:company-logo"/);
   assert.match(html, /alt="Confidence Group"/);
-  assert.match(text, /Top 10 volume share: not available/);
+  assert.match(text, /Top 10 share: not available/);
+  assert.match(html, /<h2[^>]*>DAILY PERFORMANCE<\/h2>/);
   assert.doesNotMatch(text, /stockout risk \(under three days\)/);
 });
 
@@ -65,9 +67,9 @@ test('reports unavailable forecasts and empty priority lists clearly', () => {
     stockout_risk_stations: [],
   });
 
-  assert.match(text, /Forecast unavailable/);
+  assert.match(text, /Tomorrow: unavailable/);
   assert.match(text, /Historical MAPE unavailable/);
-  assert.match(text, /0 critical \(<1d\), 0 high \(1–2d\), 0 monitor \(2–3d\)/);
+  assert.match(text, /0 critical \(<1 day\), 0 high \(1–2 days\), 0 monitor \(2–3 days\)/);
   assert.ok(text.trim().split(/\s+/).length <= 150);
 });
 

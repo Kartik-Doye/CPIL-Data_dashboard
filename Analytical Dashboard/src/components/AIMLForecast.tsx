@@ -22,6 +22,7 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
     forecast.mape_ensemble === null
       ? null
       : Math.max(0, Math.min(100, 100 - forecast.mape_ensemble));
+  const festivalForecasts = forecast.forecast.filter((point) => point.festival_name);
   const formatMape = (value: number | null) => value === null ? '—' : `${value}%`;
   const exactLitres = (value: number) => value.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
@@ -74,6 +75,21 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
           </div>
         </div>
       </div>
+
+      {festivalForecasts.length > 0 && (
+        <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl p-4 text-xs text-amber-100">
+          <strong>Festival dates in forecast:</strong>{' '}
+          {festivalForecasts.map((point) => `${point.festival_name} (${point.date})`).join(', ')}.
+          Demand on these dates is lower confidence. The displayed range is widened by 50% as a
+          planning buffer; it is not a festival effect learned from long-term historical data.
+          {festivalForecasts.some((point) => point.festival_note) && (
+            <span> Calendar note: {festivalForecasts
+              .filter((point) => point.festival_note)
+              .map((point) => `${point.festival_name}: ${point.festival_note}`)
+              .join('; ')}.</span>
+          )}
+        </div>
+      )}
 
       {forecast.reasons && forecast.reasons.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-500/40 rounded-xl p-4 text-xs text-slate-800 dark:text-slate-200 space-y-2 shadow-sm">
@@ -222,6 +238,11 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
                       {(f.day_name === 'Sunday' || f.day_name === 'Saturday') && (
                         <span className="ml-1.5 text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-sans">
                           Weekend
+                        </span>
+                      )}
+                      {f.festival_name && (
+                        <span className="ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-sans">
+                          {f.festival_name}
                         </span>
                       )}
                     </td>

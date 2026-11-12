@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { generateForecast } from './forecasting.js';
+import { getFestivalEntry, getFestivalName, isFestivalDate } from './festivalCalendar.js';
+import { buildFeaturesNoLeak } from './forecastFixes.js';
 
 function makeHistory(days: number, sale: (index: number) => number) {
   return Array.from({ length: days }, (_, index) => ({
@@ -13,6 +15,15 @@ test('reports walk-forward metrics only when historical test days are available'
   const result = generateForecast(makeHistory(35, index => 100 + (index % 7) * 10 + index), 7);
 
   assert.equal(result.backtest_days, 28);
+  assert.equal(result.backtest_diagnostics?.first_scored_date, '2026-01-08');
+  assert.equal(result.backtest_diagnostics?.last_scored_date, '2026-02-04');
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.ensemble_wape));
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.ensemble_bias));
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.naive_last_week_wape));
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.same_weekday_3wk_wape));
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.model_wape.linear));
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.model_wape.holt_winters));
+  assert.ok(Number.isFinite(result.backtest_diagnostics?.model_wape.gradient_boosting));
   assert.notEqual(result.mape_ensemble, null);
   assert.ok(Number.isFinite(result.mape_ensemble));
   assert.equal(result.models_metrics?.linear.mape, result.mape_linear);
@@ -35,6 +46,36 @@ test('does not present a fabricated accuracy when there are no holdout days', ()
   assert.equal(result.backtest_days, 0);
   assert.equal(result.mape_ensemble, null);
   assert.equal(result.models_metrics?.linear.rmse, null);
+});
+
+test('uses exact calendar dates for festival feature values without recurring them yearly', () => {
+  const festivalDate = new Date('2026-11-08T00:00:00Z');
+  const ordinaryDate = new Date('2026-11-09T00:00:00Z');
+
+  assert.equal(getFestivalName(festivalDate), 'Diwali & Lakshmi Puja');
+  assert.equal(getFestivalEntry(new Date('2026-11-06T00:00:00Z'))?.note, 'Approximate / regional variant');
+  assert.equal(isFestivalDate(ordinaryDate), false);
+  assert.equal(getFestivalName(new Date('2027-11-08T00:00:00Z')), undefined);
+  assert.equal(buildFeaturesNoLeak([festivalDate, ordinaryDate], [100, 100])[0][3], 1);
+  assert.equal(buildFeaturesNoLeak([festivalDate, ordinaryDate], [100, 100])[1][3], 0);
+});
+
+test('flags festival forecasts and widens their estimated range', () => {
+  const lastDate = Date.UTC(2026, 10, 5);
+  const history = Array.from({ length: 35 }, (_, index) => {
+    const date = new Date(lastDate - (34 - index) * 86400000);
+    return {
+      date: date.toISOString().slice(0, 10),
+      sale_qty: 200 + (index % 7) * 15 + index,
+    };
+  });
+  const result = generateForecast(history, 7);
+  const diwali = result.forecast.find((point) => point.date === '2026-11-08');
+  const ordinaryDay = result.forecast.find((point) => point.date === '2026-11-07');
+
+  assert.equal(diwali?.festival_name, 'Diwali & Lakshmi Puja');
+  assert.ok(diwali && ordinaryDay);
+  assert.ok(diwali.p90 - diwali.p10 > ordinaryDay.p90 - ordinaryDay.p10);
 });
 
 test('excludes zero-sales days from percentage accuracy rather than claiming perfect accuracy', () => {

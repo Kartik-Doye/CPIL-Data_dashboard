@@ -51,6 +51,18 @@ const escapeHtml = (value: string) => value
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
+function formatReportDate(date: string): string {
+  const parsedDate = new Date(`${date}T00:00:00Z`);
+  return Number.isNaN(parsedDate.getTime())
+    ? date
+    : parsedDate.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+}
+
 function getOwner(station: Pick<StationRecord, 'tm' | 'coordinator'>): string {
   const tm = station.tm.trim();
   const coordinator = station.coordinator.trim();
@@ -199,11 +211,12 @@ export async function buildStationWorkbook(
 }
 
 export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
+  const reportDate = formatReportDate(telemetry.date);
   const nextForecast = telemetry.forecast.forecast[0];
   const mape = telemetry.forecast.mape_ensemble;
   const historicalAccuracy = mape === null || !Number.isFinite(mape)
     ? 'Historical MAPE unavailable'
-    : `MAPE ${mape.toFixed(1)}% across ${telemetry.forecast.backtest_days ?? 'an unspecified number of'} scored days; planning input only`;
+    : `Historical MAPE ${mape.toFixed(1)}%${telemetry.forecast.backtest_days === undefined ? '' : ` over ${telemetry.forecast.backtest_days} days`}; forecast is for planning, not a commitment`;
   const stockRisks = telemetry.stockout_risk_stations;
   const critical = stockRisks.filter((station) => (station.stock_ltr ?? 1) <= 0 || station.days_left < 1);
   const highRisk = stockRisks.filter((station) => (station.stock_ltr ?? 1) > 0 && station.days_left >= 1 && station.days_left < 2);
@@ -212,7 +225,7 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   const urgentActions = critical.slice(0, 3).map((stockRisk) => {
     const station = stationByCode.get(stockRisk.code);
     const owner = station ? getOwner(station) : 'TM/coordinator to confirm';
-    return `${stockRisk.name} (${owner})`;
+    return `${stockRisk.name} (contact: ${owner})`;
   });
   const priorDays = (telemetry.history_30d || []).filter((point) => point.date < telemetry.date).slice(-7);
   const priorAverage = priorDays.length > 0
@@ -236,7 +249,7 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
     ? `${((topTenVolume / telemetry.total_sale_qty) * 100).toFixed(1)}%`
     : 'not available';
   const declineSummary = telemetry.top_declining_stations
-    ? `top decline list ${telemetry.top_declining_stations.filter((station) => station.drop_pct >= 48).length}/10`
+    ? `${telemetry.top_declining_stations.filter((station) => station.drop_pct >= 48).length} watchlist stations down ≥48%`
     : 'data unavailable';
   const forecastRange = nextForecast
     && typeof nextForecast.p10 === 'number'
@@ -245,32 +258,74 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
     && Number.isFinite(nextForecast.p90)
     ? ` (P10–P90 ${number(nextForecast.p10)}–${number(nextForecast.p90)} L)`
     : '';
-  const actionSummary = urgentActions.length > 0
-    ? `Today, EOD: replenish ${urgentActions.join('; ')}; proposed owner is the station TM/coordinator.`
-    : telemetry.zero_sale_count > 0
-      ? 'Today, EOD: station TM/coordinator to confirm owners and resolve zero-sale exceptions.'
-      : 'No critical stock-cover or zero-sale action is currently flagged.';
+  const remainingCritical = Math.max(0, critical.length - urgentActions.length);
+  const actionLines = [
+    ...(urgentActions.length > 0
+      ? [`• Replenish ${urgentActions.join('; ')} by EOD.`]
+      : []),
+    ...(remainingCritical > 0
+      ? [`• Review the other ${remainingCritical} critical station(s); confirm an owner by EOD.`]
+      : []),
+    ...(telemetry.zero_sale_count > 0
+      ? [`• Resolve ${telemetry.zero_sale_count} zero-sale exception(s) by EOD.`]
+      : []),
+    ...(urgentActions.length === 0 && remainingCritical === 0 && telemetry.zero_sale_count === 0
+      ? ['• No immediate station action is flagged today.']
+      : []),
+  ];
 
   const text = [
-    `GO GAS EXECUTIVE DAILY BRIEF — ${telemetry.date}`,
-    `Sales ${number(telemetry.total_sale_qty)} L | Collections ₹${number(telemetry.total_collection)} | Realization ₹${telemetry.effective_rsp.toFixed(2)}/L.`,
-    `Coverage ${telemetry.stations_with_sale}/${telemetry.stations_total} | Zero sales ${telemetry.zero_sale_count} | ${salesChange}.`,
-    `Stock cover: ${critical.length} critical (<1d), ${highRisk.length} high (1–2d), ${monitor.length} monitor (2–3d); not all are stock-outs.`,
-    `Zero-sale causes: ${zeroSaleSummary}. Declining >48%: ${declineSummary}.`,
-    `ACTION: ${actionSummary}`,
-    `Top 10 volume share: ${topTenShare}.`,
-    `Forecast${nextForecast ? ` ${nextForecast.date}: ${number(nextForecast.predicted_qty)} L${forecastRange}` : ' unavailable'}; ${historicalAccuracy}.`,
-    'Plan, margin, credit, receivables and banked-cash data are unavailable in the current source.',
-    'Attached Excel: station detail and proposed actions; confirm owner/deadline assignments.',
+    `GO GAS | DAILY OPERATIONS BRIEF | ${reportDate}`,
     '',
-    'Kartik Doye | Data Analyst (Sales & Marketing) - ALDS',
-    'Phone: 8087018975 | kartikdoye@confidencegroup.co',
+    'Dear Management Team,',
+    `Daily summary for ${reportDate}.`,
+    '',
+    'DAILY PERFORMANCE',
+    `Sales: ${number(telemetry.total_sale_qty)} L | Collections: ₹${number(telemetry.total_collection)} | Realization: ₹${telemetry.effective_rsp.toFixed(2)}/L`,
+    `Reporting: ${telemetry.stations_with_sale}/${telemetry.stations_total} | Zero sales: ${telemetry.zero_sale_count} | ${salesChange}`,
+    '',
+    'STATION EXCEPTIONS',
+    `Stock cover: ${critical.length} critical (<1 day), ${highRisk.length} high (1–2 days), ${monitor.length} monitor (2–3 days).`,
+    `Zero-sale reasons: ${zeroSaleSummary}.`,
+    `Decline watchlist: ${declineSummary}. Top 10 share: ${topTenShare}.`,
+    '',
+    'FOLLOW-UP REQUESTED',
+    ...actionLines,
+    '',
+    'FORECAST',
+    `Tomorrow${nextForecast ? ` (${formatReportDate(nextForecast.date)})` : ''}: ${nextForecast ? `${number(nextForecast.predicted_qty)} L${forecastRange}` : 'unavailable'}. ${historicalAccuracy}.`,
+    'Targets and financial KPIs are not included in this report.',
+    '',
+    'Attached workbook: station details and suggested actions. Please confirm owners and deadlines.',
+    '',
+    'Regards,',
+    'Kartik Doye',
+    'Data Analyst (Sales & Marketing) - ALDS',
+    'Phone: 8087018975 | Email: kartikdoye@confidencegroup.co',
   ].join('\n');
 
+  const sectionHeadings = new Set([
+    'DAILY PERFORMANCE',
+    'STATION EXCEPTIONS',
+    'FOLLOW-UP REQUESTED',
+    'FORECAST',
+  ]);
+  const htmlText = text.split('\n').map((line, index) => {
+    const escapedLine = escapeHtml(line);
+    if (sectionHeadings.has(line)) {
+      return `<h2 style="margin:18px 0 6px;font-size:13px;color:#334155">${escapedLine}</h2>`;
+    }
+    if (index === 0) {
+      return `<h1 style="margin:0 0 18px;font-size:20px;color:#0f172a">${escapedLine}</h1>`;
+    }
+    if (line === '') return '<div style="height:4px"></div>';
+    return `<p style="margin:4px 0">${escapedLine}</p>`;
+  }).join('');
+
   return {
-    subject: `GO Gas Executive Daily Flash - ${telemetry.date}`,
+    subject: `GO Gas Daily Operations Brief | ${reportDate}`,
     text,
-    html: `<div style="font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.6"><p style="margin:0 0 20px"><img src="cid:company-logo" alt="Confidence Group" width="240" style="display:block;width:240px;max-width:100%;height:auto"></p><div>${escapeHtml(text).replace(/\n/g, '<br>')}</div></div>`,
+    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlText}</div>`,
   };
 }
 

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import pg from 'pg';
+import productConfig from '../product-config.json';
 import { readSpreadsheetRows } from '../Analytical Dashboard/src/engine/excel.js';
 
 const { Pool } = pg;
@@ -11,14 +12,21 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env from Manual Work folder or process root
-dotenv.config({ path: path.join(__dirname, '.env') });
-dotenv.config();
+function loadEnvFile(filePath: string) {
+  if (!fs.existsSync(filePath)) return;
+  const entries = dotenv.parse(fs.readFileSync(filePath));
+  for (const [key, value] of Object.entries(entries)) {
+    if (!process.env[key]?.trim() && value.trim()) process.env[key] = value;
+  }
+}
 
-const DB_HOST = process.env.DB_HOST || 'localhost';
-const DB_PORT = parseInt(process.env.DB_PORT || '5432', 10);
-const DB_NAME = process.env.DB_NAME || 'sale_alds';
-const DB_USER = process.env.BOT_LOADER_USER || 'bot_loader';
+loadEnvFile(path.join(__dirname, '.env'));
+loadEnvFile(path.resolve(__dirname, '..', '.env'));
+
+const DB_HOST = process.env.DB_HOST || productConfig.database.host;
+const DB_PORT = parseInt(process.env.DB_PORT || String(productConfig.database.port), 10);
+const DB_NAME = process.env.DB_NAME || productConfig.database.name;
+const DB_USER = process.env.BOT_LOADER_USER || productConfig.database.loaderUser;
 const DB_PASSWORD = process.env.BOT_LOADER_PASSWORD || '';
 
 function logMessage(msg: string) {

@@ -14,6 +14,7 @@ import {
 import { StationRecord, ExecutiveTelemetry } from '../types';
 import { fmtQty } from '../engine/formatting';
 import { recommendTanker } from '../engine/tanker';
+import productConfig from '../../../product-config.json';
 
 interface TankerDispatchReportProps {
   stations: StationRecord[];
@@ -117,7 +118,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
 
     navigator.clipboard.writeText(lines.join('\n'));
     setCopied(true);
-    setTimeout(() => setCopied(false), 3000);
+    setTimeout(() => setCopied(false), productConfig.ui.copyNoticeDurationMs);
   };
 
   const handleExportCSV = () => {

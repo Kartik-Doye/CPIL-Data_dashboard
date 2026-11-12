@@ -1,19 +1,23 @@
 import pg from 'pg';
-import dotenv from 'dotenv';
-import path from 'path';
-
-// Load .env from Analytical Dashboard folder
-dotenv.config({ path: path.resolve(process.cwd(), 'Analytical Dashboard/.env') });
-dotenv.config();
+import {
+  DB_CONNECT_TIMEOUT,
+  DB_CONNECT_TIMEOUT_CEILING_MS,
+  DB_HOST,
+  DB_NAME,
+  DB_PASSWORD,
+  DB_PORT,
+  DB_STATEMENT_TIMEOUT_MS,
+  DB_USER,
+} from './Analytical Dashboard/src/engine/config.js';
 
 const { Pool } = pg;
 
 const config = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'sale_alds',
-  user: process.env.DB_USER || 'bot_reader',
-  password: process.env.BOT_READER_PASSWORD || process.env.DB_PASSWORD || '',
+  host: DB_HOST,
+  port: DB_PORT,
+  database: DB_NAME,
+  user: DB_USER,
+  password: DB_PASSWORD,
 };
 
 console.log('========================================================');
@@ -26,13 +30,12 @@ console.log(` - Database : ${config.database}`);
 console.log(` - User     : ${config.user}`);
 console.log('--------------------------------------------------------');
 
-if (config.password === 'CHANGE_ME_READER') {
-  console.warn('⚠️ The configured reader password is the template value. Rotate it before deployment; the credential itself is not displayed.');
-}
+if (!config.password) console.warn('⚠️ Reader password is empty; check BOT_READER_PASSWORD in your environment.');
 
 const pool = new Pool({
   ...config,
-  connectionTimeoutMillis: 3000,
+  connectionTimeoutMillis: Math.min(DB_CONNECT_TIMEOUT * 1000, DB_CONNECT_TIMEOUT_CEILING_MS),
+  statement_timeout: DB_STATEMENT_TIMEOUT_MS,
 });
 
 async function test() {
@@ -40,7 +43,7 @@ async function test() {
   let checksPassed = true;
   try {
     client = await pool.connect();
-    console.log('✅ Connection SUCCESSFUL! Connected to PostgreSQL on localhost:5432.');
+    console.log(`✅ Connection SUCCESSFUL! Connected to PostgreSQL on ${config.host}:${config.port}.`);
     
     const res = await client.query('SELECT current_database() as db, current_user as usr, version() as ver');
     console.log(` - Connected as user : ${res.rows[0].usr}`);

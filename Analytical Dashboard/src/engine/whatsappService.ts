@@ -1,10 +1,19 @@
-import dotenv from 'dotenv';
 import path from 'path';
 import whatsappWeb from 'whatsapp-web.js';
 import type { ExecutiveTelemetry, StationRecord } from '../types.js';
-import { classifyZeroSaleReason } from './formatting.js';
-
-dotenv.config();
+import { classifyZeroSaleReason, fmtCrores, fmtLakhs } from './formatting.js';
+import {
+  APP_BASE_URL,
+  APP_LOCAL_HOSTNAMES,
+  WHATSAPP_API_TOKEN,
+  WHATSAPP_API_URL,
+  WHATSAPP_AUTH_DIRECTORY,
+  WHATSAPP_CHROME_EXECUTABLE_PATH,
+  WHATSAPP_ENABLED,
+  WHATSAPP_RECIPIENT_NUMBERS,
+  WHATSAPP_WEB_VERSION,
+  WHATSAPP_WEB_VERSION_CACHE_DIRECTORY,
+} from './config.js';
 
 const { Client, LocalAuth } = whatsappWeb;
 
@@ -41,11 +50,13 @@ let lastSentTimestamp = 0;
 let whatsappClient: InstanceType<typeof Client> | null = null;
 let whatsappClientReady = false;
 let initializingClient = false;
+let initializationTask: Promise<void> | null = null;
 let sessionState: WhatsAppSessionState = {
   connectionStatus: 'Disconnected',
   qrCodeData: '',
 };
 let sessionStateListener: ((state: WhatsAppSessionState) => void) | null = null;
+let activeRecipientNumbers = WHATSAPP_RECIPIENT_NUMBERS;
 
 function updateSessionState(state: WhatsAppSessionState) {
   sessionState = state;
@@ -60,17 +71,23 @@ export function initializeWhatsAppClient(
   onStateChange?: (state: WhatsAppSessionState) => void
 ) {
   if (onStateChange) sessionStateListener = onStateChange;
-  if (process.env.WHATSAPP_ENABLED === 'false' || whatsappClient || initializingClient) return;
+  if (!WHATSAPP_ENABLED || whatsappClient || initializingClient) return;
 
   initializingClient = true;
   whatsappClientReady = false;
   updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: '' });
 
-  const executablePath = process.env.WHATSAPP_CHROME_EXECUTABLE_PATH?.trim();
+  const executablePath = WHATSAPP_CHROME_EXECUTABLE_PATH.trim();
   const activeClient = new Client({
     authStrategy: new LocalAuth({
-      dataPath: path.resolve(process.cwd(), '.wwebjs_auth'),
+      dataPath: path.resolve(process.cwd(), WHATSAPP_AUTH_DIRECTORY),
     }),
+    webVersion: WHATSAPP_WEB_VERSION,
+    webVersionCache: {
+      type: 'local',
+      path: path.resolve(process.cwd(), WHATSAPP_WEB_VERSION_CACHE_DIRECTORY),
+      strict: true,
+    },
     puppeteer: {
       headless: true,
       ...(executablePath ? { executablePath } : {}),
@@ -117,37 +134,53 @@ export function initializeWhatsAppClient(
     console.warn(`[WHATSAPP] WhatsApp Web disconnected: ${reason}`);
   });
 
-  void activeClient.initialize().then(
+  initializationTask = activeClient.initialize().then(
     () => {
       if (whatsappClient === activeClient) initializingClient = false;
     },
-    (error: unknown) => {
+    async (error: unknown) => {
+      if (whatsappClient !== activeClient) return;
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await activeClient.destroy();
+      } catch (cleanupError) {
+        const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        console.error(`[WHATSAPP] Failed to close the browser after initialization failure: ${cleanupMessage}`);
+      }
       if (whatsappClient !== activeClient) return;
       initializingClient = false;
       whatsappClient = null;
       whatsappClientReady = false;
-      const message = error instanceof Error ? error.message : String(error);
       updateSessionState({
         connectionStatus: 'Connection error',
         qrCodeData: '',
         connectionError: message,
       });
-      console.error(`[WHATSAPP] Failed to initialize WhatsApp Web: ${message}`);
+      console.error(
+        `[WHATSAPP] Failed to initialize WhatsApp Web: ${error instanceof Error ? error.stack || message : message}`
+      );
     }
-  );
+  ).finally(() => {
+    if (whatsappClient === activeClient) initializationTask = null;
+  });
 }
 
 export async function refreshWhatsAppClient() {
+  if (initializationTask) await initializationTask;
   const activeClient = whatsappClient;
-  whatsappClient = null;
-  whatsappClientReady = false;
-  initializingClient = false;
-
-  if (activeClient) await activeClient.destroy();
+  if (activeClient) {
+    await activeClient.destroy();
+    if (whatsappClient === activeClient) {
+      whatsappClient = null;
+      whatsappClientReady = false;
+      initializingClient = false;
+    }
+  }
   initializeWhatsAppClient();
 }
 
 export async function disconnectWhatsAppClient() {
+  if (initializationTask) await initializationTask;
   const activeClient = whatsappClient;
   if (activeClient) await activeClient.logout();
 
@@ -165,11 +198,18 @@ const numberFormat = (value: number) => value.toLocaleString('en-IN', {
 });
 
 export function parseRecipientNumbers(raw?: string): string[] {
-  const source = raw || process.env.WHATSAPP_RECIPIENT_NUMBERS || '';
-  return source
-    .split(',')
-    .map((num) => num.replace(/[^\d+]/g, '').trim())
-    .filter((num) => num.length >= 10);
+  const source = raw ?? activeRecipientNumbers;
+  const recipients = source
+    .split(/[,\n;]/)
+    .map((number) => number.trim().replace(/[\s()-]/g, ''))
+    .filter((number) => number.startsWith('+')
+      ? /^\+[1-9]\d{9,14}$/.test(number)
+      : /^[1-9]\d{10,14}$/.test(number));
+  return [...new Set(recipients)];
+}
+
+export function setWhatsAppRecipients(recipients: string[]) {
+  activeRecipientNumbers = recipients.join(',');
 }
 
 export function maskPhoneNumber(phone: string): string {
@@ -205,9 +245,13 @@ export function buildExecutiveWhatsAppMessage(telemetry: Pick<
  const highRisk = stockRisks.filter((station) => station.stock_ltr > 0 && station.days_left >= 1 && station.days_left < 2);
  const monitor = stockRisks.filter((station) => station.stock_ltr > 0 && station.days_left >= 2 && station.days_left < 3);
  const stationByCode = new Map((telemetry.all_stations || []).map((station) => [station.erp_code, station]));
- const urgentActions = critical.slice(0, 2).map((station) => {
-   const owner = stationByCode.get(station.code)?.tm;
-   return `${station.name}${owner && owner !== 'No TM' ? ` (${owner})` : ''}`;
+ const formatOwner = (station?: Pick<StationRecord, 'tm' | 'coordinator'>) => {
+   if (station?.tm && station.tm !== 'No TM') return `TM ${station.tm}`;
+   if (station?.coordinator && station.coordinator !== 'Unknown') return `Coordinator ${station.coordinator}`;
+   return 'owner unassigned';
+ };
+ const criticalActions = critical.map((station) => {
+   return `${station.name} (${formatOwner(stationByCode.get(station.code))}): replenish by EOD`;
  });
  const priorDays = (telemetry.history_30d || [])
    .filter((point) => point.date < telemetry.date)
@@ -223,9 +267,28 @@ export function buildExecutiveWhatsAppMessage(telemetry: Pick<
    counts[reason] = (counts[reason] || 0) + 1;
    return counts;
  }, {} as Record<string, number>);
- const reasonSummary = Object.entries(zeroSaleReasons)
-   .map(([reason, count]) => `${reason} ${count}`)
-   .join(', ') || (telemetry.zero_sale_count > 0 ? 'reason breakdown unavailable' : '');
+ const reasonSummary = [
+   'No salesperson',
+   'Stock unavailable',
+   'Data/reporting gap',
+   'License/compliance stop',
+   'Commercial stop',
+   'Unclassified — verify',
+ ].filter((reason) => zeroSaleReasons[reason])
+   .map((reason) => `${reason}: ${zeroSaleReasons[reason]}`)
+   .join('; ') || (telemetry.zero_sale_count > 0 ? 'reason breakdown unavailable' : 'none');
+ const zeroSaleActions = (telemetry.zero_sale_stations || []).map((station) => {
+   const reason = classifyZeroSaleReason(station.tm, station.remark);
+   const action = {
+     'No salesperson': 'assign coverage',
+     'Stock unavailable': 'replenish',
+     'Data/reporting gap': 'verify and submit data',
+     'License/compliance stop': 'clear compliance issue',
+     'Commercial stop': 'confirm stop or authorize reopening',
+     'Unclassified — verify': 'verify cause',
+   }[reason] || 'verify cause';
+   return `${station.alds_name} (${formatOwner(station)}): ${action} by EOD`;
+ });
  const topTenStations = telemetry.top_performing_stations || [];
  const topTenVolume = topTenStations
    .reduce((sum, station) => sum + station.sale_qty, 0);
@@ -235,7 +298,7 @@ export function buildExecutiveWhatsAppMessage(telemetry: Pick<
  const forecastRange = nextForecast
    && Number.isFinite(nextForecast.p10)
    && Number.isFinite(nextForecast.p90)
-   ? ` (P10–P90 ${numberFormat(nextForecast.p10)}–${numberFormat(nextForecast.p90)} L)`
+   ? ` (P10–P90 ${fmtLakhs(nextForecast.p10)}–${fmtLakhs(nextForecast.p90)})`
    : '';
  const mape = telemetry.forecast?.mape_ensemble;
  const forecastAccuracy = mape !== null && Number.isFinite(mape)
@@ -244,24 +307,38 @@ export function buildExecutiveWhatsAppMessage(telemetry: Pick<
  const declineSummary = telemetry.top_declining_stations
    ? `Top decline list: ${telemetry.top_declining_stations.filter((station) => station.drop_pct >= 48).length}/10 down ≥48% vs recent monthly average`
    : 'Declining-station detail unavailable';
- const actionLine = urgentActions.length > 0
-   ? `• *Act today:* Replenish ${urgentActions.join(', ')}; TM to confirm dispatch by EOD.`
-   : '• *Act today:* Review all zero-sale exceptions with the assigned TM by EOD.';
+ const criticalActionLine = criticalActions.length > 0
+   ? `• *Critical actions (by EOD):* ${criticalActions.join('; ')}.`
+   : '• *Critical actions:* No stations below one day of stock cover.';
+ const zeroSaleActionLine = zeroSaleActions.length > 0
+   ? `• *Zero-sale actions (by EOD):* ${zeroSaleActions.join('; ')}.`
+   : '• *Zero-sale actions:* None.';
+ const dashboardUrl = new URL(APP_BASE_URL);
+ dashboardUrl.username = '';
+ dashboardUrl.password = '';
+ dashboardUrl.search = '';
+ dashboardUrl.hash = '';
+ const dashboardHostname = dashboardUrl.hostname.replace(/^\[|\]$/g, '');
+ const fullReportLine = APP_LOCAL_HOSTNAMES.includes(dashboardHostname)
+   ? 'Full station detail: open the dashboard on the server computer.'
+   : `Full station detail: ${dashboardUrl.toString().replace(/\/$/, '')}`;
 
  return [
    `*GO GAS EXECUTIVE DAILY BRIEF — ${telemetry.date}*`,
-   `• Sales ${numberFormat(telemetry.total_sale_qty)} L | Collections ₹${numberFormat(telemetry.total_collection)}`,
-   `• Realization ₹${telemetry.effective_rsp.toFixed(2)}/L | ${changeVsPrior}`,
-   `• Reporting coverage ${telemetry.stations_with_sale}/${telemetry.stations_total} stations`,
-   `• Zero sales ${telemetry.zero_sale_count}${reasonSummary ? ` — ${reasonSummary}` : ''}`,
-   `• Low cover: ${critical.length} critical (<1d), ${highRisk.length} high (1–2d), ${monitor.length} monitor (2–3d)`,
-   actionLine,
-   `• Zero-sale follow-up: TM/coordinator to resolve each exception by EOD.`,
+   `• Sales ${fmtLakhs(telemetry.total_sale_qty)} | Collections ₹${fmtCrores(telemetry.total_collection)} | Realization ₹${telemetry.effective_rsp.toFixed(2)}/L`,
+   `• Sales vs prior 7-day average: ${changeVsPrior.replace(/^vs prior \d+-day avg /, '')}.`,
+   `• Sales recorded at ${telemetry.stations_with_sale}/${telemetry.stations_total} stations.`,
+   '• Plan/variance, margin, credit, receivables and cash banked: unavailable in current telemetry.',
+   `• Zero sales ${telemetry.zero_sale_count}: ${reasonSummary}.`,
+   `• *Replenishment risk:* ${critical.length} critical (<1d), ${highRisk.length} high (1–2d), ${monitor.length} monitor (2–3d).`,
+   criticalActionLine,
+   zeroSaleActionLine,
    `• ${declineSummary}.`,
-   `• Top 10 stations: ${topTenShare === null ? 'N/A' : `${topTenShare.toFixed(1)}%`} of network volume.`,
-   `• Forecast ${nextForecast ? `${nextForecast.date}: ${numberFormat(nextForecast.predicted_qty)} L${forecastRange}` : 'unavailable'}.`,
+   `• Top 10 stations contribute ${topTenShare === null ? 'N/A' : `${topTenShare.toFixed(1)}%`} of volume; margin/compliance detail unavailable.`,
+   `• Forecast ${nextForecast ? `${nextForecast.date}: ${fmtLakhs(nextForecast.predicted_qty)}${forecastRange}` : 'unavailable'}.`,
    `• ${forecastAccuracy}`,
-   `_Station-level owners, reasons and actions: see the dashboard/email workbook._`,
+   '• Assumptions: historical sales and weekday patterns; no live price or station-availability adjustments. Festival dates widen the range only.',
+   `_${fullReportLine}_`,
  ].join('\n');
 }
 
@@ -304,8 +381,8 @@ export function buildTankerDispatchWhatsAppMessage(
 
 export function getWhatsAppStatus(): WhatsAppServiceStatus {
   const recipients = parseRecipientNumbers();
-  const hasGateway = Boolean(process.env.WHATSAPP_API_URL && process.env.WHATSAPP_API_TOKEN);
-  const enabled = process.env.WHATSAPP_ENABLED !== 'false';
+  const hasGateway = Boolean(WHATSAPP_API_URL && WHATSAPP_API_TOKEN);
+  const enabled = WHATSAPP_ENABLED;
   const connected = enabled && (whatsappClientReady || hasGateway);
 
   return {
@@ -328,7 +405,7 @@ export async function sendWhatsAppMessage(
   content: string,
   customRecipients?: string[]
 ): Promise<{ success: boolean; recipientCount: number; message: string }> {
-  if (process.env.WHATSAPP_ENABLED === 'false') {
+  if (!WHATSAPP_ENABLED) {
     throw new Error('WhatsApp sending is disabled. Set WHATSAPP_ENABLED=true to enable it.');
   }
 
@@ -337,11 +414,11 @@ export async function sendWhatsAppMessage(
     : parseRecipientNumbers();
 
   if (recipients.length === 0) {
-    throw new Error('No WhatsApp recipient phone numbers configured. Please set WHATSAPP_RECIPIENT_NUMBERS in your environment file.');
+    throw new Error('Add recipient numbers in WhatsApp Automation Settings or set WHATSAPP_RECIPIENT_NUMBERS in your environment.');
   }
 
-  const gatewayUrl = process.env.WHATSAPP_API_URL;
-  const gatewayToken = process.env.WHATSAPP_API_TOKEN;
+  const gatewayUrl = WHATSAPP_API_URL;
+  const gatewayToken = WHATSAPP_API_TOKEN;
   if (Boolean(gatewayUrl) !== Boolean(gatewayToken)) {
     throw new Error('Both WHATSAPP_API_URL and WHATSAPP_API_TOKEN must be configured to use the WhatsApp gateway.');
   }

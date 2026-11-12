@@ -1,29 +1,43 @@
 /**
  * GO Gas Executive Suite — Zero-Cost Automated Morning Briefing Email Dispatcher
  * 
- * Schedule this script in Windows Task Scheduler to run daily at 11:00 AM & 7:00 PM:
+ * Schedule this script in Windows Task Scheduler at the schedule in product-config.json:
  * Command: node send_morning_mail.cjs
  * 
  * Zero cost:
  * - Uses free Gmail SMTP (smtp.gmail.com) with a free Google App Password
  * - Delivers to any number of executive recipients (CMD, MD, State Heads, TMs)
- * - Can fetch from live dashboard (http://localhost:3000) or directly from PostgreSQL
+ * - Can fetch from the configured live dashboard or directly from PostgreSQL
  */
 
 const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
-const http = require('http');
+const productConfig = require('./product-config.json');
 
-// Load environment variables from .env files
+// Load non-empty values in order, preserving earlier files as higher priority.
 const rootEnv = path.resolve(process.cwd(), '.env');
 const dashboardEnv = path.resolve(process.cwd(), 'Analytical Dashboard/.env');
 const manualEnv = path.resolve(process.cwd(), 'Manual Work/.env');
 
-if (fs.existsSync(dashboardEnv)) dotenv.config({ path: dashboardEnv });
-if (fs.existsSync(manualEnv)) dotenv.config({ path: manualEnv });
-if (fs.existsSync(rootEnv)) dotenv.config({ path: rootEnv });
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const entries = dotenv.parse(fs.readFileSync(filePath));
+  for (const [key, value] of Object.entries(entries)) {
+    if (!process.env[key]?.trim() && value.trim()) process.env[key] = value;
+  }
+}
+
+loadEnvFile(dashboardEnv);
+loadEnvFile(manualEnv);
+loadEnvFile(rootEnv);
+
+const appName = process.env.APP_NAME || productConfig.application.name;
+const defaultDashboardUrl = new URL(productConfig.application.baseUrl);
+defaultDashboardUrl.port = process.env.PORT || String(productConfig.application.port);
+const dashboardUrl = process.env.APP_BASE_URL || defaultDashboardUrl.origin;
+const scheduleLabel = process.env.EMAIL_SCHEDULE_LABEL || productConfig.email.scheduleLabel;
 
 function log(msg) {
   const timestamp = new Date().toISOString();
@@ -36,20 +50,10 @@ function log(msg) {
   }
 }
 
-function fetchJson(url) {
-  return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(body));
-        } catch (e) {
-          reject(new Error(`Invalid JSON response: ${body.slice(0, 100)}`));
-        }
-      });
-    }).on('error', reject);
-  });
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Dashboard telemetry endpoint returned HTTP ${response.status}.`);
+  return response.json();
 }
 
 const formatNumber = (val, decimals = 2) =>
@@ -82,7 +86,7 @@ async function buildBriefingFromTelemetry(data) {
   const criticalStockouts = (data.stockout_risk_stations || []).filter(s => s.days_left < 3.0);
   const zeroSaleList = data.zero_sale_stations || [];
 
-  const subject = `[GO Gas Executive Briefing] Operational Snapshot · ${dateStr} · ${totalVolume} L (${totalRevenue})`;
+  const subject = `[${appName} Executive Briefing] Operational Snapshot · ${dateStr} · ${totalVolume} L (${totalRevenue})`;
 
   const plainText = `GO GAS EXECUTIVE BRIEFING · DAILY OPERATIONAL SUMMARY
 Operational Date: ${dateStr}
@@ -129,8 +133,8 @@ ${
 }
 ${zeroCount > 8 ? `...and ${zeroCount - 8} additional zero-sale stations listed on dashboard.\n` : ''}
 ───────────────────────────────────────────────────────────────────
-Dashboard Access: http://localhost:3000
-GO Gas Executive Suite · Automated Daily Morning Dispatch
+Dashboard Access: ${dashboardUrl}
+${appName} · ${scheduleLabel}
 `;
 
   const html = `<!DOCTYPE html>
@@ -161,8 +165,8 @@ GO Gas Executive Suite · Automated Daily Morning Dispatch
 <body>
   <div class="container">
     <div class="header">
-      <h1>GO Gas Executive Daily Briefing</h1>
-      <p>Operational Date: <strong>${dateStr}</strong> · Automated 11:00 AM &amp; 7:00 PM Dispatch</p>
+      <h1>${appName} Daily Briefing</h1>
+      <p>Operational Date: <strong>${dateStr}</strong> · ${scheduleLabel}</p>
     </div>
 
     <div class="section">
@@ -264,8 +268,8 @@ GO Gas Executive Suite · Automated Daily Morning Dispatch
     </div>
 
     <div class="footer">
-      Generated automatically by <strong>GO Gas Executive Suite Intelligence Engine</strong>.<br>
-      To view real-time charts or inspect station-level details, visit your dashboard at <a href="http://localhost:3000" style="color: #ea580c; text-decoration: none;">http://localhost:3000</a>.
+      Generated automatically by <strong>${appName} Intelligence Engine</strong>.<br>
+      Dashboard: <a href="${dashboardUrl}" style="color: #ea580c; text-decoration: none;">${dashboardUrl}</a>.
     </div>
   </div>
 </body>
@@ -276,16 +280,19 @@ GO Gas Executive Suite · Automated Daily Morning Dispatch
 
 async function main() {
   log('====================================================');
-  log('GO Gas Executive Suite: Starting Morning Briefing Run');
+  log(`${appName}: Starting Morning Briefing Run`);
   log('====================================================');
 
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   const smtpTo = process.env.SMTP_TO;
-  const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
-  const smtpSecure = process.env.SMTP_SECURE === 'false' ? false : (smtpPort === 465);
-  const smtpFromName = process.env.SMTP_FROM_NAME || 'GO Gas Executive Suite';
+  const smtpHost = process.env.SMTP_HOST || productConfig.email.smtpHost;
+  const smtpPort = parseInt(process.env.SMTP_PORT || String(productConfig.email.smtpPort), 10);
+  const smtpSecureOverride = process.env.SMTP_SECURE?.trim();
+  const smtpSecure = smtpSecureOverride
+    ? smtpSecureOverride.toLowerCase() === 'true'
+    : productConfig.email.smtpSecure;
+  const smtpFromName = process.env.SMTP_FROM_NAME || productConfig.email.fromName;
 
   log(`Target Recipients: ${smtpTo || '(NOT SET)'}`);
   log(`SMTP Server      : ${smtpHost}:${smtpPort} (Secure: ${smtpSecure})`);
@@ -309,11 +316,12 @@ async function main() {
   // 1. Fetch live telemetry from local dashboard
   let telemetry = null;
   try {
-    log('Fetching telemetry from http://localhost:3000/api/telemetry ...');
-    telemetry = await fetchJson('http://localhost:3000/api/telemetry');
+    const telemetryUrl = new URL('/api/telemetry', dashboardUrl).toString();
+    log(`Fetching telemetry from ${telemetryUrl} ...`);
+    telemetry = await fetchJson(telemetryUrl);
     log(`Fetched telemetry successfully. Source: ${telemetry.source_file}, Date: ${telemetry.date}`);
   } catch (err) {
-    log(`Notice: Could not fetch from http://localhost:3000: ${err.message}`);
+    log(`Notice: Could not fetch from ${dashboardUrl}: ${err.message}`);
     log('Make sure "run-dev.bat" or "npm run dev" is active before running.');
     process.exit(1);
   }

@@ -79,10 +79,6 @@ export class Filters {
     if (row && row.latest) {
       this.latest_date = row.latest.slice(0, 10);
       this.earliest_date = row.earliest.slice(0, 10);
-    } else {
-      // Fallback
-      this.latest_date = '2026-10-30';
-      this.earliest_date = '2026-08-01';
     }
 
     this.computeDateRange();
@@ -122,7 +118,7 @@ export class Filters {
       this.date_start = this.custom_start;
       this.date_end = this.custom_end;
     } else {
-      this.date_start = this.earliest_date || '2026-08-01';
+      this.date_start = this.earliest_date;
       this.date_end = this.latest_date;
     }
   }
