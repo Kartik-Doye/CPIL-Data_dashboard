@@ -1,7 +1,7 @@
 import path from 'path';
 import whatsappWeb from 'whatsapp-web.js';
 import type { ExecutiveTelemetry, StationRecord } from '../types.js';
-import { classifyZeroSaleReason, fmtCrores, fmtLakhs } from './formatting.js';
+import { buildExecutiveBriefingBody } from './executiveBriefing.js';
 import {
   APP_BASE_URL,
   APP_LOCAL_HOSTNAMES,
@@ -219,6 +219,19 @@ export function maskPhoneNumber(phone: string): string {
   return `${prefix}****${suffix}`;
 }
 
+function getWhatsAppDetailReference(): string {
+  const dashboardUrl = new URL(APP_BASE_URL);
+  dashboardUrl.username = '';
+  dashboardUrl.password = '';
+  dashboardUrl.search = '';
+  dashboardUrl.hash = '';
+  const hostname = dashboardUrl.hostname.replace(/^\[|\]$/g, '');
+  if (APP_LOCAL_HOSTNAMES.includes(hostname)) {
+    return 'Full station detail: see the emailed Excel attachment.';
+  }
+  return `Full dashboard: ${dashboardUrl.toString().replace(/\/$/, '')}`;
+}
+
 export function buildExecutiveWhatsAppMessage(telemetry: Pick<
   ExecutiveTelemetry,
   | 'date'
@@ -239,107 +252,9 @@ export function buildExecutiveWhatsAppMessage(telemetry: Pick<
  | 'top_performing_stations'
  | 'all_stations'
 >>): string {
- const nextForecast = telemetry.forecast?.forecast?.[0];
- const stockRisks = telemetry.stockout_risk_stations || [];
- const critical = stockRisks.filter((station) => station.stock_ltr <= 0 || station.days_left < 1);
- const highRisk = stockRisks.filter((station) => station.stock_ltr > 0 && station.days_left >= 1 && station.days_left < 2);
- const monitor = stockRisks.filter((station) => station.stock_ltr > 0 && station.days_left >= 2 && station.days_left < 3);
- const stationByCode = new Map((telemetry.all_stations || []).map((station) => [station.erp_code, station]));
- const formatOwner = (station?: Pick<StationRecord, 'tm' | 'coordinator'>) => {
-   if (station?.tm && station.tm !== 'No TM') return `TM ${station.tm}`;
-   if (station?.coordinator && station.coordinator !== 'Unknown') return `Coordinator ${station.coordinator}`;
-   return 'owner unassigned';
- };
- const criticalActions = critical.map((station) => {
-   return `${station.name} (${formatOwner(stationByCode.get(station.code))}): replenish by EOD`;
- });
- const priorDays = (telemetry.history_30d || [])
-   .filter((point) => point.date < telemetry.date)
-   .slice(-7);
- const priorAverage = priorDays.length > 0
-   ? priorDays.reduce((sum, point) => sum + point.sale_qty, 0) / priorDays.length
-   : null;
- const changeVsPrior = priorAverage && priorAverage > 0
-   ? `vs prior ${priorDays.length}-day avg ${((telemetry.total_sale_qty / priorAverage - 1) * 100 >= 0 ? '+' : '')}${((telemetry.total_sale_qty / priorAverage - 1) * 100).toFixed(1)}%`
-   : 'N/A';
- const zeroSaleReasons = (telemetry.zero_sale_stations || []).reduce((counts, station) => {
-   const reason = classifyZeroSaleReason(station.tm, station.remark);
-   counts[reason] = (counts[reason] || 0) + 1;
-   return counts;
- }, {} as Record<string, number>);
- const reasonSummary = [
-   'No salesperson',
-   'Stock unavailable',
-   'Data/reporting gap',
-   'License/compliance stop',
-   'Commercial stop',
-   'Unclassified — verify',
- ].filter((reason) => zeroSaleReasons[reason])
-   .map((reason) => `${reason}: ${zeroSaleReasons[reason]}`)
-   .join('; ') || (telemetry.zero_sale_count > 0 ? 'reason breakdown unavailable' : 'none');
- const zeroSaleActions = (telemetry.zero_sale_stations || []).map((station) => {
-   const reason = classifyZeroSaleReason(station.tm, station.remark);
-   const action = {
-     'No salesperson': 'assign coverage',
-     'Stock unavailable': 'replenish',
-     'Data/reporting gap': 'verify and submit data',
-     'License/compliance stop': 'clear compliance issue',
-     'Commercial stop': 'confirm stop or authorize reopening',
-     'Unclassified — verify': 'verify cause',
-   }[reason] || 'verify cause';
-   return `${station.alds_name} (${formatOwner(station)}): ${action} by EOD`;
- });
- const topTenStations = telemetry.top_performing_stations || [];
- const topTenVolume = topTenStations
-   .reduce((sum, station) => sum + station.sale_qty, 0);
- const topTenShare = topTenStations.length > 0 && telemetry.total_sale_qty > 0
-   ? (topTenVolume / telemetry.total_sale_qty) * 100
-   : null;
- const forecastRange = nextForecast
-   && Number.isFinite(nextForecast.p10)
-   && Number.isFinite(nextForecast.p90)
-   ? ` (P10–P90 ${fmtLakhs(nextForecast.p10)}–${fmtLakhs(nextForecast.p90)})`
-   : '';
- const mape = telemetry.forecast?.mape_ensemble;
- const forecastAccuracy = mape !== null && Number.isFinite(mape)
-   ? `Historical MAPE ${mape.toFixed(1)}%${telemetry.forecast.backtest_days === undefined ? '' : ` across ${telemetry.forecast.backtest_days} scored days`}; planning input only.`
-   : 'Historical forecast accuracy not available yet.';
- const declineSummary = telemetry.top_declining_stations
-   ? `Top decline list: ${telemetry.top_declining_stations.filter((station) => station.drop_pct >= 48).length}/10 down ≥48% vs recent monthly average`
-   : 'Declining-station detail unavailable';
- const criticalActionLine = criticalActions.length > 0
-   ? `• *Critical actions (by EOD):* ${criticalActions.join('; ')}.`
-   : '• *Critical actions:* No stations below one day of stock cover.';
- const zeroSaleActionLine = zeroSaleActions.length > 0
-   ? `• *Zero-sale actions (by EOD):* ${zeroSaleActions.join('; ')}.`
-   : '• *Zero-sale actions:* None.';
- const dashboardUrl = new URL(APP_BASE_URL);
- dashboardUrl.username = '';
- dashboardUrl.password = '';
- dashboardUrl.search = '';
- dashboardUrl.hash = '';
- const dashboardHostname = dashboardUrl.hostname.replace(/^\[|\]$/g, '');
- const fullReportLine = APP_LOCAL_HOSTNAMES.includes(dashboardHostname)
-   ? 'Full station detail: open the dashboard on the server computer.'
-   : `Full station detail: ${dashboardUrl.toString().replace(/\/$/, '')}`;
-
- return [
-   `*GO GAS EXECUTIVE DAILY BRIEF — ${telemetry.date}*`,
-   `• Sales ${fmtLakhs(telemetry.total_sale_qty)} | Collections ₹${fmtCrores(telemetry.total_collection)} | Realization ₹${telemetry.effective_rsp.toFixed(2)}/L`,
-   `• Sales vs prior 7-day average: ${changeVsPrior.replace(/^vs prior \d+-day avg /, '')}.`,
-   `• Sales recorded at ${telemetry.stations_with_sale}/${telemetry.stations_total} stations.`,
-   '• Plan/variance, margin, credit, receivables and cash banked: unavailable in current telemetry.',
-   `• Zero sales ${telemetry.zero_sale_count}: ${reasonSummary}.`,
-   `• *Replenishment risk:* ${critical.length} critical (<1d), ${highRisk.length} high (1–2d), ${monitor.length} monitor (2–3d).`,
-   criticalActionLine,
-   zeroSaleActionLine,
-   `• ${declineSummary}.`,
-   `• Top 10 stations contribute ${topTenShare === null ? 'N/A' : `${topTenShare.toFixed(1)}%`} of volume; margin/compliance detail unavailable.`,
-   `• Forecast ${nextForecast ? `${nextForecast.date}: ${fmtLakhs(nextForecast.predicted_qty)}${forecastRange}` : 'unavailable'}.`,
-   `• ${forecastAccuracy}`,
-   '• Assumptions: historical sales and weekday patterns; no live price or station-availability adjustments. Festival dates widen the range only.',
-   `_${fullReportLine}_`,
- ].join('\n');
+ return buildExecutiveBriefingBody(telemetry, {
+   detailReference: getWhatsAppDetailReference(),
+ }).text;
 }
 
 export function buildTankerDispatchWhatsAppMessage(

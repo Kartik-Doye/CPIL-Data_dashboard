@@ -99,7 +99,18 @@ test('formats a concise executive WhatsApp brief with risk bands and forecast co
       makeStation({ erp_code: 'ZERO4', remark: 'License issue' }),
       makeStation({ erp_code: 'ZERO5', remark: 'Sale not received' }),
     ],
-    top_performing_stations: [],
+    top_performing_stations: Array.from({ length: 10 }, (_, index) => makeStation({
+      erp_code: `TOP${index + 1}`,
+      sale_qty: 4868,
+    })),
+    top_declining_stations: Array.from({ length: 10 }, (_, index) => ({
+      code: `DECLINE${index + 1}`,
+      name: `Decline ${index + 1}`,
+      state: 'TG',
+      drop_pct: index < 8 ? 50 : 40,
+      drop_litres: 100,
+      current_sale: 100,
+    })),
     forecast: {
       horizon_days: 7,
       predicted_total_7d: 2415400,
@@ -137,20 +148,63 @@ test('formats a concise executive WhatsApp brief with risk bands and forecast co
     },
   });
 
-  assert.match(msg, /GO GAS EXECUTIVE DAILY BRIEF/);
-  assert.match(msg, /Sales 3\.43 L \| Collections ₹2\.64 Cr/);
-  assert.match(msg, /₹77\.10\/L/);
-  assert.match(msg, /Sales vs prior 7-day average: \+7\.1%/);
-  assert.match(msg, /1 critical \(<1d\), 1 high \(1–2d\), 0 monitor/);
-  assert.match(msg, /No salesperson: 1; Stock unavailable: 1; Data\/reporting gap: 1; License\/compliance stop: 1; Commercial stop: 1/);
-  assert.match(msg, /YUSUFGUDA \(TM Suresh\): replenish by EOD/);
-  assert.match(msg, /Station \(Coordinator Maya\): assign coverage by EOD/);
-  assert.match(msg, /YUSUFGUDA/);
-  assert.match(msg, /3\.48 L \(P10–P90 3\.20 L–3\.75 L\)/);
-  assert.match(msg, /Historical MAPE 6\.8% across 14 scored days; planning input only/);
-  assert.match(msg, /Plan\/variance, margin, credit, receivables and cash banked: unavailable/);
-  assert.match(msg, /Festival dates widen the range only/);
-  assert.ok(msg.split('\n').length <= 15);
+  assert.match(msg, /GO GAS EXECUTIVE MORNING BRIEFING — 06 Nov 2026/);
+  assert.match(msg, /\*PERFORMANCE\*/);
+  assert.match(msg, /Network sales: \*3,42,850\.00 L\* \| Collection: \*₹2,64,33,735\.00\*/);
+  assert.match(msg, /Sales vs 7-day average: \*\+7\.1%\* \| Reporting: 312\/316 \| Top-10 share: 14\.2%/);
+  assert.match(msg, /Zero-sale stations: \*5\* — 2 missing TM\/data, 1 sale stops, 1 license issues, 1 stock unavailable/);
+  assert.match(msg, /Replenishment risk: \*1 critical \(<1 day\)\*, 1 high \(1–2 days\), 0 monitor \(2–3 days\)/);
+  assert.match(msg, /Replenish 1 critical-stock station\(s\) by EOD: YUSUFGUDA \(TM Suresh\)/);
+  assert.match(msg, /assign owners by 10:00 AM and escalate unassigned critical actions or unresolved sale stops\/stock gaps to Regional Managers/);
+  assert.match(msg, /Declining stations: \*8 of 10 monitored declining stations\* are down 48% or more versus their 3-month average/);
+  assert.match(msg, /Forecast for 07 Nov 2026: \*3,48,200\.00 L\* \(range 3,20,000\.00 L–3,75,000\.00 L\)/);
+  assert.match(msg, /Historical MAPE \*6\.8%\* across 14 scored days/);
+  assert.match(msg, /see the emailed Excel attachment/);
+  assert.equal((msg.match(/•/g) || []).length, 10);
+});
+
+test('limits executive WhatsApp brief to ten lines and caps named action items', () => {
+  const msg = buildExecutiveWhatsAppMessage({
+    date: '2026-11-06',
+    total_sale_qty: 1000,
+    total_collection: 77000,
+    effective_rsp: 77,
+    average_rsp: 77,
+    stations_with_sale: 1,
+    stations_total: 4,
+    zero_sale_count: 3,
+    stockout_risk_stations: [1, 2, 3, 4].map((index) => ({
+      code: `RISK${index}`,
+      name: `Critical-${index}`,
+      days_left: 0.5,
+      stock_ltr: 100,
+      daily_burn_ltr: 200,
+      state: 'TG',
+      remark: '',
+    })),
+    zero_sale_stations: [1, 2, 3].map((index) => makeStation({
+      erp_code: `ZERO${index}`,
+      alds_name: `Zero-${index}`,
+      remark: 'Sale Stop',
+    })),
+    forecast: {
+      horizon_days: 7,
+      predicted_total_7d: 0,
+      mape_ensemble: null,
+      mape_linear: null,
+      mape_holt_winters: null,
+      mape_naive: null,
+      backtest_days: 0,
+      forecast: [],
+    },
+  });
+
+  assert.equal((msg.match(/•/g) || []).length, 10);
+  assert.match(msg, /Critical-1/);
+  assert.match(msg, /Critical-2/);
+  assert.match(msg, /Critical-3/);
+  assert.doesNotMatch(msg, /Critical-4/);
+  assert.match(msg, /see full report for 1 additional station/);
 });
 
 test('classifies zero-sale reasons without treating unknown remarks as reporting gaps', () => {

@@ -104,12 +104,24 @@ async function loadFromDatabase(): Promise<any | null> {
       ORDER BY month ASC, erp_code ASC
     `);
 
+    const stationMappingTable = await query<{ mapping_available: boolean }>(
+      "SELECT to_regclass('public.station_contact_mapping') IS NOT NULL AS mapping_available",
+    );
+    const hasStationContactMapping = Boolean(stationMappingTable[0]?.mapping_available);
+    if (!hasStationContactMapping) {
+      console.info('[DATABASE] Station/TM mapping table is not installed; using the current sale_tracker names and TM values.');
+    }
+
     const latestStations = await query(`
       SELECT 
         s.erp_code,
-        s.alds_name,
+        ${hasStationContactMapping
+    ? "COALESCE(NULLIF(TRIM(cm.alds_name), ''), s.alds_name)"
+    : 's.alds_name'} AS alds_name,
         COALESCE(m.to_state, s.state) as state,
-        COALESCE(NULLIF(TRIM(s.tm), ''), 'No TM') as tm,
+        ${hasStationContactMapping
+    ? "COALESCE(NULLIF(TRIM(cm.tm), ''), NULLIF(TRIM(s.tm), ''), 'No TM')"
+    : "COALESCE(NULLIF(TRIM(s.tm), ''), 'No TM')"} AS tm,
         COALESCE(NULLIF(TRIM(s.coordinator), ''), 'Unassigned') as coordinator,
         COALESCE(NULLIF(TRIM(s.type), ''), 'LOCO') as type,
         s.tank_cap,
@@ -135,6 +147,9 @@ async function loadFromDatabase(): Promise<any | null> {
         s.sale_date::text as sale_date
       FROM sale_tracker s
       LEFT JOIN state_map m ON s.state = m.from_state
+      ${hasStationContactMapping
+    ? 'LEFT JOIN public.station_contact_mapping cm ON UPPER(TRIM(cm.erp_code)) = UPPER(TRIM(s.erp_code))'
+    : ''}
       WHERE s.sale_date = (SELECT MAX(sale_date) FROM sale_tracker)
     `);
 

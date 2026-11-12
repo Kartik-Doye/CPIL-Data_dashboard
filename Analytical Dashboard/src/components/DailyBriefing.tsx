@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ExecutiveTelemetry } from '../types';
 import productConfig from '../../../product-config.json';
+import { buildExecutiveBriefingBody } from '../engine/executiveBriefing.js';
 
 interface DailyBriefingProps {
   data: ExecutiveTelemetry;
@@ -33,85 +34,12 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   });
   const rupees = (value: number) => `₹${qty(value)}`;
 
-  // Generate WhatsApp / Email ready formatted executive summary text
   const generateBriefingText = () => {
-    const nextForecast = data.forecast?.forecast?.[0];
-    const previousSevenDays = data.history_30d?.slice(-8, -1) || [];
-    const sevenDayAverage = previousSevenDays.length
-      ? previousSevenDays.reduce((sum, day) => sum + day.sale_qty, 0) / previousSevenDays.length
-      : null;
-    const changePct = sevenDayAverage && sevenDayAverage > 0
-      ? ((data.total_sale_qty - sevenDayAverage) / sevenDayAverage) * 100
-      : null;
-    const accuracy = data.forecast?.mape_ensemble === null || data.forecast?.mape_ensemble === undefined
-      ? 'Not available'
-      : `${Math.max(0, 100 - data.forecast.mape_ensemble).toFixed(1)}% (MAPE ${data.forecast.mape_ensemble.toFixed(1)}%)`;
-    const paytmShare = data.total_collection > 0
-      ? (data.total_paytm_collection / data.total_collection) * 100
-      : 0;
-    const stockoutLines = data.stockout_risk_stations.length
-      ? data.stockout_risk_stations.map((station, index) =>
-        `   ${index + 1}. ${station.name} (${station.code}, ${station.state}): ${qty(station.days_left)} days left; stock ${qty(station.stock_ltr)} L; burn ${qty(station.daily_burn_ltr)} L/day`
-      ).join('\n')
-      : '   None reported.';
-    const zeroSaleLines = data.zero_sale_stations.length
-      ? data.zero_sale_stations.map((station, index) =>
-        `   ${index + 1}. ${station.alds_name} (${station.erp_code}, ${station.state}) | TM: ${station.tm || 'Unassigned'} | ${station.remark || 'Reason not provided'}`
-      ).join('\n')
-      : '   None reported.';
-    const stateLines = (data.states_summary || []).map((state) =>
-      `│ ${state.state.padEnd(5)} │ ${qty(state.total_sale_qty).padStart(12)} L │ ${rupees(state.total_collection).padStart(18)} │ ₹${state.effective_rsp.toFixed(2).padStart(7)} │ ${String(state.stations).padStart(5)} │ ${String(state.zero_sale_count).padStart(4)} │`
-    ).join('\n');
-    const topStationLines = (data.top_performing_stations || []).slice(0, 10).map((station, index) =>
-      `   ${String(index + 1).padStart(2)}. ${station.alds_name} (${station.state}) | ${qty(station.sale_qty)} L | ${rupees(station.net_total_collection || station.collection)}`
-    ).join('\n');
-    const decliningLines = (data.top_declining_stations || []).slice(0, 10).map((station, index) =>
-      `   ${String(index + 1).padStart(2)}. ${station.name} (${station.state}) | latest ${qty(station.current_sale)} L vs 3-month daily avg ${qty(station.average_daily_sale || 0)} L | down ${station.drop_pct.toFixed(1)}%`
-    ).join('\n');
-
-    return `🔥 *GO GAS EXECUTIVE MORNING BRIEFING*
-📅 *Operational Date:* ${data.date}
-🏢 *Network Status:* ${data.stations_with_sale}/${data.stations_total} stations recorded sales (${data.zero_sale_count} recorded zero sales). This is reporting activity, not an equipment/system connectivity check.
-
-📊 *OVERALL SUMMARY*
-───────────────────────────────────
-Latest Day Sale: ${qty(data.total_sale_qty)} L (${changePct === null ? 'change vs 7-day average unavailable' : `${changePct >= 0 ? '↑' : '↓'}${Math.abs(changePct).toFixed(1)}% vs 7-day average of ${qty(sevenDayAverage!)} L`})
-Collection: ${rupees(data.total_collection)} (rate: ₹${data.effective_rsp.toFixed(2)}/L)
-RSP: ₹${data.average_rsp.toFixed(2)}/L
-Effective RSP: ₹${data.effective_rsp.toFixed(2)}/L
-Free Sale: ${qty(data.total_free_sale_litres)} L (${rupees(data.total_free_sale_rupees)})
-Digital / Paytm: ${rupees(data.total_paytm_collection)} (${paytmShare.toFixed(2)}% of collection)
-Cash: ${rupees(data.total_cash_collection)}
-Total Stations: ${data.stations_total}
-Zero-Sale Stations: ${data.zero_sale_count}
-
-📈 *FORECAST*
-───────────────────────────────────
-Forecast for ${nextForecast?.date || 'next available date'}: ${nextForecast ? `${qty(nextForecast.predicted_qty)} L` : 'Not available'}
-7-Day Forecast Total: ${qty(data.forecast?.predicted_total_7d || 0)} L
-Historical Validation Accuracy: ${accuracy} across ${data.forecast?.backtest_days ?? 0} scored day(s); this is historical performance, not a guarantee.
-Learning Status: ${data.forecast?.learning_status || 'Not available'}
-
-🗺️ *STATE-WISE BREAKDOWN (${data.states_summary?.length || 0} states)*
-┌───────┬──────────────┬────────────────────┬─────────┬───────┬──────┐
-│ State │ Sale (L)     │ Collection (₹)     │ Rate/L  │ Stns  │ Zero │
-├───────┼──────────────┼────────────────────┼─────────┼───────┼──────┤
-${stateLines || '│ No state summary available.                                           │'}
-└───────┴──────────────┴────────────────────┴─────────┴───────┴──────┘
-
-🏆 *TOP 10 PERFORMING STATIONS*
-${topStationLines || '   No station performance data available.'}
-
-⚠️ *ZERO-SALE STATIONS (${data.zero_sale_stations.length})*
-${zeroSaleLines}
-
-🚨 *STOCK-OUT WARNINGS (${data.stockout_risk_stations.length})*
-${stockoutLines}
-
-📉 *DECLINING STATIONS (${data.top_declining_stations?.length || 0})*
-${decliningLines || '   None flagged.'}
-
-_Generated via ${productConfig.application.name} Intelligence Engine_`;
+    const hostname = window.location.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const detailReference = ['localhost', '127.0.0.1', '::1'].includes(hostname)
+      ? 'Full station detail: see the emailed Excel attachment.'
+      : `Full dashboard: ${window.location.origin}`;
+    return buildExecutiveBriefingBody(data, { detailReference }).text;
   };
 
   const handleCopy = () => {

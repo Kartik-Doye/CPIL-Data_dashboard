@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit",
     "test": "tsx --test \"Analytical Dashboard/src/engine/*.test.ts\"",
     "load-sales": "tsx \"Manual Work/load_sales.ts\"",
+    "load-station-mapping": "tsx \"Manual Work/load_station_contact_mapping.ts\"",
     "test-db": "tsx test_db.ts",
     "email:send": "tsx \"Analytical Dashboard/send_morning_report.ts\""
   },

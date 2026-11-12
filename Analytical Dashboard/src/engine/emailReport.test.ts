@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import { buildExecutiveEmail, buildStationWorkbook } from './emailReport.js';
 
-test('builds a concise executive email with risk bands, actions, and forecast context', () => {
+test('builds a concise executive email with the same WhatsApp-ready sections', () => {
   const { subject, text, html } = buildExecutiveEmail({
     date: '2026-11-05',
     stations_with_sale: 312,
@@ -28,22 +28,21 @@ test('builds a concise executive email with risk bands, actions, and forecast co
   });
 
   assert.equal(subject, 'GO Gas Daily Operations Brief | 05 Nov 2026');
-  assert.match(text, /3,42,850\.00 L/);
-  assert.match(text, /₹2,64,33,735\.00/);
-  assert.match(text, /1 critical \(<1 day\), 1 high \(1–2 days\)/);
-  assert.match(text, /GO GAS \| DAILY OPERATIONS BRIEF \| 05 Nov 2026/);
-  assert.match(text, /Tomorrow \(06 Nov 2026\): 3,48,200\.00 L \(P10–P90 3,20,000\.00–3,75,000\.00 L\)/);
-  assert.match(text, /Historical MAPE 6\.8% over 14 days; forecast is for planning, not a commitment/);
-  assert.match(text, /Targets and financial KPIs are not included/);
-  assert.match(text, /Attached workbook: station details and suggested actions/);
-  assert.match(text, /Regards,\nKartik Doye\nData Analyst \(Sales & Marketing\) - ALDS/);
-  assert.match(text, /8087018975/);
-  assert.match(text, /kartikdoye@confidencegroup\.co/);
-  assert.ok(text.trim().split(/\s+/).length <= 150);
+  assert.match(text, /GO GAS EXECUTIVE MORNING BRIEFING — 05 Nov 2026/);
+  assert.match(text, /\*PERFORMANCE\*/);
+  assert.match(text, /Network sales: \*3,42,850\.00 L\* \| Collection: \*₹2,64,33,735\.00\*/);
+  assert.match(text, /\*EXCEPTIONS\*/);
+  assert.match(text, /Replenishment risk: \*1 critical \(<1 day\)\*, 1 high \(1–2 days\), 0 monitor \(2–3 days\)/);
+  assert.match(text, /NEXT-DAY FORECAST — 06 Nov 2026/);
+  assert.match(text, /Forecast for 06 Nov 2026: \*3,48,200\.00 L\* \(range 3,20,000\.00 L–3,75,000\.00 L\)/);
+  assert.match(text, /Historical MAPE \*6\.8%\* across 14 scored days/);
+  assert.match(text, /Full station-wise report, state performance, stock-risk list, and action tracker are attached/);
+  assert.equal((text.match(/•/g) || []).length, 10);
   assert.match(html, /src="cid:company-logo"/);
   assert.match(html, /alt="Confidence Group"/);
-  assert.match(text, /Top 10 share: not available/);
-  assert.match(html, /<h2[^>]*>DAILY PERFORMANCE<\/h2>/);
+  assert.match(html, /<h2[^>]*>PERFORMANCE<\/h2>/);
+  assert.match(html, /<strong>3,42,850\.00 L<\/strong>/);
+  assert.match(html, /<strong>6\.8%<\/strong>/);
   assert.doesNotMatch(text, /stockout risk \(under three days\)/);
 });
 
@@ -67,10 +66,11 @@ test('reports unavailable forecasts and empty priority lists clearly', () => {
     stockout_risk_stations: [],
   });
 
-  assert.match(text, /Tomorrow: unavailable/);
+  assert.match(text, /Zero-sale stations: \*0\*\./);
+  assert.match(text, /Replenishment risk: \*0 critical/);
+  assert.match(text, /Next-day forecast is unavailable/);
   assert.match(text, /Historical MAPE unavailable/);
-  assert.match(text, /0 critical \(<1 day\), 0 high \(1–2 days\), 0 monitor \(2–3 days\)/);
-  assert.ok(text.trim().split(/\s+/).length <= 150);
+  assert.equal((text.match(/•/g) || []).length, 10);
 });
 
 test('builds a filterable station workbook with proposed owners and actions', async () => {

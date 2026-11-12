@@ -107,6 +107,33 @@ created in the SQL file. The loader uses its own credentials, separate from the
 dashboard's read-only `DB_USER` and `BOT_READER_PASSWORD`. **Never commit `.env`**
 — it is in `.gitignore`.
 
+### Import current station and TM assignments
+
+`Contact.xlsx` contains a `contact` sheet with ERP Code, Station Name, State,
+Region, and TM columns. To keep historical sales records unchanged, these
+current assignments are stored separately in `station_contact_mapping`.
+
+1. Ask a PostgreSQL administrator to run `03_station_contact_mapping.sql` in
+   the `sale_alds` database. The script grants the loader access to that mapping
+   table and the dashboard reader access to it.
+2. From the repository root, validate the workbook with a dry run:
+
+   ```powershell
+   npm run load-station-mapping
+   ```
+
+3. After the dry run reports the expected mapping count, apply it using the
+   loader credentials configured in `.env`:
+
+   ```powershell
+   npm run load-station-mapping -- --apply
+   ```
+
+The loader ignores rows without a TM, rejects conflicting ERP-code mappings,
+and only changes `station_contact_mapping`. The dashboard uses that table to
+show the mapped station name and TM when it is installed. Restart the dashboard
+after importing the mapping so cached telemetry is reloaded.
+
 ---
 
 ## Daily use

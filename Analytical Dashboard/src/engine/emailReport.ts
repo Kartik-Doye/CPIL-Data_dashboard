@@ -9,6 +9,7 @@ import type {
   StationRecord,
   StockoutRiskStation,
 } from '../types.js';
+import { buildExecutiveBriefingBody } from './executiveBriefing.js';
 import { classifyZeroSaleReason } from './formatting.js';
 
 type ExecutiveEmailTelemetry = Omit<
@@ -212,120 +213,31 @@ export async function buildStationWorkbook(
 
 export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   const reportDate = formatReportDate(telemetry.date);
-  const nextForecast = telemetry.forecast.forecast[0];
-  const mape = telemetry.forecast.mape_ensemble;
-  const historicalAccuracy = mape === null || !Number.isFinite(mape)
-    ? 'Historical MAPE unavailable'
-    : `Historical MAPE ${mape.toFixed(1)}%${telemetry.forecast.backtest_days === undefined ? '' : ` over ${telemetry.forecast.backtest_days} days`}; forecast is for planning, not a commitment`;
-  const stockRisks = telemetry.stockout_risk_stations;
-  const critical = stockRisks.filter((station) => (station.stock_ltr ?? 1) <= 0 || station.days_left < 1);
-  const highRisk = stockRisks.filter((station) => (station.stock_ltr ?? 1) > 0 && station.days_left >= 1 && station.days_left < 2);
-  const monitor = stockRisks.filter((station) => (station.stock_ltr ?? 1) > 0 && station.days_left >= 2 && station.days_left < 3);
-  const stationByCode = new Map((telemetry.all_stations || []).map((station) => [station.erp_code, station]));
-  const urgentActions = critical.slice(0, 3).map((stockRisk) => {
-    const station = stationByCode.get(stockRisk.code);
-    const owner = station ? getOwner(station) : 'TM/coordinator to confirm';
-    return `${stockRisk.name} (contact: ${owner})`;
+  const briefing = buildExecutiveBriefingBody(telemetry, {
+    detailReference: 'Full station-wise report, state performance, stock-risk list, and action tracker are attached.',
   });
-  const priorDays = (telemetry.history_30d || []).filter((point) => point.date < telemetry.date).slice(-7);
-  const priorAverage = priorDays.length > 0
-    ? priorDays.reduce((sum, point) => sum + point.sale_qty, 0) / priorDays.length
-    : null;
-  const salesChange = priorAverage && priorAverage > 0
-    ? `${((telemetry.total_sale_qty / priorAverage - 1) * 100 >= 0 ? '+' : '')}${((telemetry.total_sale_qty / priorAverage - 1) * 100).toFixed(1)}% vs prior ${priorDays.length}-day avg`
-    : 'prior-period comparison unavailable';
-  const zeroSaleReasons = (telemetry.zero_sale_stations || []).reduce((counts, station) => {
-    const reason = classifyZeroSaleReason(station.tm, station.remark);
-    counts[reason] = (counts[reason] || 0) + 1;
-    return counts;
-  }, {} as Record<string, number>);
-  const zeroSaleSummary = Object.entries(zeroSaleReasons)
-    .map(([reason, count]) => `${reason}: ${count}`)
-    .join('; ') || (telemetry.zero_sale_count > 0 ? 'reason breakdown unavailable' : 'none');
-  const topTenStations = (telemetry.top_performing_stations || []).slice(0, 10);
-  const topTenVolume = topTenStations
-    .reduce((sum, station) => sum + station.sale_qty, 0);
-  const topTenShare = topTenStations.length > 0 && telemetry.total_sale_qty > 0
-    ? `${((topTenVolume / telemetry.total_sale_qty) * 100).toFixed(1)}%`
-    : 'not available';
-  const declineSummary = telemetry.top_declining_stations
-    ? `${telemetry.top_declining_stations.filter((station) => station.drop_pct >= 48).length} watchlist stations down ≥48%`
-    : 'data unavailable';
-  const forecastRange = nextForecast
-    && typeof nextForecast.p10 === 'number'
-    && Number.isFinite(nextForecast.p10)
-    && typeof nextForecast.p90 === 'number'
-    && Number.isFinite(nextForecast.p90)
-    ? ` (P10–P90 ${number(nextForecast.p10)}–${number(nextForecast.p90)} L)`
-    : '';
-  const remainingCritical = Math.max(0, critical.length - urgentActions.length);
-  const actionLines = [
-    ...(urgentActions.length > 0
-      ? [`• Replenish ${urgentActions.join('; ')} by EOD.`]
-      : []),
-    ...(remainingCritical > 0
-      ? [`• Review the other ${remainingCritical} critical station(s); confirm an owner by EOD.`]
-      : []),
-    ...(telemetry.zero_sale_count > 0
-      ? [`• Resolve ${telemetry.zero_sale_count} zero-sale exception(s) by EOD.`]
-      : []),
-    ...(urgentActions.length === 0 && remainingCritical === 0 && telemetry.zero_sale_count === 0
-      ? ['• No immediate station action is flagged today.']
-      : []),
-  ];
-
-  const text = [
-    `GO GAS | DAILY OPERATIONS BRIEF | ${reportDate}`,
-    '',
-    'Dear Management Team,',
-    `Daily summary for ${reportDate}.`,
-    '',
-    'DAILY PERFORMANCE',
-    `Sales: ${number(telemetry.total_sale_qty)} L | Collections: ₹${number(telemetry.total_collection)} | Realization: ₹${telemetry.effective_rsp.toFixed(2)}/L`,
-    `Reporting: ${telemetry.stations_with_sale}/${telemetry.stations_total} | Zero sales: ${telemetry.zero_sale_count} | ${salesChange}`,
-    '',
-    'STATION EXCEPTIONS',
-    `Stock cover: ${critical.length} critical (<1 day), ${highRisk.length} high (1–2 days), ${monitor.length} monitor (2–3 days).`,
-    `Zero-sale reasons: ${zeroSaleSummary}.`,
-    `Decline watchlist: ${declineSummary}. Top 10 share: ${topTenShare}.`,
-    '',
-    'FOLLOW-UP REQUESTED',
-    ...actionLines,
-    '',
-    'FORECAST',
-    `Tomorrow${nextForecast ? ` (${formatReportDate(nextForecast.date)})` : ''}: ${nextForecast ? `${number(nextForecast.predicted_qty)} L${forecastRange}` : 'unavailable'}. ${historicalAccuracy}.`,
-    'Targets and financial KPIs are not included in this report.',
-    '',
-    'Attached workbook: station details and suggested actions. Please confirm owners and deadlines.',
-    '',
-    'Regards,',
-    'Kartik Doye',
-    'Data Analyst (Sales & Marketing) - ALDS',
-    'Phone: 8087018975 | Email: kartikdoye@confidencegroup.co',
-  ].join('\n');
-
   const sectionHeadings = new Set([
-    'DAILY PERFORMANCE',
-    'STATION EXCEPTIONS',
-    'FOLLOW-UP REQUESTED',
-    'FORECAST',
+    '*PERFORMANCE*',
+    '*EXCEPTIONS*',
+    '*TODAY’S ACTIONS*',
+    '*DATA LIMITATION*',
   ]);
-  const htmlText = text.split('\n').map((line, index) => {
-    const escapedLine = escapeHtml(line);
-    if (sectionHeadings.has(line)) {
-      return `<h2 style="margin:18px 0 6px;font-size:13px;color:#334155">${escapedLine}</h2>`;
-    }
+  const htmlBody = briefing.text.split('\n').map((line, index) => {
+    const escapedLine = escapeHtml(line).replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
     if (index === 0) {
       return `<h1 style="margin:0 0 18px;font-size:20px;color:#0f172a">${escapedLine}</h1>`;
     }
-    if (line === '') return '<div style="height:4px"></div>';
-    return `<p style="margin:4px 0">${escapedLine}</p>`;
+    if (!line) return '<div style="height:6px"></div>';
+    if (sectionHeadings.has(line) || line.startsWith('*NEXT-DAY FORECAST —')) {
+      return `<h2 style="margin:18px 0 6px;font-size:13px;color:#ea580c">${escapedLine.replace(/<\/?strong>/g, '')}</h2>`;
+    }
+    return `<p style="margin:8px 0">${escapedLine}</p>`;
   }).join('');
 
   return {
     subject: `GO Gas Daily Operations Brief | ${reportDate}`,
-    text,
-    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlText}</div>`,
+    text: briefing.text,
+    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlBody}</div>`,
   };
 }
 
