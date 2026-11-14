@@ -213,23 +213,29 @@ export async function buildStationWorkbook(
 
 export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   const reportDate = formatReportDate(telemetry.date);
-  const briefing = buildExecutiveBriefingBody(telemetry, {
-    detailReference: 'Full station-wise report, state performance, stock-risk list, and action tracker are attached.',
-  });
-  const sectionHeadings = new Set([
-    '*PERFORMANCE*',
-    '*EXCEPTIONS*',
-    '*TODAY’S ACTIONS*',
-    '*DATA LIMITATION*',
+  const briefing = buildExecutiveBriefingBody(telemetry);
+  const sectionHeadingColors = new Map([
+    ['🟢 *PERFORMANCE*', '#15803d'],
+    ['🟠 *EXCEPTIONS*', '#c2410c'],
+    ['🔴 *TODAY’S ACTIONS*', '#b91c1c'],
+    ['🔵 *NEXT-DAY FORECAST —', '#1d4ed8'],
   ]);
+  let emphasisColor = '#1d4ed8';
   const htmlBody = briefing.text.split('\n').map((line, index) => {
-    const escapedLine = escapeHtml(line).replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
+    const headingColor = [...sectionHeadingColors].find(([heading]) =>
+      heading.endsWith('*') ? line === heading : line.startsWith(heading),
+    )?.[1];
+    if (headingColor) emphasisColor = headingColor;
+    const escapedLine = escapeHtml(line).replace(
+      /\*([^*]+)\*/g,
+      `<strong style="color:${emphasisColor}">$1</strong>`,
+    );
     if (index === 0) {
       return `<h1 style="margin:0 0 18px;font-size:20px;color:#0f172a">${escapedLine}</h1>`;
     }
     if (!line) return '<div style="height:6px"></div>';
-    if (sectionHeadings.has(line) || line.startsWith('*NEXT-DAY FORECAST —')) {
-      return `<h2 style="margin:18px 0 6px;font-size:13px;color:#ea580c">${escapedLine.replace(/<\/?strong>/g, '')}</h2>`;
+    if (headingColor) {
+      return `<h2 style="margin:18px 0 6px;font-size:13px;color:${headingColor}">${escapedLine.replace(/<\/?strong(?:\s+style="[^"]*")?>/g, '')}</h2>`;
     }
     return `<p style="margin:8px 0">${escapedLine}</p>`;
   }).join('');

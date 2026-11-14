@@ -2,8 +2,7 @@
 
 This guide describes the screens and controls currently exposed by the GO Gas
 Analytical Dashboard. It is an operator's guide to what appears in the web app;
-it does not describe every item in the 32-report catalog as a fully implemented
-screen.
+the catalog contains 14 interactive views and 18 planned report specifications.
 
 ## 1. Page layout
 
@@ -11,13 +10,12 @@ The application is a single-page dashboard. Its main areas are:
 
 1. **Top bar** — product identity, active data date/source, database inspection,
    the reports-drawer button, theme, file loading, CSV export, and refresh.
-2. **Report navigation** — the primary tabs for the dashboard's interactive
-   views.
-3. **Global filter bar** — period, state, operating type, TM, text search,
-   compact view, and compare-mode controls.
+2. **Report navigation** — 14 interactive report views and the report catalog.
+3. **Station filter bar** — state, operating type, TM, text search, and compact
+   view controls for the latest available day.
 4. **Report content** — the selected dashboard or analysis view.
-5. **Reports drawer and All Reports Index** — alternate navigation and the
-   searchable 32-entry catalog.
+5. **Reports drawer and Report Catalog** — alternate navigation and the
+   searchable catalog of 14 interactive views and 18 planned specifications.
 
 The layout adapts to screen size. Wide tables may scroll horizontally on narrow
 screens. Compact View reduces spacing in supported tables and panels.
@@ -44,7 +42,7 @@ screens. Compact View reduces spacing in supported tables and panels.
 
 ## 3. Main navigation and screens
 
-The primary navigation exposes these 15 interactive views:
+The primary navigation exposes 14 interactive report views plus the catalog.
 
 The tab strip scrolls horizontally when needed. The **Search report module**
 field filters tabs by their label or category, and badges highlight items such
@@ -149,11 +147,12 @@ A color-intensity grid visualizes station and regional sales distribution.
 Use the color pattern to locate strong and weak areas; consult the station
 ledger for exact row-level values.
 
-### Target Achievement
+### Sales Benchmarks
 
-Tracks latest-day station sales against a 1,100 L benchmark and assigns
-achievement bands. The table shows target, actual, achievement percentage,
-station identity, and status; it is not a monthly run-rate/pacing calculation.
+Compares latest-day station sales with editable per-TM benchmarks (default
+1,100 L per station) and optional station overrides. Bands describe comparison
+to that benchmark, not attainment of an approved business plan. Values are
+stored in the current browser and are not shared across users.
 
 ### Ad-hoc Explorer
 
@@ -164,18 +163,16 @@ days left, free sale, Paytm, cash, and remark. The table displays up to 100
 matching rows; **Export Filtered Cut** exports all matching rows using the
 selected columns.
 
-### All Reports Index
+### Report Catalog
 
-The catalog contains 32 entries. Search by report number, title, or description,
-or filter by category: Executive, Operations, Finance & Margins, Forecasting,
-and Diagnostics. Entries with an interactive destination have an **Open
-Interactive Report** button. Other entries have **Inspect Report Metrics**,
-which opens a specification window with the report description and a current
-date SQL-view label plus network volume and collection values.
+The catalog contains 14 interactive views and 18 planned specifications.
+Search by report number, title, or description, or filter by category.
+Interactive entries open the actual dashboard view. Planned entries are
+explicitly labeled and show their intended scope; they do not display
+report-specific metrics or imply that a calculation is implemented.
 
-## 4. Global filter bar
+## 4. Latest-day station filters
 
-- **Period** — Latest Day, Past 7 Days, or Past 30 Days.
 - **State** — limits station-based report data to a selected state.
 - **Type** — limits station-based report data to a selected operating type.
 - **TM** — limits station-based report data to a selected Territory Manager.
@@ -183,25 +180,25 @@ date SQL-view label plus network volume and collection values.
 - **Reset** — returns filter values to their defaults when filters are active.
 - **Showing N of M stations** — shows the station match count.
 - **Compact View** — toggles denser presentation in supported views.
-- **Compare Mode** — a period-comparison control is displayed in the bar.
-
-Filter behavior is not identical on every screen: station-based views that
-receive the filtered station list respond to the state/type/TM/search filters;
-network summaries, historical charts, and forecast data may use telemetry
-aggregates instead. In the current implementation, Period and Compare Mode are
-visible controls but are not wired into report calculations. Treat them as
-non-functional controls until that behavior is implemented.
+These filters narrow station-based views for the latest available date.
+Network history, forecast calculations, and the executive briefing remain
+network-wide. There is no date-range or compare-period control in the current
+interface.
 
 ## 5. Reports Navigation Drawer
 
 The drawer groups report shortcuts into **Executive & Overview**,
 **Operations & Supply Chain**, **Forecasting & Simulation**, and
-**Analytics & Financials**. It shows descriptions and, where available,
+**Analytics & Collections**. It shows descriptions and, where available,
 attention badges such as urgent dispatch or zero-sale counts. Selecting an item
 opens its corresponding primary report tab; the backdrop or close control
 dismisses the drawer.
 
 ## 6. The 32 catalog entries
+
+The catalog contains 14 interactive views and 18 planned specifications.
+Only entries linked to an interactive view are live calculations. Planned
+entries are labeled as such in the catalog.
 
 The following are the catalog titles and the category they appear under.
 Descriptions below summarize the catalog's stated purpose; they should not be
@@ -211,30 +208,30 @@ read as a claim that every entry is a separate, navigable screen.
 |---:|---|---|
 | 1 | Ad-hoc Data Explorer | Diagnostics |
 | 2 | Master Executive Dashboard | Executive |
-| 3 | RSP & Pricing Realization | Finance & Margins |
+| 3 | RSP & Pricing Realization | Collections & Realization |
 | 4 | Day-over-Day Variance (DoD) | Operations |
 | 5 | Daily Sales Trend & 7MA | Executive |
 | 6 | Weekly Performance Analysis | Operations |
 | 7 | Month-on-Month Growth (MoM) | Executive |
 | 8 | CMD MIS State Summary | Executive |
-| 9 | Averages & Unit Margins | Finance & Margins |
+| 9 | Averages & Unit Metrics | Operations |
 | 10 | Sales Analysis & Pareto Share | Operations |
 | 11 | Station-wise Detail Ledger | Operations |
 | 12 | Dispenser & Pump Throughput | Operations |
 | 13 | Team Performance (TM & Coord) | Operations |
-| 14 | Targets vs Actual Achievement | Operations |
-| 15 | Station Target Variance | Operations |
+| 14 | Sales Benchmark vs Actual | Operations |
+| 15 | Station Benchmark Variance | Operations |
 | 16 | Sub-state & District Mapping | Operations |
-| 17 | Week 1/2/3 Intra-Month Slices | Finance & Margins |
+| 17 | Week 1/2/3 Intra-Month Slices | Operations |
 | 18 | Weekend vs Weekday Dynamics | Operations |
 | 19 | Quarterly Analysis (Q1-Q4) | Executive |
 | 20 | Monthly Network Expansion | Executive |
-| 21 | Five Station Types (LOCO/DODO) | Finance & Margins |
+| 21 | Station Operating Models | Operations |
 | 22 | Competitor Proximity Audit | Operations |
 | 23 | AIML 7-Day Sales Forecast | Forecasting |
 | 24 | Data Analysis & What-If Simulator | Forecasting |
 | 25 | Station Performance Heatmap | Diagnostics |
-| 26 | Collection Efficiency & Risk Map | Finance & Margins |
+| 26 | Collection Realization & Gap | Collections & Realization |
 | 27 | Station Ranking & Momentum | Operations |
 | 28 | Daily Morning Briefing | Executive |
 | 29 | Data Health & Quality Audit | Diagnostics |
@@ -413,7 +410,7 @@ calculation flow is:
    ensemble score and the three individual model scores; the engine's ensemble
    score is currently calculated as 90% of the lowest component MAPE, rather
    than recomputed from a separate ensemble holdout series. The navigation
-   badge says “10 ML Models,” but the forecast calculation actually combines
+   badge says “Backtested,” and the forecast calculation combines
    four series: linear, Holt-Winters, last-week-same-day, and same-weekday
    average.
 5. For each future date, the forecast combines linear, Holt-Winters,
@@ -564,17 +561,21 @@ clamped to zero; “Today” is the actual current station sale. The colors enco
 apply before the 50-row display limit. Treat earlier day columns as
 illustrative, not observed measurements.
 
-### Target Achievement
+### Sales Benchmarks
 
-- Fixed daily target = 1,100 L per station.
-- Achievement percentage = current sale litres / 1,100 × 100, rounded to one
-  decimal.
-- Achieved ≥100%; On track ≥90% and <100%; At risk ≥75% and <90%; Behind <75%.
+- Default benchmark = 1,100 L per station; users may edit the per-TM benchmark
+  and set station overrides.
+- Benchmark percentage = current sale litres / applied benchmark × 100,
+  rounded to one decimal.
+- Bands are Met benchmark ≥100%; Near benchmark ≥90%; Below benchmark ≥75%;
+  Far below benchmark <75%.
 - Cards count stations in each band and divide by station count for share.
-  The table displays only the first 30 station rows.
+  The table displays the station rows passed through the current state/type/TM/
+  search filters.
 
-This is a fixed benchmark calculation; it does not calculate monthly pacing or
-calendar-adjusted targets.
+These editable values are stored in browser local storage and are not shared
+with other users. They are benchmarks, not approved plan values; monthly
+pacing and calendar-adjusted targets are not calculated.
 
 ### Ad-hoc Explorer
 
@@ -638,13 +639,11 @@ independently reachable from the primary tabs.
   Warning), then positive sales below 100 L (Warning). Because this is an
   `if/else` chain, each station is assigned at most its first matching class.
 
-## 10. Catalog entries without an implemented report screen
+## 10. Planned catalog entries
 
-The cards for these entries open **Inspect Report Metrics**, not a report
-calculation. That modal displays the catalog description, a date-labeled SQL
-statement as text, and current network volume/collection values. The modal
-does not compute the metric named in the card, and the displayed SQL text is
-not evidence that the view was queried for that card.
+The cards for these entries are labeled **Planned specification** and show
+their intended scope. They do not open a live calculation, SQL view, or
+report-specific metric.
 
 | # | Catalog item | What is actually calculated today |
 |---:|---|---|
@@ -652,10 +651,10 @@ not evidence that the view was queried for that card.
 | 5 | Daily Sales Trend & 7MA | No moving-average calculation on this card; see the Master Dashboard trend and its data-source caveat above. |
 | 6 | Weekly Performance Analysis | No weekly aggregation or week-on-week delta. |
 | 7 | Month-on-Month Growth (MoM) | No monthly comparison or growth percentage. |
-| 9 | Averages & Unit Margins | No dedicated unit-margin calculation; available average formulas are described under their actual screens. |
+| 9 | Averages & Unit Metrics | No separate averages report or margin calculation. |
 | 10 | Sales Analysis & Pareto Share | No separate category Pareto report; state/type summaries and Deep Statistics are separate calculations. |
 | 12 | Dispenser & Pump Throughput | No pump/nozzle level data or calculation is shown. |
-| 15 | Station Target Variance | No distinct variance report; use Target Achievement for `sale_qty − 1,100 L` interpretation and status bands. |
+| 15 | Station Benchmark Variance | No separate plan-variance report; the Sales Benchmarks view compares sales with a browser-local benchmark. |
 | 16 | Sub-state & District Mapping | No geographic cluster/density calculation in this report card. |
 | 17 | Week 1/2/3 Intra-Month Slices | No intra-month slice or cash-flow calculation. |
 | 18 | Weekend vs Weekday Dynamics | No observed weekend-vs-weekday comparison; forecast weekend features are separate projections. |
@@ -667,9 +666,8 @@ not evidence that the view was queried for that card.
 | 30 | Zero-Sale & Exception Registry | No dedicated registry screen; current zero-sale counts, directory flags, and exception helper are distinct from this catalog card. |
 | 31 | Closing Dip & Stockout Alerts | No separate catalog screen; use the Master Dashboard alert or Tanker Dispatch, whose rules are documented above. |
 
-The remaining catalog cards route to existing screens. They inherit the screen's
-actual calculations above rather than implementing a separate formula for the
-catalog title.
+The remaining catalog cards open existing views. The view's actual
+calculations, not the catalog title, define the available data.
 
 ## 11. Current navigation and calculation limitations
 

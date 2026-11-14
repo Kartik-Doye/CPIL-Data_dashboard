@@ -64,13 +64,8 @@ function formatNamedStations(stations: Array<{ name: string; owner: string }>, l
   return `${names.join(', ')}${remaining > 0 ? `; see full report for ${remaining} additional station(s)` : ''}`;
 }
 
-function getDashboardReference(reference?: string): string {
-  return reference?.trim() || 'Full station-wise report: open the dashboard or see the emailed workbook.';
-}
-
 export function buildExecutiveBriefingBody(
   telemetry: ExecutiveBriefingTelemetry,
-  options?: { detailReference?: string },
 ): ExecutiveBriefingBody {
   const dateLabel = formatDate(telemetry.date);
   const title = `🔥 *GO GAS EXECUTIVE MORNING BRIEFING — ${dateLabel}*`;
@@ -151,25 +146,22 @@ export function buildExecutiveBriefingBody(
   const lines = [
     title,
     '',
-    '*PERFORMANCE*',
+    '🟢 *PERFORMANCE*',
     `• Network sales: *${formatLitres(telemetry.total_sale_qty)}* | Collection: *₹${formatNumber(telemetry.total_collection)}*`,
-    `• Realization: ₹${telemetry.effective_rsp.toFixed(2)}/L | Sales vs 7-day average: *${salesChange}* | Reporting: ${telemetry.stations_with_sale}/${telemetry.stations_total} | Top-10 share: ${topTenShare}`,
+    `• Realization: *₹${telemetry.effective_rsp.toFixed(2)}/L* | vs 7-day average: *${salesChange}* | Reporting: *${telemetry.stations_with_sale}/${telemetry.stations_total}* | Top-10 share: *${topTenShare}*`,
     '',
-    '*EXCEPTIONS*',
-    `• Zero-sale stations: *${telemetry.zero_sale_count}*${zeroSaleBreakdown ? ` — ${zeroSaleBreakdown}` : telemetry.zero_sale_count ? ' — reason breakdown unavailable' : ''}.`,
-    `• Replenishment risk: *${critical.length} critical (<1 day)*, ${highRisk.length} high (1–2 days), ${monitor.length} monitor (2–3 days).`,
-    `• Declining stations: ${severeDeclines === undefined ? 'data unavailable' : `*${severeDeclines} of ${topDecliningStations} monitored declining stations* are down 48% or more versus their 3-month average`}.`,
+    '🟠 *EXCEPTIONS*',
+    `• Zero-sale stations: *${telemetry.zero_sale_count}*${zeroSaleBreakdown ? ` — ${zeroSaleBreakdown.split(', ').map((item) => `*${item}*`).join(', ')}` : telemetry.zero_sale_count ? ' — reason breakdown unavailable' : ''}.`,
+    `• Stock risk: *${critical.length} CRITICAL* (<1 day), *${highRisk.length} HIGH* (1–2 days), ${monitor.length} monitor (2–3 days).`,
+    `• Declines: ${severeDeclines === undefined ? 'data unavailable' : `*${severeDeclines} of ${topDecliningStations} stations* are down *48%+* vs 3-month average`}.`,
     '',
-    '*TODAY’S ACTIONS*',
+    '🔴 *TODAY’S ACTIONS*',
     actionLine,
     zeroSaleActionLine,
     '',
-    `*NEXT-DAY FORECAST — ${nextForecastDate}*`,
+    `🔵 *NEXT-DAY FORECAST — ${nextForecastDate}*`,
     forecastLine,
-    `• ${mapeSummary.replace(/MAPE (\d+(?:\.\d+)?%)/, 'MAPE *$1*')} Use as planning input, not a commitment; excludes live price and station-availability changes.`,
-    '',
-    '*DATA LIMITATION*',
-    `• Plan, margin, credit, receivables, and banked cash are unavailable in telemetry. ${getDashboardReference(options?.detailReference)}`,
+    `• ${mapeSummary.replace(/MAPE (\d+(?:\.\d+)?%)/, 'MAPE *$1*')} Planning input, *not a commitment*; excludes live price and station-availability changes.`,
   ];
 
   return { title, dateLabel, text: lines.join('\n') };

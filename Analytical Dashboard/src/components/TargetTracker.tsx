@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Target, CheckCircle, Clock, AlertTriangle, XCircle } from 'lucide-react';
-import { StationRecord, StateSummary } from '../types';
+import { StationRecord } from '../types';
 
-const DEFAULT_DAILY_TARGET = 1100;
+const DEFAULT_DAILY_BENCHMARK = 1100;
 const DAILY_TARGET_STORAGE_KEY = 'go-gas-tm-targets';
 const STATION_TARGET_STORAGE_KEY = 'go-gas-station-targets';
 
 interface TargetTrackerProps {
-  states: StateSummary[];
   stations: StationRecord[];
 }
 
-export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }) => {
+export const TargetTracker: React.FC<TargetTrackerProps> = ({ stations }) => {
   const [tmTargets, setTmTargets] = useState<Record<string, number>>({});
   const [targetInputs, setTargetInputs] = useState<Record<string, string>>({});
   const [stationTargetsByCode, setStationTargetsByCode] = useState<Record<string, number>>({});
@@ -65,7 +64,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
         );
       }
     } catch {
-      setTargetError('Saved targets could not be loaded from this browser. Defaults are in use.');
+      setTargetError('Saved benchmarks could not be loaded from this browser. Defaults are in use.');
     }
   }, []);
 
@@ -73,7 +72,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
     setTargetInputs((current) => ({ ...current, [tm]: value }));
     const parsedTarget = Number(value);
     if (!value.trim() || !Number.isFinite(parsedTarget) || parsedTarget <= 0) {
-      setTargetError('Enter a daily target greater than zero litres for each TM.');
+      setTargetError('Enter a daily benchmark greater than zero litres for each TM.');
       return;
     }
 
@@ -83,7 +82,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
       window.localStorage.setItem(DAILY_TARGET_STORAGE_KEY, JSON.stringify(updatedTargets));
       setTargetError('');
     } catch {
-      setTargetError('The TM target is applied, but could not be saved in this browser.');
+      setTargetError('The TM benchmark is applied, but could not be saved in this browser.');
     }
   };
 
@@ -98,14 +97,14 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
         window.localStorage.setItem(STATION_TARGET_STORAGE_KEY, JSON.stringify(updatedTargets));
         setTargetError('');
       } catch {
-        setTargetError('The station now inherits its TM target, but the change could not be saved in this browser.');
+        setTargetError('The station now inherits its TM benchmark, but the change could not be saved in this browser.');
       }
       return;
     }
 
     const parsedTarget = Number(value);
     if (!Number.isFinite(parsedTarget) || parsedTarget <= 0) {
-      setTargetError('Enter a station target greater than zero litres, or clear it to inherit the TM target.');
+      setTargetError('Enter a station benchmark greater than zero litres, or clear it to inherit the TM benchmark.');
       return;
     }
 
@@ -115,37 +114,37 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
       window.localStorage.setItem(STATION_TARGET_STORAGE_KEY, JSON.stringify(updatedTargets));
       setTargetError('');
     } catch {
-      setTargetError('The station target is applied, but could not be saved in this browser.');
+      setTargetError('The station benchmark is applied, but the change could not be saved in this browser.');
     }
   };
 
   const formatTarget = (target: number) => target.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   const stationTargets = stations.map((s) => {
     const tm = s.tm?.trim() || 'Unassigned';
-    const tmTarget = tmTargets[tm] ?? DEFAULT_DAILY_TARGET;
+    const tmTarget = tmTargets[tm] ?? DEFAULT_DAILY_BENCHMARK;
     const target = stationTargetsByCode[s.erp_code] ?? tmTarget;
-    const achievedPct = Number(((s.sale_qty / target) * 100).toFixed(1));
-    let status: 'Achieved' | 'On track' | 'At risk' | 'Behind' = 'Achieved';
+    const benchmarkPct = Number(((s.sale_qty / target) * 100).toFixed(1));
+    let status: 'Met benchmark' | 'Near benchmark' | 'Below benchmark' | 'Far below benchmark' = 'Met benchmark';
 
-    if (achievedPct >= 100) status = 'Achieved';
-    else if (achievedPct >= 90) status = 'On track';
-    else if (achievedPct >= 75) status = 'At risk';
-    else status = 'Behind';
+    if (benchmarkPct >= 100) status = 'Met benchmark';
+    else if (benchmarkPct >= 90) status = 'Near benchmark';
+    else if (benchmarkPct >= 75) status = 'Below benchmark';
+    else status = 'Far below benchmark';
 
     return {
       ...s,
       tmTarget,
       target,
       hasStationTarget: stationTargetsByCode[s.erp_code] !== undefined,
-      achievedPct,
+      benchmarkPct,
       status,
     };
   });
 
-  const countAchieved = stationTargets.filter((s) => s.status === 'Achieved').length;
-  const countOnTrack = stationTargets.filter((s) => s.status === 'On track').length;
-  const countAtRisk = stationTargets.filter((s) => s.status === 'At risk').length;
-  const countBehind = stationTargets.filter((s) => s.status === 'Behind').length;
+  const countMet = stationTargets.filter((s) => s.status === 'Met benchmark').length;
+  const countNear = stationTargets.filter((s) => s.status === 'Near benchmark').length;
+  const countBelow = stationTargets.filter((s) => s.status === 'Below benchmark').length;
+  const countFarBelow = stationTargets.filter((s) => s.status === 'Far below benchmark').length;
 
   return (
     <div className="space-y-6">
@@ -157,19 +156,19 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
           </div>
           <div>
             <h2 className="text-base font-bold text-white">
-              Target Achievement Tracking & Status Bands (PRD Standard)
+              Sales Benchmark Tracking
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              Each TM has a target inherited by their stations. Set a station-specific override when needed; achievement uses the station override when present, otherwise the TM target.
-              Status bands: Achieved ≥100%, On Track ≥90%, At Risk ≥75%, and Behind &lt;75%.
+              Compare the latest reported day with a configurable planning benchmark. This is not an approved sales plan or forecast; benchmarks are saved in this browser and are not shared with other users.
+              Status bands describe the benchmark comparison only: met ≥100%, near ≥90%, below ≥75%, and far below &lt;75%.
             </p>
           </div>
         </div>
         <div className="mt-4">
-          <h3 className="mb-3 text-xs font-semibold text-slate-300">Daily target by TM (L per station; inherited unless overridden)</h3>
+          <h3 className="mb-3 text-xs font-semibold text-slate-300">Daily benchmark by TM (L per station; inherited unless overridden)</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {tmNames.map((tm, index) => {
-              const target = tmTargets[tm] ?? DEFAULT_DAILY_TARGET;
+              const target = tmTargets[tm] ?? DEFAULT_DAILY_BENCHMARK;
               const inputId = `tm-daily-target-${index}`;
               return (
                 <label key={tm} htmlFor={inputId} className="text-xs font-medium text-slate-300">
@@ -182,7 +181,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
                     value={targetInputs[tm] ?? String(target)}
                     onChange={(event) => handleTargetChange(tm, event.target.value)}
                     className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-orange-500"
-                    aria-label={`Daily target per station for TM ${tm} in litres`}
+                    aria-label={`Daily benchmark per station for TM ${tm} in litres`}
                     aria-invalid={Boolean(targetError)}
                     aria-describedby={targetError ? 'tm-target-error' : undefined}
                   />
@@ -192,7 +191,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
           </div>
           {targetError && <p id="tm-target-error" className="mt-2 text-xs text-amber-400" role="alert">{targetError}</p>}
           <p className="mt-2 text-xs text-slate-400">
-            TM and station targets are saved in this browser. New TMs default to {formatTarget(DEFAULT_DAILY_TARGET)} L per station. Leave a station override blank to use its TM&apos;s target.
+            TM and station benchmarks are saved in this browser. New TMs default to {formatTarget(DEFAULT_DAILY_BENCHMARK)} L per station. Set this to an approved value before using it for planning. Leave a station override blank to use its TM&apos;s benchmark.
           </p>
         </div>
       </div>
@@ -204,14 +203,14 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4" />
-              <span>Achieved (&ge;100%)</span>
+              <span>Met benchmark (&ge;100%)</span>
             </span>
             <span className="text-xs font-mono font-bold text-emerald-400">
-              {((countAchieved / (stations.length || 1)) * 100).toFixed(0)}%
+              {((countMet / (stations.length || 1)) * 100).toFixed(0)}%
             </span>
           </div>
-          <div className="text-2xl font-bold font-mono text-white">{countAchieved} Stations</div>
-          <p className="text-[11px] text-slate-400 mt-1">Overperforming stations meeting daily goals</p>
+          <div className="text-2xl font-bold font-mono text-white">{countMet} Stations</div>
+          <p className="text-[11px] text-slate-400 mt-1">Sales met or exceeded the local benchmark</p>
         </div>
 
         {/* On Track */}
@@ -219,14 +218,14 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-indigo-400 flex items-center gap-1.5">
               <Clock className="w-4 h-4" />
-              <span>On Track (90 - 99.9%)</span>
+              <span>Near benchmark (90 - 99.9%)</span>
             </span>
             <span className="text-xs font-mono font-bold text-indigo-400">
-              {((countOnTrack / (stations.length || 1)) * 100).toFixed(0)}%
+              {((countNear / (stations.length || 1)) * 100).toFixed(0)}%
             </span>
           </div>
-          <div className="text-2xl font-bold font-mono text-white">{countOnTrack} Stations</div>
-          <p className="text-[11px] text-slate-400 mt-1">Within standard operational variance</p>
+          <div className="text-2xl font-bold font-mono text-white">{countNear} Stations</div>
+          <p className="text-[11px] text-slate-400 mt-1">Sales are within 10% of the local benchmark</p>
         </div>
 
         {/* At Risk */}
@@ -234,14 +233,14 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4" />
-              <span>At Risk (75 - 89.9%)</span>
+              <span>Below benchmark (75 - 89.9%)</span>
             </span>
             <span className="text-xs font-mono font-bold text-amber-400">
-              {((countAtRisk / (stations.length || 1)) * 100).toFixed(0)}%
+              {((countBelow / (stations.length || 1)) * 100).toFixed(0)}%
             </span>
           </div>
-          <div className="text-2xl font-bold font-mono text-white">{countAtRisk} Stations</div>
-          <p className="text-[11px] text-slate-400 mt-1">Requires coordinator push and support</p>
+          <div className="text-2xl font-bold font-mono text-white">{countBelow} Stations</div>
+          <p className="text-[11px] text-slate-400 mt-1">Sales are 10–25% below the local benchmark</p>
         </div>
 
         {/* Behind */}
@@ -249,14 +248,14 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-rose-400 flex items-center gap-1.5">
               <XCircle className="w-4 h-4" />
-              <span>Behind (&lt;75%)</span>
+              <span>Far below (&lt;75%)</span>
             </span>
             <span className="text-xs font-mono font-bold text-rose-400">
-              {((countBehind / (stations.length || 1)) * 100).toFixed(0)}%
+              {((countFarBelow / (stations.length || 1)) * 100).toFixed(0)}%
             </span>
           </div>
-          <div className="text-2xl font-bold font-mono text-white">{countBehind} Stations</div>
-          <p className="text-[11px] text-slate-400 mt-1">Includes zero-sale & acute bottleneck stations</p>
+          <div className="text-2xl font-bold font-mono text-white">{countFarBelow} Stations</div>
+          <p className="text-[11px] text-slate-400 mt-1">Sales are more than 25% below the local benchmark</p>
         </div>
       </div>
 
@@ -271,11 +270,11 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
                 <th className="py-3 px-2">State</th>
                 <th className="py-3 px-2">Type</th>
                 <th className="py-3 px-3">TM</th>
-                <th className="py-3 px-3 text-right">Station Target Override (L)</th>
-                <th className="py-3 px-3 text-right">Applied Target</th>
+                <th className="py-3 px-3 text-right">Station Benchmark Override (L)</th>
+                <th className="py-3 px-3 text-right">Applied Benchmark</th>
                 <th className="py-3 px-3 text-right">Actual Sold</th>
-                <th className="py-3 px-3 text-right">Achievement %</th>
-                <th className="py-3 px-3 text-center">Status Band</th>
+                <th className="py-3 px-3 text-right">% of Benchmark</th>
+                <th className="py-3 px-3 text-center">Benchmark Band</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -295,7 +294,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
                       placeholder={formatTarget(st.tmTarget)}
                       onChange={(event) => handleStationTargetChange(st.erp_code, event.target.value)}
                       className="w-28 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-right text-xs text-white outline-none focus:border-orange-500"
-                      aria-label={`Station target override for ${st.alds_name} (${st.erp_code}) in litres`}
+                      aria-label={`Station benchmark override for ${st.alds_name} (${st.erp_code}) in litres`}
                     />
                   </td>
                   <td className="py-2.5 px-3 text-right text-slate-400">
@@ -307,26 +306,26 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({ states, stations }
                   <td className="py-2.5 px-3 text-right font-semibold">
                     <span
                       className={
-                        st.achievedPct >= 100
+                        st.benchmarkPct >= 100
                           ? 'text-emerald-400'
-                          : st.achievedPct >= 90
+                          : st.benchmarkPct >= 90
                           ? 'text-indigo-400'
-                          : st.achievedPct >= 75
+                          : st.benchmarkPct >= 75
                           ? 'text-amber-400'
                           : 'text-rose-400'
                       }
                     >
-                      {st.achievedPct}%
+                      {st.benchmarkPct}%
                     </span>
                   </td>
                   <td className="py-2.5 px-3 text-center font-sans">
                     <span
                       className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                        st.status === 'Achieved'
+                        st.status === 'Met benchmark'
                           ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          : st.status === 'On track'
+                          : st.status === 'Near benchmark'
                           ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
-                          : st.status === 'At risk'
+                          : st.status === 'Below benchmark'
                           ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
                       }`}

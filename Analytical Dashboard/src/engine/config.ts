@@ -3,17 +3,23 @@ import dotenv from 'dotenv';
 import path from 'path';
 import productConfig from '../../../product-config.json';
 
-function loadEnvFile(filePath: string) {
+function loadEnvFile(filePath: string, overrideKeys: ReadonlySet<string> = new Set()) {
   if (!fs.existsSync(filePath)) return;
   const entries = dotenv.parse(fs.readFileSync(filePath));
   for (const [key, value] of Object.entries(entries)) {
-    if (!process.env[key]?.trim() && value.trim()) process.env[key] = value;
+    if (overrideKeys.has(key) || (!process.env[key]?.trim() && value.trim())) {
+      process.env[key] = value;
+    }
   }
 }
 
 loadEnvFile(path.resolve(process.cwd(), 'Analytical Dashboard', '.env'));
 loadEnvFile(path.resolve(process.cwd(), '.env'));
 loadEnvFile(path.resolve(process.cwd(), 'Manual Work', '.env'));
+loadEnvFile(
+  path.resolve(process.cwd(), '.env'),
+  new Set(['WHATSAPP_CRON_EXPRESSION', 'WHATSAPP_SCHEDULE_LABEL']),
+);
 
 export const PRODUCT_CONFIG = productConfig;
 export const DB_HOST = process.env.DB_HOST || productConfig.database.host;
@@ -83,8 +89,8 @@ export const WHATSAPP_AUTH_DIRECTORY =
   process.env.WHATSAPP_AUTH_DIRECTORY || productConfig.whatsapp.authDirectory;
 export const WHATSAPP_WEB_VERSION_CACHE_DIRECTORY =
   process.env.WHATSAPP_WEB_VERSION_CACHE_DIRECTORY || productConfig.whatsapp.webVersionCacheDirectory;
-export const WHATSAPP_CRON_EXPRESSION = process.env.WHATSAPP_CRON_EXPRESSION || productConfig.whatsapp.cronExpression;
-export const WHATSAPP_SCHEDULE_LABEL = process.env.WHATSAPP_SCHEDULE_LABEL || productConfig.whatsapp.scheduleLabel;
+export const WHATSAPP_CRON_EXPRESSION = process.env.WHATSAPP_CRON_EXPRESSION?.trim() || '';
+export const WHATSAPP_SCHEDULE_LABEL = process.env.WHATSAPP_SCHEDULE_LABEL?.trim() || WHATSAPP_CRON_EXPRESSION || 'Not scheduled';
 export const WHATSAPP_SEND_COOLDOWN_SECONDS = parseInt(
   process.env.WHATSAPP_SEND_COOLDOWN_SECONDS || String(productConfig.whatsapp.sendCooldownSeconds),
   10

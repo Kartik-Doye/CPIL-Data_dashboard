@@ -6,6 +6,8 @@ import {
   maskPhoneNumber,
   buildExecutiveWhatsAppMessage,
   buildTankerDispatchWhatsAppMessage,
+  isRetryableWhatsAppInitializationError,
+  isWhatsAppSessionProfileLockError,
   setWhatsAppRecipients,
   sendWhatsAppMessage,
 } from './whatsappService.js';
@@ -54,6 +56,22 @@ test('parses and cleans valid recipient phone numbers', () => {
   assert.equal(result.length, 2);
   assert.equal(result[0], '+919876543210');
   assert.equal(result[1], '918087018975');
+});
+
+test('only retries transient WhatsApp browser navigation failures', () => {
+  assert.equal(
+    isRetryableWhatsAppInitializationError(new Error('Execution context was destroyed, most likely because of a navigation.')),
+    true,
+  );
+  assert.equal(isRetryableWhatsAppInitializationError(new Error('Authentication failed.')), false);
+});
+
+test('recognizes locked WhatsApp browser session files for safe recovery', () => {
+  assert.equal(
+    isWhatsAppSessionProfileLockError(new Error('EBUSY: resource busy or locked, unlink CrashpadMetrics-active.pma')),
+    true,
+  );
+  assert.equal(isWhatsAppSessionProfileLockError(new Error('Authentication failed.')), false);
 });
 
 test('uses the saved recipient list for later WhatsApp sends', () => {
@@ -148,22 +166,28 @@ test('formats a concise executive WhatsApp brief with risk bands and forecast co
     },
   });
 
-  assert.match(msg, /GO GAS EXECUTIVE MORNING BRIEFING — 06 Nov 2026/);
-  assert.match(msg, /\*PERFORMANCE\*/);
-  assert.match(msg, /Network sales: \*3,42,850\.00 L\* \| Collection: \*₹2,64,33,735\.00\*/);
-  assert.match(msg, /Sales vs 7-day average: \*\+7\.1%\* \| Reporting: 312\/316 \| Top-10 share: 14\.2%/);
-  assert.match(msg, /Zero-sale stations: \*5\* — 2 missing TM\/data, 1 sale stops, 1 license issues, 1 stock unavailable/);
-  assert.match(msg, /Replenishment risk: \*1 critical \(<1 day\)\*, 1 high \(1–2 days\), 0 monitor \(2–3 days\)/);
-  assert.match(msg, /Replenish 1 critical-stock station\(s\) by EOD: YUSUFGUDA \(TM Suresh\)/);
-  assert.match(msg, /assign owners by 10:00 AM and escalate unassigned critical actions or unresolved sale stops\/stock gaps to Regional Managers/);
-  assert.match(msg, /Declining stations: \*8 of 10 monitored declining stations\* are down 48% or more versus their 3-month average/);
-  assert.match(msg, /Forecast for 07 Nov 2026: \*3,48,200\.00 L\* \(range 3,20,000\.00 L–3,75,000\.00 L\)/);
-  assert.match(msg, /Historical MAPE \*6\.8%\* across 14 scored days/);
-  assert.match(msg, /see the emailed Excel attachment/);
-  assert.equal((msg.match(/•/g) || []).length, 10);
+  assert.match(msg, /GO GAS MORNING BRIEF — 06 Nov 2026/);
+  assert.match(msg, /🟢 \*PERFORMANCE\*/);
+  assert.match(msg, /🟠 \*EXCEPTIONS\*/);
+  assert.match(msg, /🔴 \*ACTIONS — 10 AM ESCALATION \/ EOD CLOSURE\*/);
+  assert.match(msg, /🔵 \*FORECAST/);
+  assert.match(msg, /Sales: \*3,42,850 L\* \(\*\+7\.1% vs 7d avg\*\) \| Collection: \*₹2\.64 Cr\*/);
+  assert.match(msg, /Reporting: \*312\/316\* \| Top-10 share: \*14\.2%\*/);
+  assert.match(msg, /Zero sales: \*5\* \(1 stockout, 2 missing TM\/data, 1 sale stop, 1 license\)/);
+  assert.match(msg, /Stock cover: \*1 critical \(<1d\)\*, \*1 high\* \(1–2d\), 0 monitor \(2–3d\)/);
+  assert.match(msg, /Refill \*1 critical sites\*: YUSUFGUDA \(Suresh\)/);
+  assert.match(msg, /Assign owners and close \*5 zero-sale sites\* by EOD; escalate unresolved blockers by \*10 AM\*/);
+  assert.match(msg, /Slump alert: \*8 of 10 watched stations\* down \*≥48%\* vs 3-mo average/);
+  assert.match(msg, /FORECAST — 07 Nov 2026[\s\S]*\*3,48,200 L\* \(range 3\.20L–3\.75L\)/);
+  assert.match(msg, /Historical MAPE: \*6\.8%\* across 14 days/);
+  assert.match(msg, /⚪ \*NOTE:\* Excludes margin, credit & bank cash\. Full station & financial details in emailed Excel\./);
+  assert.equal((msg.match(/•/g) || []).length, 8);
+  const wordCount = msg.trim().split(/\s+/).length;
+  assert.ok(wordCount >= 120 && wordCount <= 160, `Expected 120–160 words; got ${wordCount}.`);
+  assert.ok(msg.length <= 1000, `Expected at most 1,000 characters; got ${msg.length}.`);
 });
 
-test('limits executive WhatsApp brief to ten lines and caps named action items', () => {
+test('keeps executive WhatsApp brief concise and caps named action items', () => {
   const msg = buildExecutiveWhatsAppMessage({
     date: '2026-11-06',
     total_sale_qty: 1000,
@@ -199,12 +223,12 @@ test('limits executive WhatsApp brief to ten lines and caps named action items',
     },
   });
 
-  assert.equal((msg.match(/•/g) || []).length, 10);
+  assert.equal((msg.match(/•/g) || []).length, 8);
   assert.match(msg, /Critical-1/);
   assert.match(msg, /Critical-2/);
   assert.match(msg, /Critical-3/);
   assert.doesNotMatch(msg, /Critical-4/);
-  assert.match(msg, /see full report for 1 additional station/);
+  assert.match(msg, /\+1 more/);
 });
 
 test('classifies zero-sale reasons without treating unknown remarks as reporting gaps', () => {

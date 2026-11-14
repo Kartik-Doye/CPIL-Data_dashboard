@@ -123,15 +123,22 @@ export function initWhatsAppAutomation(
   }
 
   if (scheduledTask) scheduledTask.stop();
-  scheduledTask = cron.schedule(WHATSAPP_CRON_EXPRESSION, () => {
-    const timeLabel = new Date().toLocaleTimeString('en-IN', {
-      hour: 'numeric',
-      minute: '2-digit',
-      timeZone: APP_TIMEZONE,
+  scheduledTask = null;
+  if (!WHATSAPP_CRON_EXPRESSION) {
+    console.error('[WHATSAPP CRON] Automated broadcasts disabled. Set WHATSAPP_CRON_EXPRESSION in the project-root .env file.');
+  } else if (!cron.validate(WHATSAPP_CRON_EXPRESSION)) {
+    console.error(`[WHATSAPP CRON] Automated broadcasts disabled. Invalid WHATSAPP_CRON_EXPRESSION: ${WHATSAPP_CRON_EXPRESSION}`);
+  } else {
+    scheduledTask = cron.schedule(WHATSAPP_CRON_EXPRESSION, () => {
+      const timeLabel = new Date().toLocaleTimeString('en-IN', {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: APP_TIMEZONE,
+      });
+      console.log(`[WHATSAPP CRON] Running automated daily broadcast at ${timeLabel}...`);
+      void sendBroadcast(`scheduled-${timeLabel}`);
     });
-    console.log(`[WHATSAPP CRON] Running automated daily broadcast at ${timeLabel}...`);
-    void sendBroadcast(`scheduled-${timeLabel}`);
-  });
+  }
 
   app.get('/api/whatsapp/config', (_req: Request, res: Response) => {
     res.json({
@@ -224,7 +231,7 @@ export function initWhatsAppAutomation(
     }
   });
 
-  console.log(`[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO and daily schedule: ${WHATSAPP_SCHEDULE_LABEL}.`);
+  console.log(`[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO; daily schedule: ${scheduledTask ? WHATSAPP_SCHEDULE_LABEL : 'disabled'}.`);
 }
 
 export function updateAutomationMessage(newText: string) {

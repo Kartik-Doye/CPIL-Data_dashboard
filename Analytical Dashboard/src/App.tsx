@@ -58,8 +58,6 @@ export function App() {
     type: 'ALL',
     tm: 'ALL',
     search: '',
-    compareMode: false,
-    period: 'today',
   });
 
   /**
@@ -506,7 +504,6 @@ export function App() {
 
             {activeTab === 'targets' && (
               <TargetTracker
-                states={data.states_summary || []}
                 stations={filteredStations}
               />
             )}
@@ -516,7 +513,6 @@ export function App() {
             {activeTab === 'all_reports' && (
               <AllReportsDirectory
                 data={data}
-                stations={filteredStations}
                 onSelectTab={setActiveTab}
               />
             )}

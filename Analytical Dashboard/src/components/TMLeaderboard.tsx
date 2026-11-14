@@ -94,7 +94,7 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({ tms, isCompact = f
               sortBy === 'efficiency_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
             }`}
           >
-            Efficiency %
+            Benchmark %
           </button>
         </div>
       </div>

@@ -94,7 +94,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       shortLabel: 'Forecast',
       icon: <Sparkles className="w-4 h-4" />,
       category: 'Forecasting & Simulation',
-      badge: '10 ML Models',
+      badge: 'Backtested',
       badgeColor: 'text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-500/30',
     },
     {
@@ -159,8 +159,8 @@ export const Navigation: React.FC<NavigationProps> = ({
     },
     {
       id: 'targets',
-      label: 'Target Achievement',
-      shortLabel: 'Targets',
+      label: 'Sales Benchmarks',
+      shortLabel: 'Benchmarks',
       icon: <Target className="w-4 h-4" />,
       category: 'Operations',
     },
@@ -173,12 +173,10 @@ export const Navigation: React.FC<NavigationProps> = ({
     },
     {
       id: 'all_reports',
-      label: 'All 32 Reports Index',
-      shortLabel: '32 Reports',
+      label: 'Report Catalog',
+      shortLabel: 'Catalog',
       icon: <ListTree className="w-4 h-4 text-orange-500" />,
       category: 'Executive',
-      badge: '32 Slices',
-      badgeColor: 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-500/30',
     },
   ];
 

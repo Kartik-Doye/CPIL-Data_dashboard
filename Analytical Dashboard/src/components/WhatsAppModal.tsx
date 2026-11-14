@@ -65,10 +65,9 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
         if (data.connectionStatus) setStatus(data.connectionStatus);
         if (data.scheduledTime) setScheduledTime(data.scheduledTime);
         setConnectionError(data.connectionError || '');
-        if (data.qrCodeData && data.connectionStatus !== 'Ready') {
-          setQrCodeData(data.qrCodeData);
-          setShowQr(true);
-        }
+        const currentQrCode = data.connectionStatus === 'Ready' ? '' : data.qrCodeData || '';
+        setQrCodeData(currentQrCode);
+        setShowQr(Boolean(currentQrCode));
       })
       .catch((err) => console.warn('[WhatsApp] Config load warning:', err));
 

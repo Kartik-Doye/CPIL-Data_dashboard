@@ -77,8 +77,8 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
         },
         {
           id: 'all_reports',
-          label: 'Master 32 Reports Catalog',
-          description: 'Comprehensive index of all 32 analytical slices and breakdown tables',
+          label: 'Report Catalog',
+          description: 'Interactive views and planned report specifications, clearly distinguished',
           icon: <ListTree className="w-4 h-4 text-amber-500" />,
           badge: 'Index',
         },
@@ -117,8 +117,8 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
         },
         {
           id: 'targets',
-          label: 'Target Achievement Tracker',
-          description: 'Monthly target tracking, pacing run-rates & deficit gap analysis',
+          label: 'Sales Benchmark Tracker',
+          description: 'Compare latest-day sales with editable, browser-local benchmarks',
           icon: <Target className="w-4 h-4 text-violet-500" />,
         },
       ],
@@ -131,7 +131,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
           label: 'AIML 7-Day Sales Forecast',
           description: 'Multi-model ensemble ML predictions (Linear, Holt-Winters, Naive)',
           icon: <Sparkles className="w-4 h-4 text-indigo-500" />,
-          badge: '10 ML Models',
+          badge: 'Backtested',
           badgeColor: 'text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-500/30',
         },
         {
@@ -143,7 +143,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
       ],
     },
     {
-      title: 'Analytics & Financials',
+      title: 'Analytics & Collections',
       items: [
         {
           id: 'rsp',
@@ -292,7 +292,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
 
         {/* Bottom Drawer Footer */}
         <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-center text-xs text-slate-500 dark:text-slate-400">
-          <span>GO Gas Executive Suite • 32 MIS Reports</span>
+          <span>GO Gas Executive Suite • Report Catalog</span>
         </div>
       </aside>
     </div>

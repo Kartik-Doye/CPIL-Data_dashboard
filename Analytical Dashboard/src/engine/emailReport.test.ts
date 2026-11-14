@@ -32,17 +32,18 @@ test('builds a concise executive email with the same WhatsApp-ready sections', (
   assert.match(text, /\*PERFORMANCE\*/);
   assert.match(text, /Network sales: \*3,42,850\.00 L\* \| Collection: \*₹2,64,33,735\.00\*/);
   assert.match(text, /\*EXCEPTIONS\*/);
-  assert.match(text, /Replenishment risk: \*1 critical \(<1 day\)\*, 1 high \(1–2 days\), 0 monitor \(2–3 days\)/);
+  assert.match(text, /Stock risk: \*1 CRITICAL\* \(<1 day\), \*1 HIGH\* \(1–2 days\), 0 monitor \(2–3 days\)/);
   assert.match(text, /NEXT-DAY FORECAST — 06 Nov 2026/);
   assert.match(text, /Forecast for 06 Nov 2026: \*3,48,200\.00 L\* \(range 3,20,000\.00 L–3,75,000\.00 L\)/);
   assert.match(text, /Historical MAPE \*6\.8%\* across 14 scored days/);
-  assert.match(text, /Full station-wise report, state performance, stock-risk list, and action tracker are attached/);
-  assert.equal((text.match(/•/g) || []).length, 10);
+  assert.doesNotMatch(text, /DATA LIMITATION|Plan, margin, credit, receivables, and banked cash/);
+  assert.equal((text.match(/•/g) || []).length, 9);
   assert.match(html, /src="cid:company-logo"/);
   assert.match(html, /alt="Confidence Group"/);
-  assert.match(html, /<h2[^>]*>PERFORMANCE<\/h2>/);
-  assert.match(html, /<strong>3,42,850\.00 L<\/strong>/);
-  assert.match(html, /<strong>6\.8%<\/strong>/);
+  assert.match(html, /<h2[^>]*color:#15803d[^>]*>🟢 PERFORMANCE<\/h2>/);
+  assert.match(html, /<h2[^>]*color:#1d4ed8[^>]*>🔵 NEXT-DAY FORECAST — 06 Nov 2026<\/h2>/);
+  assert.match(html, /<strong style="color:#15803d">3,42,850\.00 L<\/strong>/);
+  assert.match(html, /<strong style="color:#1d4ed8">6\.8%<\/strong>/);
   assert.doesNotMatch(text, /stockout risk \(under three days\)/);
 });
 
@@ -67,10 +68,11 @@ test('reports unavailable forecasts and empty priority lists clearly', () => {
   });
 
   assert.match(text, /Zero-sale stations: \*0\*\./);
-  assert.match(text, /Replenishment risk: \*0 critical/);
+  assert.match(text, /Stock risk: \*0 CRITICAL\*/);
   assert.match(text, /Next-day forecast is unavailable/);
   assert.match(text, /Historical MAPE unavailable/);
-  assert.equal((text.match(/•/g) || []).length, 10);
+  assert.doesNotMatch(text, /DATA LIMITATION|Plan, margin, credit, receivables, and banked cash/);
+  assert.equal((text.match(/•/g) || []).length, 9);
 });
 
 test('builds a filterable station workbook with proposed owners and actions', async () => {

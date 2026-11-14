@@ -30,8 +30,8 @@ export const TeamPerformance: React.FC<TeamPerformanceProps> = ({ tms }) => {
               </h2>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Evaluates operational sales throughput, station activation rate, and network delivery
-              by TM and coordinator.
+              Compares latest-day sales throughput and station activation by TM and coordinator.
+              The efficiency percentage uses a 1,100 L-per-station benchmark, not an approved plan.
             </p>
           </div>
 
@@ -59,7 +59,7 @@ export const TeamPerformance: React.FC<TeamPerformanceProps> = ({ tms }) => {
                 <th className="py-3 px-3 text-right">Avg / Station</th>
                 <th className="py-3 px-3 text-right">Collections</th>
                 <th className="py-3 px-3 text-center">Zero-Sale</th>
-                <th className="py-3 px-4 text-center">Throughput Efficiency</th>
+                <th className="py-3 px-4 text-center">vs 1,100 L / Station Benchmark</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -103,7 +103,7 @@ export const TeamPerformance: React.FC<TeamPerformanceProps> = ({ tms }) => {
                           : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                       }`}
                     >
-                      {t.efficiency_pct}% Target
+                      {t.efficiency_pct}% Benchmark
                     </span>
                   </td>
                 </tr>

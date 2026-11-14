@@ -94,6 +94,8 @@ available station assignments and require operational confirmation.
 The current PostgreSQL telemetry does not include daily targets, margin,
 receivables, credit exposure, or cash deposited, so the briefing explicitly
 identifies those metrics as unavailable rather than estimating them.
+The Sales Benchmark view uses editable browser-local comparison values (with a
+1,100 L-per-station default); it is not connected to an approved sales plan.
 Add these settings to the project-root `.env` file (see `.env.example` for the
 names), using your Gmail sender, recipient address(es), and a Google
 App Password:
@@ -137,8 +139,14 @@ Meta API key. Set `WHATSAPP_ENABLED=true` and
 and open the WhatsApp portal on this computer. Scan the live QR code with
 WhatsApp on your phone under **Linked devices** > **Link a device**. The app
 stores the linked session in `.wwebjs_auth/` so it can reconnect after restart;
-keep that folder private and do not share or commit it. The session QR and
+the path is anchored to the project root so launching from a different working
+directory uses the same session. Keep that folder private and do not share or
+commit it. Avoid **Unlink** unless you intend to pair again. The session QR and
 WhatsApp controls are restricted to local access.
+Automated send times are read from `WHATSAPP_CRON_EXPRESSION` in the
+project-root `.env` (for example, `0 11,19 * * *`). The project-root value takes
+precedence over other environment files; an empty or invalid expression
+disables scheduled broadcasts and is reported in the server log.
 
 The executive WhatsApp brief is limited to network KPIs, stock-cover bands,
 zero-sale causes, priority actions, and forecast context; use the emailed

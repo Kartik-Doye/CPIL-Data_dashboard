@@ -40,8 +40,6 @@
     "authDirectory": ".wwebjs_auth",
     "webVersionCacheDirectory": ".wwebjs_cache",
     "dailyMessage": "*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_",
-    "cronExpression": "0 11,19 * * *",
-    "scheduleLabel": "11:00 AM & 07:00 PM Daily",
     "sendCooldownSeconds": 15
   },
   "telemetry": {

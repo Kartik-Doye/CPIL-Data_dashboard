@@ -1,5 +1,10 @@
 # GO Gas Analytical Dashboard — Complete Guide
 
+> **Current product behavior:** this older guide includes planned reports and
+> controls that are not implemented. Use [UI_GUIDE.md](./UI_GUIDE.md) for the
+> current screens, filter behavior, and distinction between interactive views
+> and planned specifications.
+
 ## Purpose of This Dashboard
 This dashboard turns daily station-level sales data into actionable insights. It answers:
 - How much did we sell? (Total, by state, by station, by type)
@@ -27,7 +32,6 @@ This dashboard turns daily station-level sales data into actionable insights. It
 - **Top 5 / Bottom 5 Stations:** Best and worst performers at a glance
 - **Critical Alerts:** Red cards for items needing immediate action
 - **Health Score:** A 0-100 score summarizing overall performance
-- **Compare Mode:** Toggle "Compare" to see this period vs previous period side-by-side
 - **Drill-down:** Click any station name to jump to its detail page
 
 ### 📈 Report 3: RSP (Rate Selling Price) Analysis

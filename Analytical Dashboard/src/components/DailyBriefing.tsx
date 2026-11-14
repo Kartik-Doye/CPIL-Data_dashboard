@@ -35,11 +35,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   const rupees = (value: number) => `₹${qty(value)}`;
 
   const generateBriefingText = () => {
-    const hostname = window.location.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    const detailReference = ['localhost', '127.0.0.1', '::1'].includes(hostname)
-      ? 'Full station detail: see the emailed Excel attachment.'
-      : `Full dashboard: ${window.location.origin}`;
-    return buildExecutiveBriefingBody(data, { detailReference }).text;
+    return buildExecutiveBriefingBody(data).text;
   };
 
   const handleCopy = () => {

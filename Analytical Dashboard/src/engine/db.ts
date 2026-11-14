@@ -99,7 +99,7 @@ export async function queryLoader<T = any>(sql: string, params: any[] = []): Pro
     const result = await client.query(sql, params);
     return result.rows as T[];
   } catch (err) {
-    console.error('[Forecast Feedback DB Error]', err);
+    console.error('[DB Loader Error]', err);
     throw err;
   } finally {
     client.release();
