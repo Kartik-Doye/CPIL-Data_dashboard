@@ -118,7 +118,9 @@ async function loadFromDatabase(): Promise<any | null> {
         ${hasStationContactMapping
     ? "COALESCE(NULLIF(TRIM(cm.alds_name), ''), s.alds_name)"
     : 's.alds_name'} AS alds_name,
-        COALESCE(m.to_state, s.state) as state,
+        ${hasStationContactMapping
+    ? "COALESCE(m.to_state, NULLIF(TRIM(cm.state), ''), s.state)"
+    : 'COALESCE(m.to_state, s.state)'} AS state,
         ${hasStationContactMapping
     ? "COALESCE(NULLIF(TRIM(cm.tm), ''), NULLIF(TRIM(s.tm), ''), 'No TM')"
     : "COALESCE(NULLIF(TRIM(s.tm), ''), 'No TM')"} AS tm,
@@ -146,10 +148,10 @@ async function loadFromDatabase(): Promise<any | null> {
         s.free_sale_pct::float as free_sale_pct,
         s.sale_date::text as sale_date
       FROM sale_tracker s
-      LEFT JOIN state_map m ON s.state = m.from_state
       ${hasStationContactMapping
-    ? 'LEFT JOIN public.station_contact_mapping cm ON UPPER(TRIM(cm.erp_code)) = UPPER(TRIM(s.erp_code))'
-    : ''}
+    ? `LEFT JOIN public.station_contact_mapping cm ON UPPER(TRIM(cm.erp_code)) = UPPER(TRIM(s.erp_code))
+      LEFT JOIN state_map m ON COALESCE(NULLIF(TRIM(cm.state), ''), s.state) = m.from_state`
+    : 'LEFT JOIN state_map m ON s.state = m.from_state'}
       WHERE s.sale_date = (SELECT MAX(sale_date) FROM sale_tracker)
     `);
 
@@ -774,19 +776,18 @@ app.post('/api/whatsapp/send-briefing', async (req: Request, res: Response) => {
   whatsappSendInProgress = true;
   try {
     const telemetry = await getTelemetryData(true);
-    const customMessage = req.body?.message;
-    const message = customMessage || (telemetry ? buildExecutiveWhatsAppMessage(telemetry) : null);
-    if (!message) {
-      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable and no message text was provided. The WhatsApp briefing was not sent.' });
+    if (!telemetry) {
+      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable. The WhatsApp briefing was not sent.' });
       return;
     }
 
+    const message = buildExecutiveWhatsAppMessage(telemetry);
     const result = await sendWhatsAppMessage('briefing', message);
     lastWhatsAppSentAt = Date.now();
     res.json({
       message: result.message,
       recipientCount: result.recipientCount,
-      date: telemetry?.date || new Date().toISOString().slice(0, 10),
+      date: telemetry.date,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

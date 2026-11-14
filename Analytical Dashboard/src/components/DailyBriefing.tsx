@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { ExecutiveTelemetry } from '../types';
 import productConfig from '../../../product-config.json';
-import { buildExecutiveBriefingBody } from '../engine/executiveBriefing.js';
+import { buildExecutiveWhatsAppMessage } from '../engine/whatsappBriefing.js';
 
 interface DailyBriefingProps {
   data: ExecutiveTelemetry;
@@ -35,7 +35,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   const rupees = (value: number) => `₹${qty(value)}`;
 
   const generateBriefingText = () => {
-    return buildExecutiveBriefingBody(data).text;
+    return buildExecutiveWhatsAppMessage(data);
   };
 
   const handleCopy = () => {
@@ -79,10 +79,8 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
       const response = await fetch('/api/whatsapp/send-briefing', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'x-go-gas-whatsapp-request': 'authorized-client',
         },
-        body: JSON.stringify({ message: generateBriefingText() }),
       });
       const contentType = response.headers.get('content-type') || '';
       const payload = contentType.includes('application/json')
