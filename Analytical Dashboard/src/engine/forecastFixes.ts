@@ -40,6 +40,52 @@ function findDateAwareLag(
   return currentIndex >= lagDays ? actuals[currentIndex - lagDays] : fallbackMean;
 }
 
+export function computeEmpiricalWeekdayRatio(
+  dates: Date[],
+  actuals: number[],
+  endIndex: number,
+  targetDow: number,
+): number {
+  const limit = Math.min(endIndex, dates.length, actuals.length);
+  if (limit < 5) return 1.0;
+
+  let dowWeightedRatioSum = 0;
+  let dowWeightTotal = 0;
+  let weekdayWeightedRatioSum = 0;
+  let weekdayWeightTotal = 0;
+
+  for (let k = 0; k < limit; k++) {
+    const val = actuals[k];
+    if (!(val > 0)) continue;
+    const winStart = Math.max(0, k - 6);
+    const localSlice = actuals.slice(winStart, k + 1).filter(v => v > 0);
+    const localMean = localSlice.length > 0
+      ? localSlice.reduce((a, b) => a + b, 0) / localSlice.length
+      : val;
+    if (!(localMean > 0)) continue;
+
+    const ratio = val / localMean;
+    const daysAgo = limit - 1 - k;
+    const weight = Math.pow(0.95, daysAgo);
+    const d = dates[k].getDay();
+
+    if (d === targetDow) {
+      dowWeightedRatioSum += ratio * weight;
+      dowWeightTotal += weight;
+    }
+    if (d >= 1 && d <= 5) {
+      weekdayWeightedRatioSum += ratio * weight;
+      weekdayWeightTotal += weight;
+    }
+  }
+
+  if (dowWeightTotal <= 0) return 1.0;
+  const dowAvgRatio = dowWeightedRatioSum / dowWeightTotal;
+  const weekdayAvgRatio = weekdayWeightTotal > 0 ? weekdayWeightedRatioSum / weekdayWeightTotal : 1.0;
+  const relativeToWeekday = weekdayAvgRatio > 0 ? dowAvgRatio / weekdayAvgRatio : dowAvgRatio;
+  return Math.max(0.35, Math.min(1.65, relativeToWeekday));
+}
+
 export function buildFeaturesNoLeak(
   dates: Date[],
   actuals: number[]
@@ -55,13 +101,15 @@ export function buildFeaturesNoLeak(
 
     const dow = dt.getDay(); // 0 = Sun, 1 = Mon ...
     const isWeekend = dow === 0 || dow === 6 ? 1.0 : 0.0;
+    const isSaturday = dow === 6 ? 1.0 : 0.0;
+    const isSunday = dow === 0 ? 1.0 : 0.0;
     const dom = dt.getDate();
 
     // Check festival
     const isFest = isFestivalDate(dt) ? 1.0 : 0.0;
 
     // Date-aware strictly prior lags
-    const lag1 = findDateAwareLag(dates, actuals, i, 1, pastMean);
+    const rawLag1 = findDateAwareLag(dates, actuals, i, 1, pastMean);
     const lag2 = findDateAwareLag(dates, actuals, i, 2, pastMean);
     const lag7 = findDateAwareLag(dates, actuals, i, 7, pastMean);
 
@@ -74,6 +122,14 @@ export function buildFeaturesNoLeak(
     const r30 = window30.length > 0
       ? window30.reduce((a, b) => a + b, 0) / window30.length
       : pastMean;
+
+    // Strictly-prior empirical weekday/weekend ratio (captures Saturday & Sunday drop relative to Mon-Fri)
+    const dowRatio = computeEmpiricalWeekdayRatio(dates, actuals, i, dow);
+    const prevDow = (dow + 6) % 7;
+    const prevDowRatio = computeEmpiricalWeekdayRatio(dates, actuals, i, prevDow);
+    // Seasonally adjust lag1 so Friday's high weekday sales do not artificially inflate Saturday's prediction
+    const lag1 = prevDowRatio > 0 ? rawLag1 * (dowRatio / prevDowRatio) : rawLag1;
+    const dowExpectedVolume = r7 * dowRatio;
 
     // Past-only EWMA (alpha = 2 / (7 + 1) = 0.25)
     let ewma7 = pastMean;
@@ -103,6 +159,7 @@ export function buildFeaturesNoLeak(
       lag1, lag7, r7, r30,
       ewma7, lag2, trendAccel,
       dowSin, dowCos,
+      isSaturday, isSunday, dowExpectedVolume,
     ]);
   }
 

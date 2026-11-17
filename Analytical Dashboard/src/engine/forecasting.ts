@@ -14,6 +14,7 @@
 import { ForecastPoint, ForecastResult, StationRecord } from '../types.js';
 import {
   buildFeaturesNoLeak,
+  computeEmpiricalWeekdayRatio,
   naiveLastWeek,
   sameWeekdayAvg,
 } from './forecastFixes.js';
@@ -515,6 +516,7 @@ function boundedBiasCorrection(biasPercentage: number): number {
 function computeAdaptiveBiasPercentage(
   rawBiasHistory: number[],
   weekdayBiasHistory: number[] = [],
+  dow?: number,
 ): number {
   if (rawBiasHistory.length === 0) return 0;
   // Exponentially weighted moving average over the last 10 days' relative differences
@@ -524,11 +526,59 @@ function computeAdaptiveBiasPercentage(
   for (let i = 1; i < recent10.length; i++) {
     ewmaBias = alpha * recent10[i] + (1 - alpha) * ewmaBias;
   }
+  const isWeekend = dow === 0 || dow === 6;
+  if (isWeekend && weekdayBiasHistory.length >= 1) {
+    // On Saturday & Sunday, prioritize that specific weekend day's past residual errors (75%)
+    // so weekday (Mon-Fri) demand surges never inflate weekend forecasts when Sat/Sun sales go down.
+    const recentWeekendBias = mean(weekdayBiasHistory.slice(-4));
+    return recentWeekendBias * 0.75 + ewmaBias * 0.25;
+  }
   if (weekdayBiasHistory.length >= 2) {
     const recentWeekday = mean(weekdayBiasHistory.slice(-4));
-    return ewmaBias * 0.75 + recentWeekday * 0.25;
+    return ewmaBias * 0.7 + recentWeekday * 0.3;
   }
   return ewmaBias;
+}
+
+/**
+ * Calibrates Saturday (dow === 6) and Sunday (dow === 0) predictions using strictly-prior
+ * empirical weekend-to-weekday ratios so the forecast reliably captures the weekend sales drop.
+ */
+function calibrateWeekendPrediction(
+  priorDates: Date[],
+  priorActuals: number[],
+  targetDate: Date,
+  rawEnsemble: number,
+  sameWeekdayPred: number,
+  naivePred: number,
+): number {
+  const dow = targetDate.getDay();
+  if (dow !== 0 && dow !== 6) return rawEnsemble;
+
+  const dowRatio = computeEmpiricalWeekdayRatio(priorDates, priorActuals, priorActuals.length, dow);
+  // Compute recent Mon-Fri weekday baseline from up to the last 10 positive weekday observations
+  const recentWeekdayVals: number[] = [];
+  for (let i = priorActuals.length - 1; i >= 0 && recentWeekdayVals.length < 10; i--) {
+    const d = priorDates[i].getDay();
+    if (d >= 1 && d <= 5 && priorActuals[i] > 0) {
+      recentWeekdayVals.push(priorActuals[i]);
+    }
+  }
+  if (recentWeekdayVals.length === 0) return rawEnsemble;
+
+  const recentWeekdayMean = mean(recentWeekdayVals);
+  // When historical Saturdays/Sundays drop relative to Mon-Fri (dowRatio < 0.99),
+  // anchor the weekend prediction to the empirical weekend drop target and weekend-specific baselines.
+  if (dowRatio < 0.99) {
+    const empiricalWeekendTarget = recentWeekdayMean * dowRatio;
+    const weekendAnchor = sameWeekdayPred > 0
+      ? empiricalWeekendTarget * 0.55 + sameWeekdayPred * 0.3 + naivePred * 0.15
+      : empiricalWeekendTarget;
+    if (rawEnsemble > weekendAnchor) {
+      return rawEnsemble * 0.3 + weekendAnchor * 0.7;
+    }
+  }
+  return rawEnsemble;
 }
 
 function inverseMapeWeights(
@@ -611,9 +661,17 @@ function rollingBacktest(dates: Date[], actuals: number[]): BacktestErrors {
 
     if (actual > 0) {
       const weights = inverseMapeWeights(errors.percentage);
-      const rawEnsemblePrediction = Object.entries(weights).reduce(
+      const uncalibratedEnsemble = Object.entries(weights).reduce(
         (sum, [model, weight]) => sum + modelPredictions[model as ForecastModel] * weight,
         0
+      );
+      const rawEnsemblePrediction = calibrateWeekendPrediction(
+        trainDates,
+        trainActuals,
+        testDate,
+        uncalibratedEnsemble,
+        modelPredictions.same_weekday_avg,
+        modelPredictions.naive_last_week,
       );
       let ensemblePrediction = rawEnsemblePrediction;
       const dow = testDate.getDay();
@@ -621,6 +679,7 @@ function rollingBacktest(dates: Date[], actuals: number[]): BacktestErrors {
         const learnedBias = computeAdaptiveBiasPercentage(
           errors.rawEnsembleBiasPercentage,
           errors.weekdayBiasPercentage[dow] || [],
+          dow,
         );
         ensemblePrediction *= 1 - boundedBiasCorrection(learnedBias);
       }
@@ -855,9 +914,17 @@ export function generateForecast(
     const lp = Math.max(linModel.predict(feat), 0);
     const gradientBoostingPrediction = gradientBoostingModel.predict(feat);
     const baseEnsemble = weights.linear * lp + weights.holt_winters * hp + weights.naive_last_week * nl + weights.same_weekday_avg * wa;
-    const rawEnsemble = gradientBoostingActive
+    const uncalibratedRawEnsemble = gradientBoostingActive
       ? baseEnsemble * 0.8 + gradientBoostingPrediction * 0.2
       : baseEnsemble;
+    const rawEnsemble = calibrateWeekendPrediction(
+      extendedDates,
+      extendedActuals,
+      futureDate,
+      uncalibratedRawEnsemble,
+      wa,
+      nl,
+    );
     let ensemble = rawEnsemble;
 
     // Adaptive learning from recent 10-day mistakes/differences + saved feedback
@@ -865,6 +932,7 @@ export function generateForecast(
     const learnedWalkForwardBias = computeAdaptiveBiasPercentage(
       backtest.rawEnsembleBiasPercentage,
       backtest.weekdayBiasPercentage[dow] || [],
+      dow,
     );
     const historicalBias = persistedErrors?.ensemble_bias_pct_by_horizon?.[j + 1];
     if (historicalBias !== undefined && Number.isFinite(historicalBias)) {
@@ -1046,6 +1114,11 @@ export function generateForecast(
     }
   }
 
+  const saturdayRatio = computeEmpiricalWeekdayRatio(dates, actuals, actuals.length, 6);
+  const sundayRatio = computeEmpiricalWeekdayRatio(dates, actuals, actuals.length, 0);
+  const saturdayDipPct = Number(((saturdayRatio - 1) * 100).toFixed(1));
+  const sundayDipPct = Number(((sundayRatio - 1) * 100).toFixed(1));
+
   const adaptiveLearningSummary = (() => {
     if (recentForecastOutcomes.length === 0) return undefined;
     const absDiffLitres = mean(recentForecastOutcomes.map((r) => Math.abs(r.difference)));
@@ -1062,8 +1135,16 @@ export function generateForecast(
       ewma_bias_pct: Number(ewmaBias.toFixed(2)),
       next_day_adjustment_litres: forecastPoints[0]?.adaptive_adjustment_litres ?? 0,
       best_recent_model: bestRecentModelName,
+      saturday_dip_pct: saturdayDipPct,
+      sunday_dip_pct: sundayDipPct,
     };
   })();
+
+  if (saturdayDipPct < 0 || sundayDipPct < 0) {
+    insights.push(
+      `Weekend Contraction Learned: historical database records show Saturday demand shifts by ${saturdayDipPct > 0 ? '+' : ''}${saturdayDipPct}% and Sunday demand shifts by ${sundayDipPct > 0 ? '+' : ''}${sundayDipPct}% relative to Mon–Fri weekdays; weekend predictions are calibrated accordingly.`
+    );
+  }
 
   if (actuals.length >= 14) {
     const recentAverage = mean(actuals.slice(-7));

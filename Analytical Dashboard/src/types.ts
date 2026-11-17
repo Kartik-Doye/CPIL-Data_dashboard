@@ -175,6 +175,8 @@ export interface ForecastResult {
     ewma_bias_pct: number;
     next_day_adjustment_litres: number;
     best_recent_model: string;
+    saturday_dip_pct?: number;
+    sunday_dip_pct?: number;
   };
   data_quality?: {
     outages_imputed: number;

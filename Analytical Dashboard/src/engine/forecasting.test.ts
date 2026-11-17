@@ -206,4 +206,41 @@ test('populates 10-day actual vs predicted differences from latest date backward
   assert.ok(result.forecast[0].predicted_qty > (result.forecast[0].raw_ensemble ?? 0));
 });
 
+test('learns Saturday and Sunday sales drops relative to Mon-Fri weekdays and predicts lower weekend demand', () => {
+  // Build 42 days where Mon-Fri sales are ~2000 L and Saturday/Sunday drop by ~25% (~1500 L)
+  const history = Array.from({ length: 42 }, (_, index) => {
+    const dt = new Date(Date.UTC(2026, 0, index + 1));
+    const dow = dt.getUTCDay();
+    const isWeekend = dow === 0 || dow === 6;
+    return {
+      date: dt.toISOString().slice(0, 10),
+      sale_qty: isWeekend ? 1500 + (index % 3) * 10 : 2000 + (index % 5) * 15,
+    };
+  });
+
+  const result = generateForecast(history, 7);
+
+  assert.ok(result.adaptive_learning);
+  assert.ok((result.adaptive_learning.saturday_dip_pct ?? 0) < -10);
+  assert.ok((result.adaptive_learning.sunday_dip_pct ?? 0) < -10);
+
+  const weekendForecasts = result.forecast.filter(
+    (f) => f.day_name === 'Saturday' || f.day_name === 'Sunday',
+  );
+  const weekdayForecasts = result.forecast.filter(
+    (f) => f.day_name !== 'Saturday' && f.day_name !== 'Sunday',
+  );
+  assert.ok(weekendForecasts.length >= 2);
+  assert.ok(weekdayForecasts.length >= 4);
+
+  const avgWeekendPred =
+    weekendForecasts.reduce((s, f) => s + f.predicted_qty, 0) / weekendForecasts.length;
+  const avgWeekdayPred =
+    weekdayForecasts.reduce((s, f) => s + f.predicted_qty, 0) / weekdayForecasts.length;
+
+  // Saturday & Sunday predictions must clearly drop below Mon-Fri weekday predictions
+  assert.ok(avgWeekendPred < avgWeekdayPred * 0.85);
+});
+
+
 
