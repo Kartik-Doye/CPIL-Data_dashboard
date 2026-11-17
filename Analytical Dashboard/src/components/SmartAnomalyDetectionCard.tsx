@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Sparkles, AlertOctagon, CheckCircle2, AlertTriangle, ArrowUpRight, ArrowDownRight, RefreshCcw, ExternalLink } from 'lucide-react';
+import { Sparkles, AlertOctagon, AlertTriangle } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
-import { fmtQty, fmtCurrency } from '../engine/formatting';
+import { fmtQty } from '../engine/formatting';
+import productConfig from '../../../product-config.json';
 
 interface SmartAnomalyDetectionCardProps {
   stations: StationRecord[];
@@ -27,64 +28,77 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
 }) => {
   const [selectedType, setSelectedType] = useState<string>('ALL');
 
-  // Detect statistical anomalies across the network
+  // Detect statistical anomalies across the network using configured thresholds & dynamic norms
   const anomalies: DetectedAnomaly[] = [];
+  const rules = productConfig.analytics.anomalyThresholds;
 
-  // Network averages
-  const avgVolume = telemetry.total_sale_qty / (telemetry.stations_with_sale || 1);
+  const activeStations = stations.filter((s) => s.sale_qty > 0);
+  const avgVolume = activeStations.length > 0
+    ? activeStations.reduce((sum, s) => sum + s.sale_qty, 0) / activeStations.length
+    : telemetry.total_sale_qty / (telemetry.stations_with_sale || 1);
+
+  const validRates = stations
+    .map((s) => s.new_rate || s.erp_rate)
+    .filter((r) => r >= rules.minValidRsp && r <= rules.maxValidRsp);
+  const minNormalRsp = validRates.length > 0 ? Math.min(...validRates) : productConfig.analytics.fallbackRetailPricePerLitre;
+  const maxNormalRsp = validRates.length > 0 ? Math.max(...validRates) : productConfig.analytics.fallbackRetailPricePerLitre;
 
   stations.forEach((s) => {
-    // 1. Extreme Volume Spike (Possible Data Entry Typo e.g. 15,000 L when avg is 1,200 L)
-    if (s.sale_qty > avgVolume * 4.5 && s.sale_qty > 4000) {
+    // 1. Extreme Volume Spike (Possible Data Entry Typo)
+    if (s.sale_qty > avgVolume * rules.volumeSpikeMultiplier && s.sale_qty > rules.volumeSpikeMinLitres) {
       anomalies.push({
         station: s,
         anomalyType: 'Volume Spike (Possible Typo)',
         severity: 'Critical',
         reportedValue: `${fmtQty(s.sale_qty)} L`,
-        expectedRange: `400 - ${fmtQty(Math.round(avgVolume * 2.2))} L`,
-        explanation: 'Daily volume is >4.5x network average. Check for extra zero during manual file entry.',
+        expectedRange: `${fmtQty(Math.round(avgVolume * 0.4))} - ${fmtQty(Math.round(avgVolume * 2.2))} L`,
+        explanation: `Daily volume is >${rules.volumeSpikeMultiplier}x network average. Check for extra zero during manual file entry.`,
       });
     }
 
-    // 2. Decimal Misplacement (RSP Entry Error e.g. RSP reported < ₹20 or > ₹150)
-    if (s.new_rate > 0 && (s.new_rate < 20 || s.new_rate > 150)) {
+    // 2. Decimal Misplacement (RSP Entry Error)
+    const reportedRsp = s.new_rate || s.erp_rate;
+    if (reportedRsp > 0 && (reportedRsp < rules.minValidRsp || reportedRsp > rules.maxValidRsp)) {
       anomalies.push({
         station: s,
         anomalyType: 'Decimal Misplacement (RSP Error)',
         severity: 'Critical',
-        reportedValue: `₹${s.new_rate.toFixed(2)} / L`,
-        expectedRange: `₹70.00 - ₹85.00 / L`,
+        reportedValue: `₹${reportedRsp.toFixed(2)} / L`,
+        expectedRange: `₹${minNormalRsp.toFixed(2)} - ₹${maxNormalRsp.toFixed(2)} / L`,
         explanation: 'Extreme RSP price deviation detected. Possible misplaced decimal point in entry sheet.',
       });
     }
 
-    // 3. Dispenser Lock (High Closing Stock Dip > 8,000 L but Zero Sale Reported)
+    // 3. Dispenser Lock (High Closing Stock Dip but Zero Sale Reported)
     const stockDip = s.closing_dip_in_ltr || s.closing_dip || 0;
-    if (s.sale_qty === 0 && stockDip > 8000) {
+    const expectedBurn = Math.round(s.rolling_7d_burn || avgVolume);
+    if (s.sale_qty === 0 && stockDip > rules.dispenserLockDipLitres) {
       anomalies.push({
         station: s,
         anomalyType: 'Dispenser Lock (Stock High/Sale Zero)',
         severity: 'Warning',
         reportedValue: `0 L Sale (Dip: ${fmtQty(stockDip)} L)`,
-        expectedRange: `>800 L Daily Sale`,
-        explanation: 'Station has 8k+ Litres of fuel in tank but reported zero sales. Check nozzle/dispenser breakdown.',
+        expectedRange: `~${fmtQty(expectedBurn)} L/d Burn`,
+        explanation: `Station has ${fmtQty(stockDip)} L of fuel in tank but reported zero sales. Check nozzle/dispenser breakdown.`,
       });
     }
 
-    // 4. Collection Mismatch (High sales > 1,500 L but net collection < ₹10,000)
+    // 4. Collection Mismatch
     const collection = s.net_total_collection || s.collection;
-    if (s.sale_qty > 1500 && collection < 10000) {
+    const referenceRate = s.new_rate || s.erp_rate || productConfig.analytics.fallbackRetailPricePerLitre;
+    if (s.sale_qty > rules.collectionMismatchMinSaleLitres && collection < rules.collectionMismatchMinCollectionRs) {
       anomalies.push({
         station: s,
         anomalyType: 'Collection Mismatch',
         severity: 'Warning',
         reportedValue: `₹${fmtQty(collection)} collection`,
-        expectedRange: `>₹${fmtQty(Math.round(s.sale_qty * 75))}`,
+        expectedRange: `>₹${fmtQty(Math.round(s.sale_qty * referenceRate))}`,
         explanation: 'Sales volume recorded but bank/cash collection is under-reported.',
       });
     }
   });
 
+  const anomalyTypes = [...new Set(anomalies.map((a) => a.anomalyType))];
   const filteredAnomalies = anomalies.filter((a) => selectedType === 'ALL' || a.anomalyType === selectedType);
   const criticalCount = anomalies.filter((a) => a.severity === 'Critical').length;
   const warningCount = anomalies.filter((a) => a.severity === 'Warning').length;
@@ -113,18 +127,29 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
         </div>
 
         {/* Filter Types */}
-        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 self-start md:self-auto">
+        <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800 self-start md:self-auto">
           <span className="text-[11px] font-medium text-slate-500 px-2">Anomaly Filter:</span>
           <button
             onClick={() => setSelectedType('ALL')}
-            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-              selectedType === 'ALL'
-                ? 'bg-purple-600 text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${selectedType === 'ALL'
+              ? 'bg-purple-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
           >
             All ({anomalies.length})
           </button>
+          {anomalyTypes.map((t) => (
+            <button
+              key={t}
+              onClick={() => setSelectedType(t)}
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${selectedType === t
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+            >
+              {t.split(' (')[0]} ({anomalies.filter((a) => a.anomalyType === t).length})
+            </button>
+          ))}
         </div>
       </div>
 
@@ -181,9 +206,8 @@ export const SmartAnomalyDetectionCard: React.FC<SmartAnomalyDetectionCardProps>
                       ) : (
                         <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                       )}
-                      <span className={`font-semibold text-xs ${
-                        a.severity === 'Critical' ? 'text-rose-700 dark:text-rose-300' : 'text-amber-700 dark:text-amber-300'
-                      }`}>
+                      <span className={`font-semibold text-xs ${a.severity === 'Critical' ? 'text-rose-700 dark:text-rose-300' : 'text-amber-700 dark:text-amber-300'
+                        }`}>
                         {a.anomalyType}
                       </span>
                     </div>

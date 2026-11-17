@@ -39,8 +39,13 @@ export interface StationRecord {
   latitude?: number;
   longitude?: number;
   days_left: number;
+  rolling_7d_burn?: number;
+  prev_day_sale_qty?: number | null;
+  dod_delta_qty?: number | null;
+  dod_delta_pct?: number | null;
   trend_slope: number;
   status_band: 'Achieved' | 'On track' | 'At risk' | 'Behind';
+  recent_7d_sales?: Array<{ date: string; sale_qty: number }>;
 }
 
 export interface StateSummary {
@@ -110,6 +115,8 @@ export interface ForecastPoint {
   is_weekend: boolean;
   is_today: boolean;
   days_from_now: number;
+  raw_ensemble?: number;
+  adaptive_adjustment_litres?: number;
   festival_name?: string;
   festival_note?: string;
 }
@@ -144,14 +151,31 @@ export interface ForecastResult {
   reasons?: string[];
   recent_forecast_outcomes?: Array<{
     date: string;
+    day_name?: string;
     predicted: number;
     actual: number;
     difference: number;
     difference_pct: number;
+    predicted_linear?: number;
+    predicted_holt_winters?: number;
+    predicted_naive?: number;
+    predicted_weekday?: number;
     closest_model: string;
     closest_model_prediction: number;
+    adaptive_correction_litres?: number;
+    source?: 'saved_feedback' | 'walk_forward';
     explanation: string;
   }>;
+  adaptive_learning?: {
+    window_days: number;
+    mean_abs_diff_litres: number;
+    mean_abs_diff_pct: number;
+    net_signed_diff_litres: number;
+    net_signed_diff_pct: number;
+    ewma_bias_pct: number;
+    next_day_adjustment_litres: number;
+    best_recent_model: string;
+  };
   data_quality?: {
     outages_imputed: number;
     gaps_filled: number;
@@ -242,6 +266,11 @@ export interface StationMonthlySales {
 
 export interface ExecutiveTelemetry {
   date: string;
+  available_dates?: string[];
+  previous_date?: string | null;
+  previous_date_sale_qty?: number | null;
+  previous_date_collection?: number | null;
+  dod_sale_change_pct?: number | null;
   is_live: boolean;
   source_file: string;
   stations_total: number;
@@ -264,6 +293,7 @@ export interface ExecutiveTelemetry {
   bottom_performing_stations: StationRecord[];
   forecast: ForecastResult;
   history_30d: DailyHistoricalPoint[];
+  recent_7d_dates?: string[];
   station_monthly_sales?: StationMonthlySales[];
   states_summary: StateSummary[];
   tm_summary: TMSummary[];

@@ -29,7 +29,6 @@ export const DB_USER = process.env.DB_USER || productConfig.database.readerUser;
 export const DB_PASSWORD = process.env.BOT_READER_PASSWORD || process.env.DB_PASSWORD || '';
 export const DB_LOADER_USER = process.env.BOT_LOADER_USER || productConfig.database.loaderUser;
 export const DB_LOADER_PASSWORD = process.env.BOT_LOADER_PASSWORD || '';
-export const FLASK_PORT = parseInt(process.env.FLASK_PORT || String(productConfig.application.flaskPort), 10);
 export const PORT = parseInt(process.env.PORT || String(productConfig.application.port), 10);
 
 export const DB_CONNECT_TIMEOUT = parseInt(

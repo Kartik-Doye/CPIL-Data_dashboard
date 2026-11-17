@@ -173,12 +173,13 @@ def process_file(file_path, dry_run=False):
                 erp_code, alds_name, state, tm, coordinator, type, tank_cap,
                 sale_qty, collection, new_rate, other, diff, erp_rate, ret_test_cal,
                 free_sale_litres, free_sale_rupees, scheme, paytm, net_cash_collection,
-                closing_dip_in_ltr, remark, sale_date
+                closing_dip_in_ltr, remark, net_total_collection, effective_rsp,
+                collection_check, scheme_as_per_ho, free_sale_pct, sale_date
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
-                %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
         """
 
@@ -207,13 +208,19 @@ def process_file(file_path, dry_run=False):
             ncash = number_value(r, index, "Net Cash Collection", ["NET CASH COLLECTION"])
             cdip = number_value(r, index, "Closing Dip", ["CLOSING DIP IN LTR", "CLOSING DIP"])
             rem = str(r.get("REMARK", r.get("Remark", ""))).strip()
+            net_tot = number_value(r, index, "Net Total Collection", ["NET TOTAL COLLECTION", "Net Total Collection"]) or coll
+            eff_rsp = number_value(r, index, "Effective RSP", ["EFFECTIVE RSP", "Effective RSP"]) or (round(net_tot / sqty, 2) if sqty > 0 else (nrate or erate or 0))
+            coll_chk = number_value(r, index, "Collection Check", ["COLLECTION CHECK", "Collection Check"])
+            sch_ho = number_value(r, index, "Scheme As Per HO", ["SCHEME AS PER HO", "Scheme As Per HO"])
+            fs_pct = number_value(r, index, "Free Sale %", ["FREE SALE PCT", "Free Sale %", "FREE SALE %"]) or (round((flit / sqty) * 100, 2) if sqty > 0 else 0)
 
             total_qty += sqty
             try:
                 cur.execute(insert_sql, (
                     code, name, st, tm, coord, tp, cap,
                     sqty, coll, nrate, other, diff, erate, rtest,
-                    flit, frup, scheme, paytm, ncash, cdip, rem, sale_date
+                    flit, frup, scheme, paytm, ncash, cdip, rem,
+                    net_tot, eff_rsp, coll_chk, sch_ho, fs_pct, sale_date
                 ))
             except Exception as e:
                 db_column = getattr(getattr(e, "diag", None), "column_name", None)

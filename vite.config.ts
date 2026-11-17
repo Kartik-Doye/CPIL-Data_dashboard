@@ -17,5 +17,19 @@ export default defineConfig(() => {
         ? null
         : { ignored: ['**/.wwebjs_auth/**'] },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (id.includes('node_modules')) {
+              if (id.includes('lucide-react')) return 'vendor-icons';
+              if (id.includes('socket.io') || id.includes('engine.io') || id.includes('qrcode')) return 'vendor-realtime';
+              if (id.includes('react-dom') || id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+            }
+            return undefined;
+          },
+        },
+      },
+    },
   };
 });

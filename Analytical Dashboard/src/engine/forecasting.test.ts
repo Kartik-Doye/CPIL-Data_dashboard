@@ -166,3 +166,44 @@ test('historical overprediction bias is damped for the matching forecast horizon
   assert.ok(biasCorrected.forecast[0].predicted_qty < historicalWeightsOnly.forecast[0].predicted_qty);
   assert.ok(Number.isFinite(biasCorrected.forecast[1].predicted_qty));
 });
+
+test('uses all historical days in the database rather than capping walk-forward evaluation at 28 days', () => {
+  const history = makeHistory(90, index => 1000 + (index % 7) * 50 + index * 2);
+  const result = generateForecast(history, 7);
+
+  assert.equal(result.days_available, 90);
+  assert.equal(result.backtest_days, 83);
+  assert.equal(result.backtest_diagnostics?.first_scored_date, '2026-01-08');
+  assert.equal(result.backtest_diagnostics?.last_scored_date, '2026-03-31');
+});
+
+test('populates 10-day actual vs predicted differences from latest date backwards and learns adaptively from recent errors', () => {
+  // First 35 days follow base level, last 10 days step up by +30% so models initially under-predict
+  const history = makeHistory(45, index => {
+    const base = 1000 + (index % 7) * 40;
+    return index >= 35 ? Math.round(base * 1.3) : base;
+  });
+
+  const result = generateForecast(history, 7);
+
+  assert.ok(result.recent_forecast_outcomes);
+  assert.equal(result.recent_forecast_outcomes.length, 10);
+  // Latest historical date should be first (index 0)
+  assert.equal(result.recent_forecast_outcomes[0].date, history[history.length - 1].date);
+  assert.equal(result.recent_forecast_outcomes[9].date, history[history.length - 10].date);
+
+  for (const outcome of result.recent_forecast_outcomes) {
+    assert.equal(outcome.difference, Number((outcome.predicted - outcome.actual).toFixed(2)));
+    assert.ok(Number.isFinite(outcome.difference_pct));
+  }
+
+  assert.ok(result.adaptive_learning);
+  assert.equal(result.adaptive_learning.window_days, 10);
+  // Since actuals jumped +30% in the last 10 days, raw predictions were lower than actuals (negative bias),
+  // so the adaptive engine should learn a positive upward adjustment for the next day.
+  assert.ok((result.adaptive_learning.next_day_adjustment_litres ?? 0) > 0);
+  assert.ok((result.forecast[0].adaptive_adjustment_litres ?? 0) > 0);
+  assert.ok(result.forecast[0].predicted_qty > (result.forecast[0].raw_ensemble ?? 0));
+});
+
+

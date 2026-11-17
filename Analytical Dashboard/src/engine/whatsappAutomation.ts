@@ -20,6 +20,7 @@ import {
   setWhatsAppRecipients,
   sendWhatsAppMessage,
 } from './whatsappService.js';
+import { query, queryLoader, isLoaderConfigured } from './db.js';
 
 export interface WhatsAppConfig {
   targetPhoneNumber: string;
@@ -90,6 +91,30 @@ export function initWhatsAppAutomation(
 
   initializeWhatsAppClient(updateConnectionState);
   updateConnectionState(getWhatsAppSessionState());
+
+  // Load persisted WhatsApp recipients & message from PostgreSQL settings table if available
+  void (async () => {
+    try {
+      const rows = await query<{ value: { targetPhoneNumber?: string; dailyMessageText?: string } }>(
+        "SELECT value FROM settings WHERE key = 'whatsapp_config'"
+      );
+      const saved = rows[0]?.value;
+      if (saved) {
+        if (saved.targetPhoneNumber) {
+          const parsed = parseRecipientNumbers(saved.targetPhoneNumber);
+          if (parsed.length > 0) {
+            targetPhoneNumber = parsed.join(',');
+            setWhatsAppRecipients(parsed);
+          }
+        }
+        if (saved.dailyMessageText) {
+          dailyMessageText = String(saved.dailyMessageText).trim();
+        }
+      }
+    } catch {
+      // Ignore if settings table is not yet installed
+    }
+  })();
 
   io.on('connection', (socket) => {
     socket.emit('status-update', connectionStatus);
@@ -162,9 +187,18 @@ export function initWhatsAppAutomation(
     setWhatsAppRecipients(recipients);
     if (message) dailyMessageText = String(message).trim();
 
+    if (isLoaderConfigured()) {
+      void queryLoader(
+        `INSERT INTO settings (key, value)
+         VALUES ('whatsapp_config', $1::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [JSON.stringify({ targetPhoneNumber, dailyMessageText })],
+      ).catch(() => { });
+    }
+
     res.json({
       success: true,
-      message: 'Configuration updated successfully.',
+      message: 'Configuration saved and synced.',
       config: { targetPhoneNumber, dailyMessageText, connectionStatus },
     });
   });

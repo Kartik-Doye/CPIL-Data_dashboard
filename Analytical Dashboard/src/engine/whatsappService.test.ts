@@ -11,13 +11,21 @@ import {
   setWhatsAppRecipients,
   sendWhatsAppMessage,
 } from './whatsappService.js';
-import { classifyZeroSaleReason } from './formatting.js';
+import { classifyZeroSaleReason, escapeCsvCell } from './formatting.js';
 
-test('parses and cleans valid recipient phone numbers', () => {
-  const result = parseRecipientNumbers('+91 98765 43210, 918087018975, invalid, 123');
-  assert.equal(result.length, 2);
+test('parses and cleans valid recipient phone numbers including 10-digit Indian numbers', () => {
+  const result = parseRecipientNumbers('+91 98765 43210, 918087018975, 9876500001, invalid, 123');
+  assert.equal(result.length, 3);
   assert.equal(result[0], '+919876543210');
   assert.equal(result[1], '918087018975');
+  assert.equal(result[2], '919876500001');
+});
+
+test('neutralizes CSV formula injection in exported text cells', () => {
+  assert.equal(escapeCsvCell('=CMD|"/C calc"!A0'), `"'=CMD|""/C calc""!A0"`);
+  assert.equal(escapeCsvCell('+SUM(A1:A2)'), `"'+SUM(A1:A2)"`);
+  assert.equal(escapeCsvCell('Normal Station'), `"Normal Station"`);
+  assert.equal(escapeCsvCell(1250.5), '1250.5');
 });
 
 test('only retries transient WhatsApp browser navigation failures', () => {

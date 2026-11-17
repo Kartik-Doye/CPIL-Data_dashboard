@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { Sparkles, AlertTriangle, TrendingDown, ShieldAlert, Download, RefreshCw } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Sparkles, Download } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
-import { fmtQty, fmtCurrency } from '../engine/formatting';
+import { fmtQty, escapeCsvCell } from '../engine/formatting';
 
 interface CustomerChurnPredictorProps {
   stations: StationRecord[];
@@ -16,64 +16,121 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
 }) => {
   const [sensitivity, setSensitivity] = useState<'high' | 'medium' | 'low'>('medium');
 
-  // Multi-day consecutive drop churn risk model
-  const churnCandidates = stations
-    .filter((s) => s.sale_qty > 0)
-    .map((s) => {
-      // Calculate churn probability score (0-100%) based on trend slope & volume deficit
-      const dropLitres = s.diff < 0 ? Math.abs(s.diff) : 0;
-      const baseline = s.sale_qty + dropLitres;
-      const dropPct = baseline > 0 ? (dropLitres / baseline) * 100 : 0;
+  const monthlySalesByErp = useMemo(() => {
+    const map = new Map<string, { totalQty: number; totalDays: number }>();
+    for (const row of telemetry.station_monthly_sales || []) {
+      const curr = map.get(row.erp_code) || { totalQty: 0, totalDays: 0 };
+      curr.totalQty += row.sale_qty;
+      curr.totalDays += row.reporting_days;
+      map.set(row.erp_code, curr);
+    }
+    return map;
+  }, [telemetry.station_monthly_sales]);
 
-      let churnProb = Math.min(98, Math.round(dropPct * 1.8 + (s.sale_qty < 500 ? 25 : 0)));
-      if (s.remark && /price|disparity|rival|competing/i.test(s.remark)) {
-        churnProb = Math.min(99, churnProb + 20);
-      }
+  // Historical baseline & multi-day volume drop churn risk model
+  const churnCandidates = useMemo(() => {
+    return stations
+      .filter((s) => s.sale_qty > 0)
+      .map((s) => {
+        const monthlyAgg = monthlySalesByErp.get(s.erp_code);
+        const monthlyDailyAvg =
+          monthlyAgg && monthlyAgg.totalDays > 0
+            ? monthlyAgg.totalQty / monthlyAgg.totalDays
+            : 0;
 
-      let riskBand: 'High Risk' | 'Medium Risk' | 'Low Risk' = 'Low Risk';
-      if (churnProb >= 60) riskBand = 'High Risk';
-      else if (churnProb >= 35) riskBand = 'Medium Risk';
+        const recentPrior = (s.recent_7d_sales || []).filter(
+          (pt) => pt.date < s.sale_date && pt.sale_qty > 0,
+        );
+        const prior7dAvg =
+          recentPrior.length > 0
+            ? recentPrior.reduce((acc, pt) => acc + pt.sale_qty, 0) / recentPrior.length
+            : 0;
 
-      return {
-        station: s,
-        currentSale: s.sale_qty,
-        baselineSale: Math.round(baseline),
-        dropLitres: Math.round(dropLitres),
-        dropPct: Math.round(dropPct),
-        churnProb,
-        riskBand,
-      };
-    })
-    .filter((item) => {
-      if (sensitivity === 'high') return item.churnProb >= 35;
-      if (sensitivity === 'medium') return item.churnProb >= 50;
-      return item.churnProb >= 70;
-    })
-    .sort((a, b) => b.churnProb - a.churnProb);
+        const baseline = monthlyDailyAvg > 0 ? monthlyDailyAvg : prior7dAvg;
+        const dropLitres = baseline > s.sale_qty ? baseline - s.sale_qty : 0;
+        const dropPct = baseline > 0 ? (dropLitres / baseline) * 100 : 0;
+
+        // Count consecutive day-over-day drops in recent_7d_sales
+        const series = s.recent_7d_sales || [];
+        let consecutiveDrops = 0;
+        for (let i = series.length - 1; i >= 1; i--) {
+          if (series[i].sale_qty < series[i - 1].sale_qty) {
+            consecutiveDrops++;
+          } else {
+            break;
+          }
+        }
+
+        let churnProb = Math.min(
+          98,
+          Math.round(dropPct * 1.4 + consecutiveDrops * 8 + (dropPct > 15 && s.sale_qty < 500 ? 15 : 0)),
+        );
+        if (s.remark && /price|disparity|rival|competing/i.test(s.remark)) {
+          churnProb = Math.min(99, churnProb + 20);
+        }
+
+        let riskBand: 'High Risk' | 'Medium Risk' | 'Low Risk' = 'Low Risk';
+        if (churnProb >= 60) riskBand = 'High Risk';
+        else if (churnProb >= 35) riskBand = 'Medium Risk';
+
+        return {
+          station: s,
+          currentSale: s.sale_qty,
+          baselineSale: Math.round(baseline),
+          dropLitres: Math.round(dropLitres),
+          dropPct: Math.round(dropPct),
+          consecutiveDrops,
+          churnProb,
+          riskBand,
+        };
+      })
+      .filter((item) => {
+        if (item.baselineSale <= 0 || item.dropLitres <= 0) return false;
+        if (sensitivity === 'high') return item.churnProb >= 35;
+        if (sensitivity === 'medium') return item.churnProb >= 50;
+        return item.churnProb >= 70;
+      })
+      .sort((a, b) => b.churnProb - a.churnProb);
+  }, [stations, monthlySalesByErp, sensitivity]);
 
   const highRiskCount = churnCandidates.filter((i) => i.riskBand === 'High Risk').length;
   const totalLitresAtRisk = churnCandidates.reduce((sum, i) => sum + i.dropLitres, 0);
 
   const exportCSV = () => {
-    const headers = ['Station Code', 'ALDS Name', 'State', 'TM', 'Current Sale (L)', 'Baseline Sale (L)', 'Litres Lost', 'Churn Risk Score (%)', 'Risk Band'];
+    const headers = [
+      'Station Code',
+      'ALDS Name',
+      'State',
+      'TM',
+      'Current Sale (L)',
+      'Historical Baseline (L/d)',
+      'Litres Lost (L/d)',
+      'Drop (%)',
+      'Consecutive Drop Days',
+      'Churn Risk Score (%)',
+      'Risk Band',
+    ];
     const rows = churnCandidates.map((c) => [
-      `"${c.station.erp_code}"`,
-      `"${c.station.alds_name.replace(/"/g, '""')}"`,
-      `"${c.station.state}"`,
-      `"${c.station.tm}"`,
+      escapeCsvCell(c.station.erp_code),
+      escapeCsvCell(c.station.alds_name),
+      escapeCsvCell(c.station.state),
+      escapeCsvCell(c.station.tm),
       c.currentSale,
       c.baselineSale,
       c.dropLitres,
+      c.dropPct,
+      c.consecutiveDrops,
       c.churnProb,
-      `"${c.riskBand}"`,
+      escapeCsvCell(c.riskBand),
     ]);
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Commercial_Fleet_Churn_Risk_AI_${telemetry.date}.csv`;
+    link.download = `Commercial_Fleet_Churn_Risk_${telemetry.date}.csv`;
     link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -88,10 +145,10 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
               </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                  Commercial Fleet Churn Risk Predictor AI
+                  Commercial Fleet Volume Attrition & Churn Risk Screener
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Detects commercial AutoLPG auto-rickshaw fleet diversion based on multi-day consecutive volume drops.
+                  Flags active stations experiencing volume drops relative to their historical daily baseline and multi-day consecutive declines.
                 </p>
               </div>
             </div>
@@ -99,10 +156,10 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
 
           <button
             onClick={exportCSV}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Export Churn AI CSV</span>
+            <span>Export Churn Risk CSV</span>
           </button>
         </div>
 
@@ -114,26 +171,26 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
           </div>
 
           <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30">
-            <span className="text-xs font-medium text-amber-700 dark:text-amber-400 block">Daily Volume at Risk</span>
+            <span className="text-xs font-medium text-amber-700 dark:text-amber-400 block">Daily Volume Deficit vs Baseline</span>
             <span className="text-xl font-bold font-mono text-amber-800 dark:text-amber-300">{fmtQty(totalLitresAtRisk)} L/d</span>
           </div>
 
           <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-500/30">
-            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 block">AI Model Calibration</span>
-            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">Ensemble Slope Analysis</span>
+            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 block">Baseline Reference</span>
+            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">3M & 7D Daily Avg</span>
           </div>
         </div>
       </div>
 
       {/* Controls */}
       <div className="flex items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-xs">
-        <span className="text-slate-600 dark:text-slate-400">Churn AI Sensitivity:</span>
+        <span className="text-slate-600 dark:text-slate-400">Risk Screening Sensitivity:</span>
         <div className="flex items-center gap-1.5">
           {(['high', 'medium', 'low'] as const).map((s) => (
             <button
               key={s}
               onClick={() => setSensitivity(s)}
-              className={`px-3 py-1 rounded text-xs font-semibold capitalize transition-colors ${
+              className={`px-3 py-1 rounded text-xs font-semibold capitalize transition-colors cursor-pointer ${
                 sensitivity === s
                   ? 'bg-purple-600 text-white shadow-xs'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
@@ -164,7 +221,7 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
               {churnCandidates.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-slate-400 font-sans">
-                    No stations flagged under this Churn AI sensitivity setting.
+                    No stations flagged under this Churn Risk sensitivity setting.
                   </td>
                 </tr>
               ) : (
@@ -172,12 +229,14 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
                   <tr key={c.station.erp_code} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                     <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                       <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded font-bold text-xs ${
-                          c.churnProb >= 60
-                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
-                            : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
-                        }`}>
-                          {c.churnProb}% Churn Risk
+                        <span
+                          className={`px-2 py-0.5 rounded font-bold text-xs ${
+                            c.churnProb >= 60
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
+                              : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
+                          }`}
+                        >
+                          {c.churnProb}% Risk
                         </span>
                       </div>
                     </td>
@@ -203,12 +262,13 @@ export const CustomerChurnPredictor: React.FC<CustomerChurnPredictorProps> = ({
                     </td>
 
                     <td className={`px-4 text-right font-bold text-rose-600 dark:text-rose-400 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      -{fmtQty(c.dropLitres)} L
+                      -{fmtQty(c.dropLitres)} L ({c.dropPct}%)
                     </td>
 
                     <td className={`px-4 font-sans ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                       <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                         {c.riskBand}
+                        {c.consecutiveDrops > 0 ? ` (${c.consecutiveDrops}d drop)` : ''}
                       </span>
                     </td>
                   </tr>

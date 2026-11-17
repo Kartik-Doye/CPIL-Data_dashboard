@@ -14,16 +14,16 @@ export const StationTypeAnalysis: React.FC<StationTypeAnalysisProps> = ({
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs transition-colors">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-orange-500/10 text-orange-400 border border-orange-500/20">
+          <div className="p-2.5 rounded-xl bg-orange-50 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20">
             <Layers className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-white">
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">
               Station Operating Model Analysis (LOCO, JODO, DODO, JOCO, COCO)
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Comparative throughput and revenue contribution across company-owned vs dealer-operated
               business models.
             </p>
@@ -36,37 +36,37 @@ export const StationTypeAnalysis: React.FC<StationTypeAnalysisProps> = ({
         {types.map((tp) => (
           <div
             key={tp.type}
-            className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm hover:border-slate-700 transition-colors"
+            className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-orange-300 dark:hover:border-slate-700 transition-colors"
           >
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-bold text-white px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700">
+              <span className="text-sm font-bold text-slate-900 dark:text-white px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                 {tp.type} Model
               </span>
-              <span className="text-xs font-mono font-bold text-orange-400">
+              <span className="text-xs font-mono font-bold text-orange-600 dark:text-orange-400">
                 {tp.share_pct}% Volume Share
               </span>
             </div>
 
             <div className="space-y-2 text-xs">
               <div className="flex justify-between items-baseline">
-                <span className="text-slate-400">Station Count:</span>
-                <span className="font-mono font-semibold text-white">{tp.stations}</span>
+                <span className="text-slate-500 dark:text-slate-400">Station Count:</span>
+                <span className="font-mono font-semibold text-slate-900 dark:text-white">{tp.stations}</span>
               </div>
               <div className="flex justify-between items-baseline">
-                <span className="text-slate-400">Total Volume Sold:</span>
-                <span className="font-mono font-bold text-indigo-300">
+                <span className="text-slate-500 dark:text-slate-400">Total Volume Sold:</span>
+                <span className="font-mono font-bold text-indigo-600 dark:text-indigo-300">
                   {tp.total_sale_qty.toLocaleString('en-IN')} L
                 </span>
               </div>
               <div className="flex justify-between items-baseline">
-                <span className="text-slate-400">Total Collections:</span>
-                <span className="font-mono font-bold text-emerald-400">
+                <span className="text-slate-500 dark:text-slate-400">Total Collections:</span>
+                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
                   ₹{(tp.total_collection / 100000).toFixed(1)} Lakh
                 </span>
               </div>
-              <div className="flex justify-between items-baseline pt-2 border-t border-slate-800">
-                <span className="text-slate-400">Avg Throughput / Stn:</span>
-                <span className="font-mono font-semibold text-white">
+              <div className="flex justify-between items-baseline pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-slate-500 dark:text-slate-400">Avg Throughput / Stn:</span>
+                <span className="font-mono font-semibold text-slate-900 dark:text-white">
                   {tp.avg_sale_per_station.toLocaleString('en-IN')} L/d
                 </span>
               </div>
@@ -76,8 +76,8 @@ export const StationTypeAnalysis: React.FC<StationTypeAnalysisProps> = ({
       </div>
 
       {/* Business Model Descriptions */}
-      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-slate-400 space-y-2">
-        <h4 className="font-semibold text-slate-200">Business Model Definitions:</h4>
+      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs text-slate-600 dark:text-slate-400 space-y-2 transition-colors">
+        <h4 className="font-semibold text-slate-900 dark:text-slate-200">Business Model Definitions:</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
           <div>
             • <strong>LOCO:</strong> Lease Operated Company Owned (Strategic core company assets)

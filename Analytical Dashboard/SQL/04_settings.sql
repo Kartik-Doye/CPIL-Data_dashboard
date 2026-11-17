@@ -53,3 +53,6 @@ ON CONFLICT (key) DO NOTHING;
 INSERT INTO settings (key, value) VALUES
 ('weekend', '{"days": [0, 6]}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
+
+GRANT SELECT ON settings TO bot_reader;
+GRANT SELECT, INSERT, UPDATE ON settings TO bot_loader;

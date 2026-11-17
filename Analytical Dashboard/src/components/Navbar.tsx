@@ -10,6 +10,7 @@ interface NavbarProps {
   onToggleTheme: () => void;
   onRefresh: () => void;
   onExportCSV: () => void;
+  onExportXLSX?: () => void;
   onOpenDrawer?: () => void;
   onOpenDbInspector?: () => void;
   onOpenWhatsApp?: () => void;
@@ -23,6 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleTheme,
   onRefresh,
   onExportCSV,
+  onExportXLSX,
   onOpenDrawer,
   onOpenDbInspector,
   onOpenWhatsApp,
@@ -185,11 +187,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={onExportCSV}
             disabled={!data}
             className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
-            title={data ? "Export complete station data to CSV" : "Data unavailable for export"}
+            title={data ? "Export filtered station data to CSV" : "Data unavailable for export"}
           >
             <Download className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
             <span>Export CSV</span>
           </button>
+
+          {onExportXLSX && (
+            <button
+              onClick={onExportXLSX}
+              disabled={!data}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors cursor-pointer shadow-xs"
+              title={data ? "Download 4-Sheet Executive Excel Workbook (.xlsx) for active date & filters" : "Data unavailable for export"}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Workbook (.xlsx)</span>
+            </button>
+          )}
 
           <button
             onClick={onRefresh}

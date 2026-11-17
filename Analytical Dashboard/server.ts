@@ -10,16 +10,16 @@ import {
 import {
   getDailyView,
   getStatePeriodView,
-  getCoordinatorPeriodView,
   getTMPeriodView,
   getTypePeriodView,
   getExceptionsView,
   getDataStatusView,
   normalizeStateCode,
 } from './src/engine/analyticsViews.js';
-import { query, queryLoader, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
+import { query, queryLoader, isLoaderConfigured, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
+import { escapeCsvCell } from './src/engine/formatting.js';
 import { StationMonthlySales, StationRecord } from './src/types.js';
-import { sendExecutiveBriefing } from './src/engine/emailReport.js';
+import { sendExecutiveBriefing, buildStationWorkbook } from './src/engine/emailReport.js';
 import http from 'http';
 import cron from 'node-cron';
 import {
@@ -43,8 +43,8 @@ import {
   EMAIL_SEND_COOLDOWN_SECONDS,
   LEARNING_REFRESH_INTERVAL_MS,
   PORT,
+  PRODUCT_CONFIG,
   TELEMETRY_CACHE_DURATION_MS,
-  TELEMETRY_HISTORY_WINDOW_DAYS,
   WHATSAPP_SEND_COOLDOWN_SECONDS,
 } from './src/engine/config.js';
 
@@ -68,16 +68,50 @@ let emailSendInProgress = false;
 let lastEmailSentAt = 0;
 let whatsappSendInProgress = false;
 let lastWhatsAppSentAt = 0;
+const runtimeSettings = new Map<string, any>();
 
-async function loadFromDatabase(): Promise<any | null> {
+export async function loadAppSetting<T = any>(key: string, defaultValue: T): Promise<T> {
+  if (runtimeSettings.has(key)) {
+    return runtimeSettings.get(key) as T;
+  }
+  try {
+    const rows = await query<{ value: T }>('SELECT value FROM settings WHERE key = $1', [key]);
+    if (rows.length > 0 && rows[0].value !== undefined && rows[0].value !== null) {
+      runtimeSettings.set(key, rows[0].value);
+      return rows[0].value;
+    }
+  } catch {
+    // Table may not be installed; fall back to runtimeSettings
+  }
+  return defaultValue;
+}
+
+export async function saveAppSetting<T = any>(key: string, value: T): Promise<void> {
+  runtimeSettings.set(key, value);
+  if (isLoaderConfigured()) {
+    try {
+      await queryLoader(
+        `INSERT INTO settings (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [key, JSON.stringify(value)],
+      );
+    } catch {
+      // Keep in-memory setting if DB write is not permitted for settings
+    }
+  }
+}
+
+async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
   const dbConnection = getDbConnectionDetails();
 
   try {
+    // Load ALL historical dates present in PostgreSQL sale_tracker (no artificial day-window truncation)
     const historyRows = await query(`
       SELECT 
         sale_date::text as date,
         SUM(sale_qty)::float as sale_qty,
-        SUM(collection)::float as collection,
+        SUM(COALESCE(net_total_collection, collection))::float as collection,
         COUNT(DISTINCT erp_code)::int as active_stations,
         COUNT(CASE WHEN sale_qty = 0 THEN 1 END)::int as zero_sale_count
       FROM sale_tracker
@@ -90,7 +124,37 @@ async function loadFromDatabase(): Promise<any | null> {
       return null;
     }
 
-    console.log(`[DATABASE] Success! Found ${historyRows.length} days of history in PostgreSQL.`);
+    const availableDates = historyRows.map((hr: any) => hr.date.slice(0, 10)).sort().reverse();
+    const maxDate = availableDates[0];
+    const activeDate = requestedDate && availableDates.includes(requestedDate) ? requestedDate : maxDate;
+
+    console.log(`[DATABASE] Success! Found ${historyRows.length} days of history in PostgreSQL (active date: ${activeDate}).`);
+
+    const recent7dStationRows = await query<{ erp_code: string; date: string; sale_qty: number }>(`
+      SELECT
+        erp_code,
+        sale_date::text AS date,
+        SUM(sale_qty)::float AS sale_qty
+      FROM sale_tracker
+      WHERE sale_date IN (
+        SELECT DISTINCT sale_date
+        FROM sale_tracker
+        WHERE sale_date <= $1::date
+        ORDER BY sale_date DESC
+        LIMIT 7
+      )
+      GROUP BY erp_code, sale_date
+      ORDER BY sale_date ASC, erp_code ASC
+    `, [activeDate]);
+    const recent7dDates = [...new Set(recent7dStationRows.map((row) => row.date.slice(0, 10)))].sort();
+    const previousDate = recent7dDates.filter((d) => d < activeDate).at(-1) ?? null;
+    const recent7dByStation = new Map<string, Array<{ date: string; sale_qty: number }>>();
+    for (const row of recent7dStationRows) {
+      const code = row.erp_code;
+      const list = recent7dByStation.get(code) ?? [];
+      list.push({ date: row.date.slice(0, 10), sale_qty: Number(row.sale_qty) || 0 });
+      recent7dByStation.set(code, list);
+    }
 
     const monthlySalesRows = await query(`
       SELECT
@@ -99,10 +163,10 @@ async function loadFromDatabase(): Promise<any | null> {
         SUM(sale_qty)::float AS sale_qty,
         COUNT(DISTINCT sale_date)::int AS reporting_days
       FROM sale_tracker
-      WHERE sale_date >= DATE_TRUNC('month', (SELECT MAX(sale_date) FROM sale_tracker)) - INTERVAL '2 months'
+      WHERE sale_date <= $1::date
       GROUP BY erp_code, DATE_TRUNC('month', sale_date)
       ORDER BY month ASC, erp_code ASC
-    `);
+    `, [activeDate]);
 
     const stationMappingTable = await query<{ mapping_available: boolean }>(
       "SELECT to_regclass('public.station_contact_mapping') IS NOT NULL AS mapping_available",
@@ -152,11 +216,11 @@ async function loadFromDatabase(): Promise<any | null> {
     ? `LEFT JOIN public.station_contact_mapping cm ON UPPER(TRIM(cm.erp_code)) = UPPER(TRIM(s.erp_code))
       LEFT JOIN state_map m ON COALESCE(NULLIF(TRIM(cm.state), ''), s.state) = m.from_state`
     : 'LEFT JOIN state_map m ON s.state = m.from_state'}
-      WHERE s.sale_date = (SELECT MAX(sale_date) FROM sale_tracker)
-    `);
+      WHERE s.sale_date = $1::date
+    `, [activeDate]);
 
     if (!latestStations || latestStations.length === 0) {
-      console.warn('[DATABASE] History found, but latest date query returned 0 stations. Check data consistency.');
+      console.warn('[DATABASE] History found, but date query returned 0 stations. Check data consistency.');
       return null;
     }
 
@@ -165,17 +229,66 @@ async function loadFromDatabase(): Promise<any | null> {
     const activeStns = latestStations.filter((r: any) => r.sale_qty > 0);
     const networkAvgSale = activeStns.length > 0 
       ? activeStns.reduce((a: number, b: any) => a + b.sale_qty, 0) / activeStns.length 
-      : 1000;
+      : PRODUCT_CONFIG.analytics.defaultStationBenchmarkLitres;
+    const savedBenchmarks = await loadAppSetting<{
+      tmTargets?: Record<string, number>;
+      stationTargets?: Record<string, number>;
+    }>('benchmarks', {});
+    const statusBandsCfg = PRODUCT_CONFIG.analytics.statusBands;
 
     const stations: StationRecord[] = latestStations.map((r: any, i: number) => {
-      const dailyBurn = r.sale_qty > 0 ? r.sale_qty : networkAvgSale;
+      const saleDateStr = r.sale_date ? r.sale_date.slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const stationRecent7d = recent7dByStation.get(r.erp_code) ?? [{ date: saleDateStr, sale_qty: r.sale_qty || 0 }];
+      const activeRecentDays = stationRecent7d.filter((d) => d.sale_qty > 0);
+      const rolling7dBurn = activeRecentDays.length > 0
+        ? Number((activeRecentDays.reduce((sum, d) => sum + d.sale_qty, 0) / activeRecentDays.length).toFixed(2))
+        : (r.sale_qty > 0 ? r.sale_qty : networkAvgSale);
+      const dailyBurn = rolling7dBurn > 0 ? rolling7dBurn : networkAvgSale;
       const closingDip = r.closing_dip_in_ltr || 0;
       const daysLeft = dailyBurn > 0
         ? Number((Math.max(0, closingDip) / dailyBurn).toFixed(1))
         : 99;
       
-      // Calculate trend slope dynamically based on network mean
-      const trendSlope = r.sale_qty === 0 ? -100 : Number(((r.sale_qty - networkAvgSale) / networkAvgSale * 100).toFixed(1));
+      const priorDays = stationRecent7d.filter((d) => d.date < saleDateStr && d.sale_qty > 0);
+      const priorAvg = priorDays.length > 0
+        ? priorDays.reduce((sum, d) => sum + d.sale_qty, 0) / priorDays.length
+        : networkAvgSale;
+      const trendSlope = r.sale_qty === 0
+        ? -100
+        : priorAvg > 0
+          ? Number((((r.sale_qty - priorAvg) / priorAvg) * 100).toFixed(1))
+          : 0;
+
+      const prevDayEntry = previousDate
+        ? stationRecent7d.find((d) => d.date === previousDate)
+        : undefined;
+      const prevDaySaleQty = prevDayEntry !== undefined ? prevDayEntry.sale_qty : null;
+      const saleQty = r.sale_qty || 0;
+      const dodDeltaQty = prevDaySaleQty !== null ? Number((saleQty - prevDaySaleQty).toFixed(2)) : null;
+      const dodDeltaPct = prevDaySaleQty !== null && prevDaySaleQty > 0
+        ? Number((((saleQty - prevDaySaleQty) / prevDaySaleQty) * 100).toFixed(1))
+        : null;
+      const collection = r.collection || 0;
+      const netTotalCollection = r.net_total_collection || collection || 0;
+      const computedEffRsp = saleQty > 0
+        ? Number((netTotalCollection / saleQty).toFixed(2))
+        : (r.new_rate || r.erp_rate || 0);
+      const effectiveRsp = r.effective_rsp || computedEffRsp;
+      const freeSaleLitres = r.free_sale_litres || 0;
+      const freeSalePct = r.free_sale_pct || (saleQty > 0 ? Number(((freeSaleLitres / saleQty) * 100).toFixed(2)) : 0);
+      const stationTarget =
+        savedBenchmarks.stationTargets?.[r.erp_code] ??
+        savedBenchmarks.tmTargets?.[r.tm] ??
+        networkAvgSale;
+      const achievementPct = stationTarget > 0 ? (saleQty / stationTarget) * 100 : 0;
+      const statusBand =
+        achievementPct >= statusBandsCfg.achievedPct
+          ? 'Achieved'
+          : achievementPct >= statusBandsCfg.nearPct
+            ? 'On track'
+            : achievementPct >= statusBandsCfg.belowPct
+              ? 'At risk'
+              : 'Behind';
 
       return {
         id: `station-${i + 1}-${r.erp_code}`,
@@ -185,54 +298,66 @@ async function loadFromDatabase(): Promise<any | null> {
         coordinator: r.coordinator,
         state: normalizeStateCode(r.state),
         tm: r.tm,
-        tank_cap: r.tank_cap || '10KL',
-        sale_qty: r.sale_qty || 0,
-        collection: r.collection || 0,
+        tank_cap: r.tank_cap || PRODUCT_CONFIG.analytics.defaultTankCapacity,
+        sale_qty: saleQty,
+        collection,
         new_rate: r.new_rate || 0,
         other: r.other || 0,
         diff: r.diff || 0,
         erp_rate: r.erp_rate || 0,
         ret_test_cal: r.ret_test_cal || 0,
-        free_sale_litres: r.free_sale_litres || 0,
+        free_sale_litres: freeSaleLitres,
         free_sale_rupees: r.free_sale_rupees || 0,
         scheme: r.scheme || 0,
         paytm: r.paytm || 0,
         net_cash_collection: r.net_cash_collection || 0,
         closing_dip_in_ltr: closingDip,
         remark: r.remark || '',
-        net_total_collection: r.net_total_collection || r.collection || 0,
-        effective_rsp: r.effective_rsp || r.new_rate || 0,
+        net_total_collection: netTotalCollection,
+        effective_rsp: effectiveRsp,
         collection_check: r.collection_check || 0,
         scheme_as_per_ho: r.scheme_as_per_ho || 0,
-        free_sale_pct: r.free_sale_pct || 0,
-        sale_date: r.sale_date ? r.sale_date.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        free_sale_pct: freeSalePct,
+        sale_date: saleDateStr,
         days_left: daysLeft,
+        rolling_7d_burn: rolling7dBurn,
+        prev_day_sale_qty: prevDaySaleQty,
+        dod_delta_qty: dodDeltaQty,
+        dod_delta_pct: dodDeltaPct,
         trend_slope: trendSlope,
-        status_band: (r.sale_qty >= 1100 ? 'Achieved' : r.sale_qty >= 990 ? 'On track' : r.sale_qty >= 825 ? 'At risk' : 'Behind') as any,
+        status_band: statusBand as any,
+        recent_7d_sales: stationRecent7d,
       };
     });
 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const history30d = historyRows.map((hr: any) => {
-      const d = new Date(hr.date);
-      const dow = d.getDay();
-      const effRsp = hr.sale_qty > 0 ? hr.collection / hr.sale_qty : 77.2;
-      return {
-        date: hr.date.slice(0, 10),
-        day_name: dayNames[dow],
-        sale_qty: hr.sale_qty,
-        collection: hr.collection,
-        effective_rsp: Math.round(effRsp * 100) / 100,
-        active_stations: hr.active_stations,
-        zero_sale_count: hr.zero_sale_count,
-      };
-    });
+    const historyUpToDate = historyRows
+      .filter((hr: any) => hr.date.slice(0, 10) <= activeDate)
+      .map((hr: any) => {
+        const d = new Date(hr.date);
+        const dow = d.getDay();
+        const effRsp = hr.sale_qty > 0
+          ? hr.collection / hr.sale_qty
+          : PRODUCT_CONFIG.analytics.fallbackRetailPricePerLitre;
+        return {
+          date: hr.date.slice(0, 10),
+          day_name: dayNames[dow],
+          sale_qty: hr.sale_qty,
+          collection: hr.collection,
+          effective_rsp: Math.round(effRsp * 100) / 100,
+          active_stations: hr.active_stations,
+          zero_sale_count: hr.zero_sale_count,
+        };
+      });
 
     return processDataset(
       stations,
       'PostgreSQL Database (sale_tracker)',
-      history30d,
-      monthlySalesRows
+      historyUpToDate,
+      monthlySalesRows,
+      recent7dDates,
+      availableDates,
+      previousDate
     );
   } catch (err: any) {
     console.error('[DATABASE] Critical query failure:', err.message);
@@ -244,7 +369,10 @@ async function processDataset(
   stations: StationRecord[],
   sourceFileName: string,
   historySeries: any[],
-  monthlySalesRows: StationMonthlySales[]
+  monthlySalesRows: StationMonthlySales[],
+  recent7dDates: string[] = [],
+  availableDates: string[] = [],
+  previousDate: string | null = null
 ) {
   const dailyView = getDailyView(stations);
   const statesSummary = getStatePeriodView(stations);
@@ -265,7 +393,8 @@ async function processDataset(
 
   let persistedErrors: PersistedForecastErrors | undefined;
   let learningStatus = 'Forecast feedback storage is unavailable.';
-  try {
+  if (isLoaderConfigured()) {
+    try {
     await queryLoader(`
       UPDATE forecast_feedback AS f
       SET actual_sale_qty = s.actual_sale_qty,
@@ -299,9 +428,9 @@ async function processDataset(
       FROM forecast_feedback
       WHERE actual_sale_qty IS NOT NULL
         AND actual_sale_qty > 0
-        AND forecast_origin_date >= $1::date - ($2 * INTERVAL '1 day')
+        AND target_date <= $1::date
       GROUP BY horizon_day
-    `, [stations[0]?.sale_date, TELEMETRY_HISTORY_WINDOW_DAYS]);
+    `, [stations[0]?.sale_date]);
     const recentOutcomeRows = await queryLoader<{
       target_date: string;
       predicted_ensemble: number;
@@ -340,12 +469,12 @@ async function processDataset(
         FROM forecast_feedback
         WHERE actual_sale_qty IS NOT NULL
           AND actual_sale_qty > 0
-          AND forecast_origin_date >= $1::date - ($2 * INTERVAL '1 day')
+          AND target_date <= $1::date
         ORDER BY target_date, forecast_origin_date DESC
       ) AS latest_outcome_per_day
       ORDER BY target_date DESC
-      LIMIT 7
-    `, [stations[0]?.sale_date, TELEMETRY_HISTORY_WINDOW_DAYS]);
+      LIMIT 10
+    `, [stations[0]?.sale_date]);
     const stationRemarkRows = await queryLoader<{
       target_date: string;
       station_name: string;
@@ -364,11 +493,11 @@ async function processDataset(
           FROM forecast_feedback
           WHERE actual_sale_qty IS NOT NULL
             AND actual_sale_qty > 0
-            AND forecast_origin_date >= $1::date - ($2 * INTERVAL '1 day')
+            AND target_date <= $1::date
           ORDER BY target_date, forecast_origin_date DESC
         ) AS latest_outcome_per_day
         ORDER BY target_date DESC
-        LIMIT 7
+        LIMIT 10
       ),
       station_context AS (
         SELECT
@@ -400,7 +529,7 @@ async function processDataset(
       FROM station_context
       WHERE remark_rank <= 3
       ORDER BY target_date DESC, remark_rank
-    `, [stations[0]?.sale_date, TELEMETRY_HISTORY_WINDOW_DAYS]);
+    `, [stations[0]?.sale_date]);
     const remarkSignalsByDate = new Map<string, NonNullable<typeof recentOutcomeRows[number]['station_remark_signals']>>();
     for (const row of stationRemarkRows) {
       const signals = remarkSignalsByDate.get(row.target_date) ?? [];
@@ -442,70 +571,87 @@ async function processDataset(
         recent_outcomes: recentOutcomeRows,
       };
     }
-    learningStatus = 'Forecast outcomes are being evaluated against actual network sales.';
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[FORECAST FEEDBACK] Persistence unavailable: ${message}`);
-    learningStatus = `Saved-history learning unavailable: ${message}`;
+      learningStatus = 'Forecast outcomes are being evaluated against actual network sales.';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[FORECAST FEEDBACK] Persistence unavailable: ${message}`);
+      learningStatus = `Saved-history learning unavailable: ${message}`;
+    }
+  } else {
+    learningStatus = 'Saved-history learning unavailable: BOT_LOADER_PASSWORD is not configured.';
   }
 
   const forecastEngineResult = generateForecast(historySeries, 7, stations, persistedErrors);
   forecastEngineResult.learning_status = learningStatus;
 
-  try {
-    const forecastOriginDate = stations[0]?.sale_date;
-    if (forecastOriginDate && forecastEngineResult.forecast.length > 0) {
-      for (const forecast of forecastEngineResult.forecast) {
+  if (isLoaderConfigured()) {
+    try {
+      const forecastOriginDate = stations[0]?.sale_date;
+      if (forecastOriginDate && forecastEngineResult.forecast.length > 0) {
+        const valuesClause: string[] = [];
+        const params: any[] = [];
+        forecastEngineResult.forecast.forEach((forecast, idx) => {
+          const offset = idx * 7;
+          valuesClause.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NULL, NOW())`);
+          params.push(
+            forecastOriginDate,
+            forecast.date,
+            forecast.predicted_qty,
+            forecast.linear_pred,
+            forecast.holt_winters_pred,
+            forecast.naive_last_week,
+            forecast.same_weekday_avg,
+          );
+        });
         await queryLoader(`
           INSERT INTO forecast_feedback (
             forecast_origin_date, target_date, predicted_ensemble,
             predicted_linear, predicted_holt_winters, predicted_naive, predicted_weekday,
             actual_sale_qty, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NOW())
-          ON CONFLICT (forecast_origin_date, target_date) DO NOTHING
-        `, [
-          forecastOriginDate,
-          forecast.date,
-          forecast.predicted_qty,
-          forecast.linear_pred,
-          forecast.holt_winters_pred,
-          forecast.naive_last_week,
-          forecast.same_weekday_avg,
-        ]);
+          VALUES ${valuesClause.join(', ')}
+          ON CONFLICT (forecast_origin_date, target_date) DO UPDATE SET
+            predicted_ensemble = EXCLUDED.predicted_ensemble,
+            predicted_linear = EXCLUDED.predicted_linear,
+            predicted_holt_winters = EXCLUDED.predicted_holt_winters,
+            predicted_naive = EXCLUDED.predicted_naive,
+            predicted_weekday = EXCLUDED.predicted_weekday,
+            updated_at = NOW()
+        `, params);
+        forecastEngineResult.learning_status = persistedErrors && persistedErrors.sample_count > 0
+          ? `Saved forecasts are scored against network-wide actuals; learning is active with ${persistedErrors.sample_count} evaluated outcome(s) and strengthens as evidence grows.`
+          : 'Saved forecasts are scored against network-wide actuals; learning begins when actual outcomes are available.';
       }
-      forecastEngineResult.learning_status = persistedErrors && persistedErrors.sample_count > 0
-        ? `Saved forecasts are scored against network-wide actuals; learning is active with ${persistedErrors.sample_count} evaluated outcome(s) and strengthens as evidence grows.`
-        : 'Saved forecasts are scored against network-wide actuals; learning begins when actual outcomes are available.';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[FORECAST FEEDBACK] Forecast save failed: ${message}`);
+      forecastEngineResult.learning_status = `Forecast save failed: ${message}`;
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[FORECAST FEEDBACK] Forecast save failed: ${message}`);
-    forecastEngineResult.learning_status = `Forecast save failed: ${message}`;
   }
 
   // Deep Statistical & Outlier Analysis
   const comprehensiveAnalysis = runComprehensiveAnalysis(stations);
 
-  // Health Score
-  const activeRatio = (stationsWithSale / (stationsTotal || 1)) * 40;
-  const gapPenalty = Math.max(0, 20 - collectionGapPerL * 8);
-  const freeSalePenalty = Math.max(0, 15 - (dailyView.free_sale_litres / (totalSaleQty || 1)) * 500);
+  // Health Score (driven by configurable weights in product-config.json)
+  const hsCfg = PRODUCT_CONFIG.analytics.healthScore;
+  const activeRatio = (stationsWithSale / (stationsTotal || 1)) * hsCfg.activeStationWeight;
+  const gapPenalty = Math.max(0, hsCfg.collectionGapMaxScore - collectionGapPerL * hsCfg.collectionGapMultiplier);
+  const freeSalePenalty = Math.max(0, hsCfg.freeSaleMaxScore - (dailyView.free_sale_litres / (totalSaleQty || 1)) * hsCfg.freeSaleMultiplier);
 
   const stockoutRiskStations = stations
-    .filter((s) => s.days_left < 3.0 && s.sale_qty > 0)
+    .filter((s) => s.days_left < PRODUCT_CONFIG.analytics.stockoutWarningDays && (s.sale_qty > 0 || (s.rolling_7d_burn || 0) > 0))
     .sort((a, b) => a.days_left - b.days_left)
     .map((s) => ({
       code: s.erp_code,
       name: s.alds_name,
       state: s.state,
       stock_ltr: s.closing_dip_in_ltr || 0,
-      daily_burn_ltr: s.sale_qty,
+      daily_burn_ltr: s.rolling_7d_burn || s.sale_qty,
       days_left: s.days_left,
-      remark: s.remark || (s.days_left < 1.5 ? 'Immediate Replenishment Needed' : 'Low Buffer'),
+      remark: s.remark || (s.days_left < PRODUCT_CONFIG.analytics.stockoutCriticalDays ? 'Immediate Replenishment Needed' : 'Low Buffer'),
     }));
 
-  const stockoutPenalty = Math.max(0, 25 - stockoutRiskStations.length * 3);
+  const stockoutPenalty = Math.max(0, hsCfg.stockoutMaxScore - stockoutRiskStations.length * hsCfg.stockoutStationPenalty);
   const healthScore = Math.min(100, Math.max(0, Math.round(activeRatio + gapPenalty + freeSalePenalty + stockoutPenalty)));
 
   // Top / Bottom Performers
@@ -536,8 +682,23 @@ async function processDataset(
     .sort((a, b) => b.drop_pct - a.drop_pct)
     .slice(0, 10);
 
+  const prevHistoryPoint = previousDate
+    ? historySeries.find((h) => h.date === previousDate)
+    : undefined;
+  const previousDateSaleQty = prevHistoryPoint ? Number(prevHistoryPoint.sale_qty) : null;
+  const previousDateCollection = prevHistoryPoint ? Number(prevHistoryPoint.collection) : null;
+  const dodSaleChangePct =
+    previousDateSaleQty !== null && previousDateSaleQty > 0
+      ? Number((((totalSaleQty - previousDateSaleQty) / previousDateSaleQty) * 100).toFixed(1))
+      : null;
+
   return {
     date: dailyView.sale_date,
+    available_dates: availableDates.length > 0 ? availableDates : [dailyView.sale_date],
+    previous_date: previousDate,
+    previous_date_sale_qty: previousDateSaleQty,
+    previous_date_collection: previousDateCollection,
+    dod_sale_change_pct: dodSaleChangePct,
     is_live: true,
     source_file: sourceFileName,
     stations_total: stationsTotal,
@@ -560,6 +721,7 @@ async function processDataset(
     bottom_performing_stations: bottomPerformingStations,
     forecast: forecastEngineResult,
     history_30d: historySeries.slice(-30),
+    recent_7d_dates: recent7dDates,
     station_monthly_sales: monthlySalesRows,
     states_summary: statesSummary,
     tm_summary: tmSummary,
@@ -571,7 +733,7 @@ async function processDataset(
   };
 }
 
-async function getTelemetryData(forceRefresh = false) {
+async function getTelemetryData(forceRefresh = false, requestedDate?: string) {
   const isConnected = await testDbConnection(forceRefresh);
   if (!isConnected) {
     cachedTelemetry = null;
@@ -580,12 +742,18 @@ async function getTelemetryData(forceRefresh = false) {
   }
 
   const now = Date.now();
-  if (cachedTelemetry && !forceRefresh && now - lastLoadedTime < TELEMETRY_CACHE_DURATION_MS) {
+  const isCustomDate = Boolean(requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate));
+  if (
+    cachedTelemetry &&
+    !forceRefresh &&
+    now - lastLoadedTime < TELEMETRY_CACHE_DURATION_MS &&
+    (!isCustomDate || cachedTelemetry.date === requestedDate)
+  ) {
     return cachedTelemetry;
   }
 
   const dbAudit = await getDbAuditReport();
-  const loadedTelemetry = await loadFromDatabase();
+  const loadedTelemetry = await loadFromDatabase(isCustomDate ? requestedDate : undefined);
 
   if (!loadedTelemetry) {
     console.error('[DATABASE] Unable to load telemetry from PostgreSQL table sale_tracker.');
@@ -594,14 +762,17 @@ async function getTelemetryData(forceRefresh = false) {
 
   const isPostgresSource = loadedTelemetry.source_file === 'PostgreSQL Database (sale_tracker)';
   const isExternalDatabaseConnected = dbAudit.connected && dbAudit.engine === 'external';
+  const isHistoricalInspection = Boolean(isCustomDate && dbAudit.latest_date && loadedTelemetry.date !== dbAudit.latest_date);
   const hasDiscrepancy = Boolean(
     !isExternalDatabaseConnected ||
     (!isPostgresSource && isExternalDatabaseConnected) ||
-    (isExternalDatabaseConnected && dbAudit.latest_date && dbAudit.latest_date !== loadedTelemetry.date) ||
-    (isExternalDatabaseConnected && dbAudit.latest_date_stations && dbAudit.latest_date_stations !== loadedTelemetry.stations_total)
+    (!isHistoricalInspection && isExternalDatabaseConnected && dbAudit.latest_date && dbAudit.latest_date !== loadedTelemetry.date) ||
+    (!isHistoricalInspection && isExternalDatabaseConnected && dbAudit.latest_date_stations && dbAudit.latest_date_stations !== loadedTelemetry.stations_total)
   );
 
-  let discrepancyReason = 'UI data is loaded from PostgreSQL table sale_tracker.';
+  let discrepancyReason = isHistoricalInspection
+    ? `Inspecting historical operating date ${loadedTelemetry.date} (latest database date is ${dbAudit.latest_date}).`
+    : 'UI data is loaded from PostgreSQL table sale_tracker.';
   if (!isPostgresSource) {
     discrepancyReason = 'Telemetry source does not match the configured PostgreSQL table.';
   } else if (hasDiscrepancy) {
@@ -640,9 +811,11 @@ async function getTelemetryData(forceRefresh = false) {
   console.log(`Discrepancy Audit : ${discrepancyReason}`);
   console.log(`======================================================\n`);
 
-  cachedTelemetry = loadedTelemetry;
-  lastLoadedTime = now;
-  return cachedTelemetry;
+  if (!isHistoricalInspection) {
+    cachedTelemetry = loadedTelemetry;
+    lastLoadedTime = now;
+  }
+  return loadedTelemetry;
 }
 
 // REST API Endpoints
@@ -666,7 +839,8 @@ app.get('/api/db-verify', async (_req: Request, res: Response) => {
 app.get('/api/telemetry', async (req: Request, res: Response) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
-    const data = await getTelemetryData(forceRefresh);
+    const requestedDate = typeof req.query.date === 'string' ? req.query.date.trim() : undefined;
+    const data = await getTelemetryData(forceRefresh, requestedDate);
     if (!data) {
       console.warn(`[API] GET ${req.url} - PostgreSQL telemetry unavailable`);
       res.status(503).json({ error: 'PostgreSQL telemetry is unavailable. Verify the database connection and ensure sale_tracker contains data.' });
@@ -679,38 +853,86 @@ app.get('/api/telemetry', async (req: Request, res: Response) => {
   }
 });
 
-function isDispatchAuthorized(req: Request, requiredHeader: string): boolean {
-  if (
-    req.get(requiredHeader) === 'authorized-client' ||
-    req.get('x-go-gas-whatsapp-request') === 'authorized-client' ||
-    req.get('x-go-gas-email-request') === 'authorized-client'
-  ) {
-    return true;
+app.post('/api/telemetry/invalidate', (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-email-request')) {
+    res.status(403).json({ error: 'Cache invalidation is only available from this computer.' });
+    return;
   }
+  cachedTelemetry = null;
+  lastLoadedTime = 0;
+  res.json({ success: true, message: 'Telemetry cache invalidated.' });
+});
+
+app.get('/api/settings/benchmarks', async (_req: Request, res: Response) => {
+  try {
+    const benchmarks = await loadAppSetting('sales_benchmarks', {
+      tmTargets: {} as Record<string, number>,
+      stationTargets: {} as Record<string, number>,
+    });
+    res.json(benchmarks);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/settings/benchmarks', async (req: Request, res: Response) => {
+  try {
+    const { tmTargets, stationTargets } = req.body || {};
+    const validTmTargets: Record<string, number> = {};
+    const validStationTargets: Record<string, number> = {};
+    if (tmTargets && typeof tmTargets === 'object' && !Array.isArray(tmTargets)) {
+      for (const [k, v] of Object.entries(tmTargets)) {
+        const num = Number(v);
+        if (Number.isFinite(num) && num > 0) validTmTargets[k] = num;
+      }
+    }
+    if (stationTargets && typeof stationTargets === 'object' && !Array.isArray(stationTargets)) {
+      for (const [k, v] of Object.entries(stationTargets)) {
+        const num = Number(v);
+        if (Number.isFinite(num) && num > 0) validStationTargets[k] = num;
+      }
+    }
+    const payload = { tmTargets: validTmTargets, stationTargets: validStationTargets };
+    await saveAppSetting('sales_benchmarks', payload);
+    res.json({ success: true, ...payload });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function isDispatchAuthorized(req: Request, requiredHeader: string): boolean {
   const remoteAddress = req.socket.remoteAddress || '';
   const normalizedAddress = remoteAddress.startsWith('::ffff:')
     ? remoteAddress.slice('::ffff:'.length)
     : remoteAddress;
-  if (normalizedAddress === '::1' || normalizedAddress.startsWith('127.')) {
-    return true;
+  const isLoopback = normalizedAddress === '::1' || normalizedAddress.startsWith('127.');
+  if (!isLoopback) {
+    return false;
   }
+
+  const hasValidHeader =
+    req.get(requiredHeader) === 'authorized-client' ||
+    req.get('x-go-gas-whatsapp-request') === 'authorized-client' ||
+    req.get('x-go-gas-email-request') === 'authorized-client';
+
   const origin = req.get('origin');
-  if (!origin) return true;
+  if (!origin) {
+    return hasValidHeader;
+  }
+
   try {
     const parsedOrigin = new URL(origin);
     const host = req.get('host') || '';
     const hostname = parsedOrigin.hostname.replace(/^\[|\]$/g, '');
-    if (
+    return (
       parsedOrigin.host === host ||
       APP_LOCAL_HOSTNAMES.includes(hostname) ||
-      APP_TRUSTED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
-    ) {
-      return true;
-    }
+      (APP_TRUSTED_HOST_SUFFIXES.length > 0 &&
+        APP_TRUSTED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix)))
+    );
   } catch {
-    // ignore
+    return false;
   }
-  return false;
 }
 
 app.post('/api/email/send', async (req: Request, res: Response) => {
@@ -840,7 +1062,7 @@ app.post('/api/whatsapp/send-dispatch', async (req: Request, res: Response) => {
         const dailyBurn = s.sale_qty > 0 ? s.sale_qty : historicalDailyBurn || networkDailyBurn;
         const burn3Day = dailyBurn * 3;
         const currentStock = s.closing_dip_in_ltr || 0;
-        const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, currentStock);
+        const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, currentStock, 3, s.tank_cap);
 
         let urgency: 'Critical' | 'Warning' | 'Standby' = 'Warning';
         if (s.days_left < 1.5 || s.sale_qty === 0 || /stock/i.test(s.remark || '')) {
@@ -966,41 +1188,168 @@ app.post('/api/upload', async (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/export/csv', async (_req: Request, res: Response) => {
+function filterStationsFromQuery(stations: StationRecord[], reqQuery: Request['query']): StationRecord[] {
+  const state = typeof reqQuery.state === 'string' ? reqQuery.state.trim() : 'ALL';
+  const type = typeof reqQuery.type === 'string' ? reqQuery.type.trim() : 'ALL';
+  const tm = typeof reqQuery.tm === 'string' ? reqQuery.tm.trim() : 'ALL';
+  const coordinator = typeof reqQuery.coordinator === 'string' ? reqQuery.coordinator.trim() : 'ALL';
+  const search = typeof reqQuery.search === 'string' ? reqQuery.search.trim().toLowerCase() : '';
+
+  return stations.filter((s) => {
+    if (state && state !== 'ALL' && s.state !== state) return false;
+    if (type && type !== 'ALL' && s.type !== type) return false;
+    if (tm && tm !== 'ALL' && s.tm !== tm) return false;
+    if (coordinator && coordinator !== 'ALL' && s.coordinator !== coordinator) return false;
+    if (search) {
+      const matchCode = s.erp_code.toLowerCase().includes(search);
+      const matchName = s.alds_name.toLowerCase().includes(search);
+      const matchState = s.state.toLowerCase().includes(search);
+      const matchTm = (s.tm || '').toLowerCase().includes(search);
+      const matchCoord = (s.coordinator || '').toLowerCase().includes(search);
+      const matchType = (s.type || '').toLowerCase().includes(search);
+      const matchRemark = (s.remark || '').toLowerCase().includes(search);
+      if (!matchCode && !matchName && !matchState && !matchTm && !matchCoord && !matchType && !matchRemark) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+app.get('/api/station/:erpCode/history', async (req: Request, res: Response) => {
   try {
-    const telemetry = await getTelemetryData();
+    const erpCode = String(req.params.erpCode || '').trim();
+    if (!erpCode) {
+      res.status(400).json({ error: 'Station ERP code is required.' });
+      return;
+    }
+    const rows = await query<{
+      sale_date: string;
+      sale_qty: number;
+      collection: number;
+      net_total_collection: number;
+      new_rate: number;
+      erp_rate: number;
+      effective_rsp: number;
+      closing_dip_in_ltr: number;
+      paytm: number;
+      free_sale_litres: number;
+      remark: string;
+    }>(`
+      SELECT
+        sale_date::text AS sale_date,
+        COALESCE(sale_qty, 0)::float AS sale_qty,
+        COALESCE(collection, 0)::float AS collection,
+        COALESCE(net_total_collection, collection, 0)::float AS net_total_collection,
+        COALESCE(new_rate, 0)::float AS new_rate,
+        COALESCE(erp_rate, 0)::float AS erp_rate,
+        COALESCE(effective_rsp, CASE WHEN sale_qty > 0 THEN COALESCE(net_total_collection, collection, 0) / sale_qty ELSE COALESCE(new_rate, erp_rate, 0) END)::float AS effective_rsp,
+        COALESCE(closing_dip_in_ltr, 0)::float AS closing_dip_in_ltr,
+        COALESCE(paytm, 0)::float AS paytm,
+        COALESCE(free_sale_litres, 0)::float AS free_sale_litres,
+        COALESCE(remark, '') AS remark
+      FROM sale_tracker
+      WHERE UPPER(TRIM(erp_code)) = UPPER(TRIM($1))
+      ORDER BY sale_date ASC
+    `, [erpCode]);
+
+    res.json({
+      erp_code: erpCode,
+      history: rows.map((r) => ({
+        date: r.sale_date.slice(0, 10),
+        sale_qty: Number(r.sale_qty) || 0,
+        collection: Number(r.net_total_collection || r.collection) || 0,
+        nominal_rsp: Number(r.new_rate || r.erp_rate) || 0,
+        effective_rsp: Number(r.effective_rsp) || 0,
+        closing_dip: Number(r.closing_dip_in_ltr) || 0,
+        paytm: Number(r.paytm) || 0,
+        free_sale_litres: Number(r.free_sale_litres) || 0,
+        remark: r.remark || '',
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/export/csv', async (req: Request, res: Response) => {
+  try {
+    const requestedDate = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : undefined;
+    const telemetry = await getTelemetryData(false, requestedDate);
     if (!telemetry) {
       res.status(503).send('No data available');
       return;
     }
 
+    const filteredStations = filterStationsFromQuery(telemetry.all_stations, req.query);
+
     const headers = [
-      'ERP Code', 'ALDS Name', 'State', 'TM', 'Coordinator', 'Type',
-      'Sale Qty', 'Collection', 'New Rate (RSP)', 'Effective RSP', 'Closing Dip',
-      'Days Left', 'Remark', 'Status Band'
+      'ERP Code', 'ALDS Name', 'State', 'TM', 'Coordinator', 'Type', 'Tank Capacity',
+      'Sale Qty (L)', 'Net Collection (Rs)', 'Nominal RSP (Rs)', 'Effective RSP (Rs)',
+      'Closing Dip (L)', '7d Rolling Burn (L/d)', 'Days Left', 'Remark', 'Status Band'
     ];
 
-    const rows = telemetry.all_stations.map((s: StationRecord) => [
-      `"${s.erp_code}"`,
-      `"${s.alds_name.replace(/"/g, '""')}"`,
-      `"${s.state}"`,
-      `"${s.tm}"`,
-      `"${s.coordinator}"`,
-      `"${s.type}"`,
+    const rows = filteredStations.map((s: StationRecord) => [
+      escapeCsvCell(s.erp_code),
+      escapeCsvCell(s.alds_name),
+      escapeCsvCell(s.state),
+      escapeCsvCell(s.tm),
+      escapeCsvCell(s.coordinator),
+      escapeCsvCell(s.type),
+      escapeCsvCell(s.tank_cap || ''),
       s.sale_qty,
-      s.collection,
-      s.new_rate,
+      s.net_total_collection || s.collection,
+      s.new_rate || s.erp_rate,
       s.effective_rsp,
       s.closing_dip_in_ltr,
+      s.rolling_7d_burn ?? s.sale_qty,
       s.days_left,
-      `"${(s.remark || '').replace(/"/g, '""')}"`,
-      `"${s.status_band}"`
+      escapeCsvCell(s.remark || ''),
+      escapeCsvCell(s.status_band),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map((r: any) => r.join(','))].join('\n');
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename=GO_Gas_Sales_${telemetry.date}.csv`);
     res.send(csvContent);
+  } catch (err: any) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.get('/api/export/xlsx', async (req: Request, res: Response) => {
+  try {
+    const requestedDate = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : undefined;
+    const telemetry = await getTelemetryData(false, requestedDate);
+    if (!telemetry) {
+      res.status(503).send('No data available');
+      return;
+    }
+
+    const filteredStations = filterStationsFromQuery(telemetry.all_stations, req.query);
+    const filteredCodes = new Set(filteredStations.map((s) => s.erp_code));
+    const workbookBuffer = await buildStationWorkbook({
+      all_stations: filteredStations,
+      states_summary: getStatePeriodView(filteredStations),
+      tm_summary: getTMPeriodView(filteredStations),
+      stockout_risk_stations: (telemetry.stockout_risk_stations || []).filter((r: any) => filteredCodes.has(r.code)),
+      top_declining_stations: (telemetry.top_declining_stations || []).filter((r: any) => filteredCodes.has(r.code)),
+      station_monthly_sales: (telemetry.station_monthly_sales || []).filter((r: any) => filteredCodes.has(r.erp_code)),
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=GO_Gas_Executive_Workbook_${telemetry.date}.xlsx`,
+    );
+    res.send(workbookBuffer);
   } catch (err: any) {
     res.status(500).send(err.message);
   }
@@ -1093,6 +1442,37 @@ async function startServer() {
     };
     refreshLearningData();
     setInterval(refreshLearningData, LEARNING_REFRESH_INTERVAL_MS);
+
+    // Watch Manual Work/sale.xlsx for automatic ETL ingestion & cache invalidation
+    const watchedExcelPath = path.resolve(__dirname, '..', 'Manual Work', 'sale.xlsx');
+    let lastProcessedMtime = fs.existsSync(watchedExcelPath) ? fs.statSync(watchedExcelPath).mtimeMs : 0;
+    let autoLoadInProgress = false;
+    fs.watchFile(watchedExcelPath, { interval: 5000 }, async (curr, prev) => {
+      if (autoLoadInProgress || curr.mtimeMs === 0 || curr.mtimeMs <= prev.mtimeMs || curr.mtimeMs === lastProcessedMtime) {
+        return;
+      }
+      lastProcessedMtime = curr.mtimeMs;
+      if (!isLoaderConfigured()) {
+        console.info('[AUTO-INGEST] Detected change in Manual Work/sale.xlsx, but BOT_LOADER_PASSWORD is not configured.');
+        return;
+      }
+      autoLoadInProgress = true;
+      try {
+        console.log('[AUTO-INGEST] Detected updated Manual Work/sale.xlsx; starting automatic validation and load...');
+        const { processSaleFile } = await import('../Manual Work/load_sales.js');
+        const loaded = await processSaleFile(watchedExcelPath, false);
+        if (loaded) {
+          cachedTelemetry = null;
+          lastLoadedTime = 0;
+          await getTelemetryData(true);
+          console.log('[AUTO-INGEST] Telemetry cache refreshed with newly ingested sales workbook.');
+        }
+      } catch (err: any) {
+        console.error(`[AUTO-INGEST] Failed to auto-ingest sale.xlsx: ${err.message}`);
+      } finally {
+        autoLoadInProgress = false;
+      }
+    });
   });
 }
 

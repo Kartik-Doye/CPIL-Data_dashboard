@@ -315,7 +315,8 @@ function holtWinters(
   beta: number,
   gamma: number,
   m = 7,
-  h = 0
+  h = 0,
+  dates?: Date[]
 ): { fitted: number[]; forecast: number[] } {
   const n = data.length;
   if (n < 2 * m) {
@@ -328,15 +329,24 @@ function holtWinters(
 
   let level = mean(data.slice(0, m));
   let trend = (mean(data.slice(m, 2 * m)) - level) / m;
-  const seasonal: number[] = data.slice(0, m).map(v => v - level);
+  const seasonal: number[] = new Array(m).fill(0);
+  const seasonalCounts: number[] = new Array(m).fill(0);
+  for (let i = 0; i < Math.min(n, 2 * m); i++) {
+    const sIdx = dates && dates[i] ? dates[i].getDay() % m : i % m;
+    seasonal[sIdx] += data[i] - level;
+    seasonalCounts[sIdx]++;
+  }
+  for (let s = 0; s < m; s++) {
+    if (seasonalCounts[s] > 0) seasonal[s] /= seasonalCounts[s];
+  }
 
   const fitted: number[] = [];
   for (let i = 0; i < n; i++) {
+    const sIdx = dates && dates[i] ? dates[i].getDay() % m : i % m;
     if (i < m) {
-      fitted.push(Math.max(level + trend + seasonal[i % m], 0));
+      fitted.push(Math.max(level + trend + seasonal[sIdx], 0));
       continue;
     }
-    const sIdx = i % m;
     const oldLevel = level;
     level = alpha * (data[i] - seasonal[sIdx]) + (1 - alpha) * (level + trend);
     trend = beta * (level - oldLevel) + (1 - beta) * trend;
@@ -345,9 +355,12 @@ function holtWinters(
   }
 
   const forecast: number[] = [];
-  const phi = 0.95;
+  const phi = 0.92;
+  const lastDate = dates && dates.length > 0 ? dates[dates.length - 1] : null;
   for (let j = 1; j <= h; j++) {
-    const sIdx = (n + j - 1) % m;
+    const sIdx = lastDate
+      ? new Date(lastDate.getTime() + j * 86400000).getDay() % m
+      : (n + j - 1) % m;
     let damp = 0;
     for (let k = 1; k <= j; k++) damp += Math.pow(phi, k);
     const pred = level + trend * damp + seasonal[sIdx];
@@ -357,10 +370,12 @@ function holtWinters(
   return { fitted, forecast };
 }
 
-function optimizeHoltWinters(data: number[], m = 7): [number, number, number] {
+function optimizeHoltWinters(data: number[], m = 7, dates?: Date[]): [number, number, number] {
   if (data.length < m + 7) return [0.3, 0.05, 0.2];
-  const train = data.slice(0, data.length - 7);
-  const test = data.slice(data.length - 7);
+  const evalWindow = Math.min(14, Math.max(7, Math.floor(data.length * 0.2)));
+  const train = data.slice(0, data.length - evalWindow);
+  const trainDates = dates ? dates.slice(0, data.length - evalWindow) : undefined;
+  const test = data.slice(data.length - evalWindow);
   let bestParams: [number, number, number] = [0.3, 0.05, 0.2];
   let bestMape = Infinity;
 
@@ -371,7 +386,7 @@ function optimizeHoltWinters(data: number[], m = 7): [number, number, number] {
   for (const a of alphas) {
     for (const b of betas) {
       for (const g of gammas) {
-        const { forecast } = holtWinters(train, a, b, g, m, 7);
+        const { forecast } = holtWinters(train, a, b, g, m, evalWindow, trainDates);
         let errorSum = 0;
         let count = 0;
         for (let i = 0; i < test.length; i++) {
@@ -395,15 +410,31 @@ function optimizeHoltWinters(data: number[], m = 7): [number, number, number] {
 type EnsembleModel = 'linear' | 'holt_winters' | 'naive_last_week' | 'same_weekday_avg';
 type ForecastModel = EnsembleModel | 'gradient_boosting';
 
+interface WalkForwardOutcome {
+  target_date: string;
+  day_name: string;
+  predicted_ensemble: number;
+  raw_ensemble: number;
+  adaptive_correction_litres: number;
+  predicted_linear: number;
+  predicted_holt_winters: number;
+  predicted_naive: number;
+  predicted_weekday: number;
+  actual_sale_qty: number;
+}
+
 interface BacktestErrors {
   percentage: Record<ForecastModel, number[]>;
   squared: Record<ForecastModel, number[]>;
   ensemblePercentage: number[];
   ensembleSquared: number[];
   ensembleBiasPercentage: number[];
+  rawEnsembleBiasPercentage: number[];
+  weekdayBiasPercentage: Record<number, number[]>;
   gradientBoostedEnsemblePercentage: number[];
   modelAbsoluteErrorTotal: Record<ForecastModel, number>;
   scoredDates: string[];
+  walkForwardOutcomes: WalkForwardOutcome[];
   ensembleAbsoluteErrorTotal: number;
   ensembleSignedErrorTotal: number;
   naiveLastWeekAbsoluteErrorTotal: number;
@@ -455,6 +486,8 @@ function createBacktestErrors(): BacktestErrors {
     ensemblePercentage: [],
     ensembleSquared: [],
     ensembleBiasPercentage: [],
+    rawEnsembleBiasPercentage: [],
+    weekdayBiasPercentage: { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] },
     gradientBoostedEnsemblePercentage: [],
     modelAbsoluteErrorTotal: {
       linear: 0,
@@ -464,6 +497,7 @@ function createBacktestErrors(): BacktestErrors {
       gradient_boosting: 0,
     },
     scoredDates: [],
+    walkForwardOutcomes: [],
     ensembleAbsoluteErrorTotal: 0,
     ensembleSignedErrorTotal: 0,
     naiveLastWeekAbsoluteErrorTotal: 0,
@@ -475,7 +509,26 @@ function createBacktestErrors(): BacktestErrors {
 }
 
 function boundedBiasCorrection(biasPercentage: number): number {
-  return Math.max(-0.25, Math.min(0.25, biasPercentage * 0.5));
+  return Math.max(-0.25, Math.min(0.25, biasPercentage * 0.65));
+}
+
+function computeAdaptiveBiasPercentage(
+  rawBiasHistory: number[],
+  weekdayBiasHistory: number[] = [],
+): number {
+  if (rawBiasHistory.length === 0) return 0;
+  // Exponentially weighted moving average over the last 10 days' relative differences
+  const recent10 = rawBiasHistory.slice(-10);
+  const alpha = 0.32;
+  let ewmaBias = recent10[0];
+  for (let i = 1; i < recent10.length; i++) {
+    ewmaBias = alpha * recent10[i] + (1 - alpha) * ewmaBias;
+  }
+  if (weekdayBiasHistory.length >= 2) {
+    const recentWeekday = mean(weekdayBiasHistory.slice(-4));
+    return ewmaBias * 0.75 + recentWeekday * 0.25;
+  }
+  return ewmaBias;
 }
 
 function inverseMapeWeights(
@@ -483,8 +536,15 @@ function inverseMapeWeights(
 ): Record<EnsembleModel, number> {
   const models: EnsembleModel[] = ['linear', 'holt_winters', 'naive_last_week', 'same_weekday_avg'];
   const inverseErrors = models.map(model => {
-    const mape = errors[model].length > 0 ? mean(errors[model]) * 100 : null;
-    return mape === null ? 0 : 1 / Math.max(mape, 1);
+    const errSeries = errors[model];
+    if (errSeries.length === 0) return 0;
+    const overallMape = mean(errSeries) * 100;
+    // Emphasize the last 10 days' prediction errors so weights adapt rapidly to recent mistakes
+    const recent10Mape = mean(errSeries.slice(-10)) * 100;
+    const effectiveMape = errSeries.length >= 5
+      ? overallMape * 0.45 + recent10Mape * 0.55
+      : overallMape;
+    return 1 / Math.pow(Math.max(effectiveMape, 0.5), 1.25);
   });
   const total = inverseErrors.reduce((sum, weight) => sum + weight, 0);
 
@@ -505,9 +565,10 @@ function inverseMapeWeights(
   };
 }
 
-function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): BacktestErrors {
+function rollingBacktest(dates: Date[], actuals: number[]): BacktestErrors {
   const errors = createBacktestErrors();
-  const firstTestIndex = Math.max(7, actuals.length - maxWindows);
+  // Use ALL available history in the database after the initial 7-day lag warm-up
+  const firstTestIndex = 7;
 
   for (let testIndex = firstTestIndex; testIndex < actuals.length; testIndex++) {
     const trainDates = dates.slice(0, testIndex);
@@ -516,10 +577,12 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
     const actual = actuals[testIndex];
 
     const trainFeatures = buildFeaturesNoLeak(trainDates, trainActuals);
+    const fitFeatures = trainFeatures.length > 7 ? trainFeatures.slice(7) : trainFeatures;
+    const fitActuals = trainActuals.length > 7 ? trainActuals.slice(7) : trainActuals;
     const linearModel = new LinearRegressionModel();
-    linearModel.fit(trainFeatures, trainActuals);
+    linearModel.fit(fitFeatures, fitActuals);
     const gradientBoostingModel = new GradientBoostingModel();
-    gradientBoostingModel.fit(trainFeatures, trainActuals);
+    gradientBoostingModel.fit(fitFeatures, fitActuals);
     const testFeatures = buildFeaturesNoLeak(
       [...trainDates, testDate],
       [...trainActuals, 0]
@@ -528,8 +591,8 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
     const linearPrediction = Math.max(linearModel.predict(testFeature), 0);
     const gradientBoostingPrediction = gradientBoostingModel.predict(testFeature);
 
-    const [alpha, beta, gamma] = optimizeHoltWinters(trainActuals, 7);
-    const { forecast: holtWintersForecast } = holtWinters(trainActuals, alpha, beta, gamma, 7, 1);
+    const [alpha, beta, gamma] = optimizeHoltWinters(trainActuals, 7, trainDates);
+    const { forecast: holtWintersForecast } = holtWinters(trainActuals, alpha, beta, gamma, 7, 1, trainDates);
     const modelPredictions: Record<ForecastModel, number> = {
       linear: linearPrediction,
       holt_winters: holtWintersForecast[0] ?? mean(trainActuals),
@@ -548,13 +611,20 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
 
     if (actual > 0) {
       const weights = inverseMapeWeights(errors.percentage);
-      let ensemblePrediction = Object.entries(weights).reduce(
+      const rawEnsemblePrediction = Object.entries(weights).reduce(
         (sum, [model, weight]) => sum + modelPredictions[model as ForecastModel] * weight,
         0
       );
-      if (errors.ensembleBiasPercentage.length > 0) {
-        ensemblePrediction *= 1 - boundedBiasCorrection(mean(errors.ensembleBiasPercentage));
+      let ensemblePrediction = rawEnsemblePrediction;
+      const dow = testDate.getDay();
+      if (errors.rawEnsembleBiasPercentage.length > 0) {
+        const learnedBias = computeAdaptiveBiasPercentage(
+          errors.rawEnsembleBiasPercentage,
+          errors.weekdayBiasPercentage[dow] || [],
+        );
+        ensemblePrediction *= 1 - boundedBiasCorrection(learnedBias);
       }
+      const adaptiveCorrectionLitres = Number((ensemblePrediction - rawEnsemblePrediction).toFixed(2));
 
       for (const model of Object.keys(modelPredictions) as ForecastModel[]) {
         const difference = modelPredictions[model] - actual;
@@ -563,6 +633,7 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
         errors.squared[model].push(difference ** 2);
       }
 
+      const rawEnsembleDifference = rawEnsemblePrediction - actual;
       const ensembleDifference = ensemblePrediction - actual;
       const gradientBoostedEnsemblePrediction = ensemblePrediction * 0.8
         + modelPredictions.gradient_boosting * 0.2;
@@ -573,8 +644,24 @@ function rollingBacktest(dates: Date[], actuals: number[], maxWindows = 28): Bac
       errors.gradientBoostedEnsemblePercentage.push(Math.abs(gradientBoostedEnsembleDifference) / actual);
       errors.ensemblePercentage.push(Math.abs(ensembleDifference) / actual);
       errors.ensembleSquared.push(ensembleDifference ** 2);
+      errors.rawEnsembleBiasPercentage.push(rawEnsembleDifference / actual);
       errors.ensembleBiasPercentage.push(ensembleDifference / actual);
-      errors.scoredDates.push(testDate.toISOString().slice(0, 10));
+      errors.weekdayBiasPercentage[dow] = errors.weekdayBiasPercentage[dow] || [];
+      errors.weekdayBiasPercentage[dow].push(rawEnsembleDifference / actual);
+      const dateStr = testDate.toISOString().slice(0, 10);
+      errors.scoredDates.push(dateStr);
+      errors.walkForwardOutcomes.push({
+        target_date: dateStr,
+        day_name: WEEKDAYS[dow],
+        predicted_ensemble: Number(ensemblePrediction.toFixed(2)),
+        raw_ensemble: Number(rawEnsemblePrediction.toFixed(2)),
+        adaptive_correction_litres: adaptiveCorrectionLitres,
+        predicted_linear: Number(modelPredictions.linear.toFixed(2)),
+        predicted_holt_winters: Number(modelPredictions.holt_winters.toFixed(2)),
+        predicted_naive: Number(modelPredictions.naive_last_week.toFixed(2)),
+        predicted_weekday: Number(modelPredictions.same_weekday_avg.toFixed(2)),
+        actual_sale_qty: Number(actual.toFixed(2)),
+      });
       errors.ensembleAbsoluteErrorTotal += Math.abs(ensembleDifference);
       errors.ensembleSignedErrorTotal += ensembleDifference;
       errors.naiveLastWeekAbsoluteErrorTotal += Math.abs(modelPredictions.naive_last_week - actual);
@@ -610,7 +697,8 @@ function adaptiveWeights(
     }
   }
   const historicalWeights = inverseMapeWeights(historicalErrors);
-  const historicalShare = persistedErrors.sample_count / (persistedErrors.sample_count + 28);
+  const backtestSampleCount = Math.max(1, backtestErrors.linear.length);
+  const historicalShare = persistedErrors.sample_count / (persistedErrors.sample_count + backtestSampleCount);
   const blended = Object.fromEntries(
     (Object.keys(recentWeights) as EnsembleModel[]).map(model => [
       model,
@@ -706,16 +794,18 @@ export function generateForecast(
     };
   }
 
-  // 1. Train Linear Model
+  // 1. Train Linear & Gradient Boosting Models on all post-warmup DB history
   const features = buildFeaturesNoLeak(dates, actuals);
+  const fitFeatures = features.length > 7 ? features.slice(7) : features;
+  const fitActuals = actuals.length > 7 ? actuals.slice(7) : actuals;
   const linModel = new LinearRegressionModel();
-  linModel.fit(features, actuals);
+  linModel.fit(fitFeatures, fitActuals);
   const gradientBoostingModel = new GradientBoostingModel();
-  gradientBoostingModel.fit(features, actuals);
+  gradientBoostingModel.fit(fitFeatures, fitActuals);
 
-  // 2. Train Holt-Winters
-  const [alpha, beta, gamma] = optimizeHoltWinters(actuals, 7);
-  const { forecast: hwRaw } = holtWinters(actuals, alpha, beta, gamma, 7, forecastDays);
+  // 2. Train Holt-Winters on all DB history with calendar-day seasonality
+  const [alpha, beta, gamma] = optimizeHoltWinters(actuals, 7, dates);
+  const { forecast: hwRaw } = holtWinters(actuals, alpha, beta, gamma, 7, forecastDays, dates);
 
   // Walk-forward validation only uses observations available before each test day.
   const backtest = rollingBacktest(dates, actuals);
@@ -752,41 +842,40 @@ export function generateForecast(
     const festival = getFestivalEntry(futureDate);
     const festName = festival?.name;
 
-    const nl = naiveLastWeek(dates, actuals, futureDate);
-    const wa = sameWeekdayAvg(dates, actuals, futureDate);
+    const nl = naiveLastWeek(extendedDates, extendedActuals, futureDate);
+    const wa = sameWeekdayAvg(extendedDates, extendedActuals, futureDate);
     const hp = hwRaw[j] || overallMean;
 
-    const past7 = extendedActuals.slice(-7);
-    const past30 = extendedActuals.slice(-30);
-    const r7 = mean(past7) || overallMean;
-    const r30 = mean(past30) || overallMean;
-    const ew7 = ewma(extendedActuals, 7);
-
-    const feat = [
-      dow,
-      isWeekend ? 1.0 : 0.0,
-      futureDate.getDate(),
-      festName ? 1.0 : 0.0,
-      extendedActuals[extendedActuals.length - 1] || overallMean,
-      extendedActuals.length >= 7 ? extendedActuals[extendedActuals.length - 7] : overallMean,
-      r7,
-      r30,
-      ew7[ew7.length - 1] || overallMean,
-      extendedActuals.length >= 2 ? extendedActuals[extendedActuals.length - 2] : overallMean,
-      0.0,
-    ];
+    const futureFeatures = buildFeaturesNoLeak(
+      [...extendedDates, futureDate],
+      [...extendedActuals, 0],
+    );
+    const feat = futureFeatures[futureFeatures.length - 1];
 
     const lp = Math.max(linModel.predict(feat), 0);
     const gradientBoostingPrediction = gradientBoostingModel.predict(feat);
     const baseEnsemble = weights.linear * lp + weights.holt_winters * hp + weights.naive_last_week * nl + weights.same_weekday_avg * wa;
-    let ensemble = gradientBoostingActive
+    const rawEnsemble = gradientBoostingActive
       ? baseEnsemble * 0.8 + gradientBoostingPrediction * 0.2
       : baseEnsemble;
+    let ensemble = rawEnsemble;
 
+    // Adaptive learning from recent 10-day mistakes/differences + saved feedback
+    const horizonDecay = Math.pow(0.88, j);
+    const learnedWalkForwardBias = computeAdaptiveBiasPercentage(
+      backtest.rawEnsembleBiasPercentage,
+      backtest.weekdayBiasPercentage[dow] || [],
+    );
     const historicalBias = persistedErrors?.ensemble_bias_pct_by_horizon?.[j + 1];
     if (historicalBias !== undefined && Number.isFinite(historicalBias)) {
-      ensemble *= 1 - boundedBiasCorrection(historicalBias);
+      const combinedBias = backtest.rawEnsembleBiasPercentage.length >= 3
+        ? historicalBias * 0.65 + learnedWalkForwardBias * 0.35
+        : historicalBias;
+      ensemble *= 1 - boundedBiasCorrection(combinedBias);
+    } else if (backtest.rawEnsembleBiasPercentage.length >= 3) {
+      ensemble *= 1 - boundedBiasCorrection(learnedWalkForwardBias * horizonDecay);
     }
+    const adaptiveAdjustmentLitres = Number((ensemble - rawEnsemble).toFixed(2));
 
     const horizonFactor = 1.0 + j * 0.05;
     const festivalRangeFactor = festName ? 1.5 : 1;
@@ -823,6 +912,8 @@ export function generateForecast(
       is_weekend: isWeekend,
       is_today: j === 0,
       days_from_now: j + 1,
+      raw_ensemble: Number(rawEnsemble.toFixed(2)),
+      adaptive_adjustment_litres: adaptiveAdjustmentLitres,
       festival_name: festName,
       festival_note: festival?.note,
     });
@@ -833,10 +924,50 @@ export function generateForecast(
 
   const insights: string[] = [];
   const reasons: string[] = [];
-  const recentOutcomes = persistedErrors?.recent_outcomes?.filter(
+  const savedRecentOutcomes = persistedErrors?.recent_outcomes?.filter(
     outcome => outcome.actual_sale_qty > 0 && Number.isFinite(outcome.predicted_ensemble),
   ) ?? [];
-  const recentForecastOutcomes = recentOutcomes.map(outcome => {
+
+  // Combine any saved forecast_feedback outcomes with the leak-free walk-forward backtest outcomes
+  // so that the last 10 days (from Today / latest date back 10 days) are ALWAYS available.
+  const walkForwardLast10 = [...backtest.walkForwardOutcomes].slice(-10).reverse();
+  const savedDatesSet = new Set(savedRecentOutcomes.map((o) => o.target_date));
+  const combined10DayOutcomes: Array<{
+    target_date: string;
+    day_name?: string;
+    predicted_ensemble: number;
+    adaptive_correction_litres?: number;
+    predicted_linear: number;
+    predicted_holt_winters: number;
+    predicted_naive: number;
+    predicted_weekday: number;
+    actual_sale_qty: number;
+    source: 'saved_feedback' | 'walk_forward';
+    station_remark_signals?: NonNullable<PersistedForecastErrors['recent_outcomes']>[number]['station_remark_signals'];
+  }> = [
+    ...savedRecentOutcomes.map((o) => ({
+      ...o,
+      day_name: WEEKDAYS[new Date(`${o.target_date}T00:00:00Z`).getUTCDay()],
+      source: 'saved_feedback' as const,
+    })),
+    ...walkForwardLast10
+      .filter((wf) => !savedDatesSet.has(wf.target_date))
+      .map((wf) => ({
+        target_date: wf.target_date,
+        day_name: wf.day_name,
+        predicted_ensemble: wf.predicted_ensemble,
+        adaptive_correction_litres: wf.adaptive_correction_litres,
+        predicted_linear: wf.predicted_linear,
+        predicted_holt_winters: wf.predicted_holt_winters,
+        predicted_naive: wf.predicted_naive,
+        predicted_weekday: wf.predicted_weekday,
+        actual_sale_qty: wf.actual_sale_qty,
+        source: 'walk_forward' as const,
+        station_remark_signals: [],
+      })),
+  ].slice(0, 10);
+
+  const recentForecastOutcomes = combined10DayOutcomes.map(outcome => {
     const componentPredictions: Array<[ForecastModel, number]> = ([
       ['linear', outcome.predicted_linear],
       ['holt_winters', outcome.predicted_holt_winters],
@@ -846,8 +977,8 @@ export function generateForecast(
     const closestModel = componentPredictions.sort(
       (a, b) => Math.abs(a[1] - outcome.actual_sale_qty) - Math.abs(b[1] - outcome.actual_sale_qty),
     )[0];
-    const difference = outcome.predicted_ensemble - outcome.actual_sale_qty;
-    const differencePct = (difference / outcome.actual_sale_qty) * 100;
+    const difference = Number((outcome.predicted_ensemble - outcome.actual_sale_qty).toFixed(2));
+    const differencePct = Number(((difference / outcome.actual_sale_qty) * 100).toFixed(2));
     const direction = difference > 0 ? 'overforecast' : difference < 0 ? 'underforecast' : 'matched';
     const explanation = closestModel
       ? `${direction === 'matched' ? 'The ensemble matched actual sales.' : `The ensemble ${direction} by ${Math.abs(differencePct).toFixed(1)}%.`} The ${closestModel[0].replace(/_/g, ' ')} model was closest to actuals (${closestModel[1].toLocaleString('en-IN', { maximumFractionDigits: 0 })} L); model disagreement or weighting may have contributed.`
@@ -860,50 +991,79 @@ export function generateForecast(
         const changeDirection = signal.change_litres > 0 ? 'above' : 'below';
         return `${signal.station_name} (${signal.erp_code}) sold ${Math.abs(signal.change_litres).toLocaleString('en-IN', { maximumFractionDigits: 0 })} L ${changeDirection} its prior 7-day average (${signal.sale_qty.toLocaleString('en-IN', { maximumFractionDigits: 0 })} L vs ${signal.prior_7d_avg.toLocaleString('en-IN', { maximumFractionDigits: 0 })} L); remark: "${signal.remark}"`;
       }).join('; ')}. These remarks are recorded operational context and may help explain the deviation.`
-      : ' No station remarks were recorded for stations with a measurable change from their prior 7-day average.';
+      : ' Adaptive feedback: this day’s residual difference has been incorporated into recency-weighted model weights and EWMA bias damping.';
 
     return {
       date: outcome.target_date,
+      day_name: outcome.day_name,
       predicted: outcome.predicted_ensemble,
       actual: outcome.actual_sale_qty,
       difference,
       difference_pct: differencePct,
+      predicted_linear: outcome.predicted_linear,
+      predicted_holt_winters: outcome.predicted_holt_winters,
+      predicted_naive: outcome.predicted_naive,
+      predicted_weekday: outcome.predicted_weekday,
       closest_model: closestModel?.[0].replace(/_/g, ' ') ?? 'Unavailable',
       closest_model_prediction: closestModel?.[1] ?? 0,
+      adaptive_correction_litres: outcome.adaptive_correction_litres,
+      source: outcome.source,
       explanation: `${explanation}${remarkContext}`,
     };
   });
 
-  if (recentOutcomes.length > 0) {
-    const modelPredictions: Record<EnsembleModel, (outcome: typeof recentOutcomes[number]) => number> = {
+  const outcomesForReview = savedRecentOutcomes.length > 0 ? savedRecentOutcomes : combined10DayOutcomes;
+  let bestRecentModelName = 'holt winters';
+  if (outcomesForReview.length > 0) {
+    const modelPredictions: Record<EnsembleModel, (outcome: typeof outcomesForReview[number]) => number> = {
       linear: outcome => outcome.predicted_linear,
       holt_winters: outcome => outcome.predicted_holt_winters,
       naive_last_week: outcome => outcome.predicted_naive,
       same_weekday_avg: outcome => outcome.predicted_weekday,
     };
-    const ensembleErrors = recentOutcomes.map(
+    const ensembleErrors = outcomesForReview.map(
       outcome => (outcome.predicted_ensemble - outcome.actual_sale_qty) / outcome.actual_sale_qty,
     );
     const averageAbsoluteError = mean(ensembleErrors.map(Math.abs)) * 100;
     const overforecastDays = ensembleErrors.filter(error => error > 0).length;
     reasons.push(
-      `Recent forecast review (${recentOutcomes.length} actual day(s)): ensemble average absolute error was ${averageAbsoluteError.toFixed(1)}%; it overforecast on ${overforecastDays} day(s) and underforecast on ${recentOutcomes.length - overforecastDays}.`,
+      `Recent forecast review (${outcomesForReview.length} actual day(s)): ensemble average absolute error was ${averageAbsoluteError.toFixed(1)}%; it overforecast on ${overforecastDays} day(s) and underforecast on ${outcomesForReview.length - overforecastDays}.`,
     );
 
     const modelMapes = (Object.keys(modelPredictions) as EnsembleModel[])
       .map(model => ({
         model,
-        mape: mean(recentOutcomes.map(outcome =>
+        mape: mean(outcomesForReview.map(outcome =>
           Math.abs(modelPredictions[model](outcome) - outcome.actual_sale_qty) / outcome.actual_sale_qty,
         )) * 100,
       }))
       .sort((a, b) => a.mape - b.mape);
     if (modelMapes.length > 0) {
+      bestRecentModelName = modelMapes[0].model.replace(/_/g, ' ');
       reasons.push(
-        `Best-performing model in these saved outcomes was ${modelMapes[0].model.replace(/_/g, ' ')} (${modelMapes[0].mape.toFixed(1)}% MAPE); recent model errors are fed back into ensemble weights.`,
+        `Best-performing model in these saved outcomes was ${bestRecentModelName} (${modelMapes[0].mape.toFixed(1)}% MAPE); recent model errors are fed back into ensemble weights.`,
       );
     }
   }
+
+  const adaptiveLearningSummary = (() => {
+    if (recentForecastOutcomes.length === 0) return undefined;
+    const absDiffLitres = mean(recentForecastOutcomes.map((r) => Math.abs(r.difference)));
+    const absDiffPct = mean(recentForecastOutcomes.map((r) => Math.abs(r.difference_pct)));
+    const signedDiffLitres = mean(recentForecastOutcomes.map((r) => r.difference));
+    const signedDiffPct = mean(recentForecastOutcomes.map((r) => r.difference_pct));
+    const ewmaBias = computeAdaptiveBiasPercentage(backtest.rawEnsembleBiasPercentage) * 100;
+    return {
+      window_days: recentForecastOutcomes.length,
+      mean_abs_diff_litres: Number(absDiffLitres.toFixed(2)),
+      mean_abs_diff_pct: Number(absDiffPct.toFixed(2)),
+      net_signed_diff_litres: Number(signedDiffLitres.toFixed(2)),
+      net_signed_diff_pct: Number(signedDiffPct.toFixed(2)),
+      ewma_bias_pct: Number(ewmaBias.toFixed(2)),
+      next_day_adjustment_litres: forecastPoints[0]?.adaptive_adjustment_litres ?? 0,
+      best_recent_model: bestRecentModelName,
+    };
+  })();
 
   if (actuals.length >= 14) {
     const recentAverage = mean(actuals.slice(-7));
@@ -936,15 +1096,11 @@ export function generateForecast(
       : `Gradient boosting remains a trial candidate (${gradientBoostingMape === null ? 'not enough scored data' : `${gradientBoostingMape}% standalone MAPE`}; 20% blend MAPE ${gradientBoostedEnsembleMape === null ? 'unavailable' : `${gradientBoostedEnsembleMape}%`} versus ${baselineEnsembleMape === null ? 'unavailable' : `${baselineEnsembleMape}%`} current-ensemble MAPE). It is not used unless the blend improves MAPE by at least 5% and wins at least 60% of at least 14 walk-forward days.`,
   );
 
-  if (daysAvailable >= 60) {
-    insights.push(
-      `Full 3-month seasonal training set active (${daysAvailable} days from Aug, Sept, Oct). Captures weekly AutoLPG consumption patterns reliably.`
-    );
-  } else {
-    insights.push(
-      `Running on ${daysAvailable} day(s) of history. For maximal forecasting accuracy, local database connection provides full 92 days of history.`
-    );
-  }
+  const firstHistoryDate = dates[0]?.toISOString().slice(0, 10) ?? 'N/A';
+  const lastHistoryDate = dates[dates.length - 1]?.toISOString().slice(0, 10) ?? 'N/A';
+  insights.push(
+    `Trained on all ${daysAvailable} historical day(s) present in PostgreSQL (${firstHistoryDate} to ${lastHistoryDate}).`
+  );
 
   return {
     insufficient: false,
@@ -988,6 +1144,7 @@ export function generateForecast(
     historical_actuals: actuals,
     forecast: forecastPoints,
     recent_forecast_outcomes: recentForecastOutcomes,
+    adaptive_learning: adaptiveLearningSummary,
     models_metrics: {
       linear: { mape: linMape, rmse: rootMeanSquaredError(backtest.squared.linear) },
       holt_winters: { mape: hwMape, rmse: rootMeanSquaredError(backtest.squared.holt_winters) },
@@ -1013,11 +1170,22 @@ export function generateForecast(
     },
     insights,
     reasons,
-    data_quality: {
-      outages_imputed: 0,
-      gaps_filled: 0,
-      anomalies_detected: 0,
-      has_db_history: daysAvailable >= 60,
-    },
+    data_quality: (() => {
+      let calendarGaps = 0;
+      for (let i = 1; i < dates.length; i++) {
+        const diffDays = Math.round((dates[i].getTime() - dates[i - 1].getTime()) / 86400000);
+        if (diffDays > 1) calendarGaps += diffDays - 1;
+      }
+      const seriesStd = stdDev(actuals);
+      const anomalies = seriesStd > 0
+        ? actuals.filter((v) => Math.abs(v - overallMean) > 2.5 * seriesStd).length
+        : 0;
+      return {
+        outages_imputed: stationRecords ? stationRecords.filter((s) => s.sale_qty === 0).length : 0,
+        gaps_filled: calendarGaps,
+        anomalies_detected: anomalies,
+        has_db_history: daysAvailable >= 60,
+      };
+    })(),
   };
 }

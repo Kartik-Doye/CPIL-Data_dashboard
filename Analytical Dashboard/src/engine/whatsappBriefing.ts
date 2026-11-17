@@ -12,6 +12,9 @@ type WhatsAppSalesTelemetry = Pick<
   | 'zero_sale_count'
   | 'forecast'
 > & {
+  effective_rsp?: number;
+  collection_gap_per_l?: number;
+  states_summary?: ExecutiveTelemetry['states_summary'];
   history_30d?: ExecutiveTelemetry['history_30d'];
   stockout_risk_stations: Array<Pick<ExecutiveTelemetry['stockout_risk_stations'][number], 'name' | 'state' | 'days_left'>>;
   zero_sale_stations: Array<Pick<StationRecord, 'alds_name' | 'state' | 'tm' | 'remark'>>;
@@ -106,7 +109,7 @@ export function buildExecutiveWhatsAppMessage(telemetry: WhatsAppSalesTelemetry)
         : reason === 'Commercial stop' || reason === 'License/compliance stop'
           ? 'Stopped'
           : 'Verify';
-    const stationName = category === 'Stopped' && station.tm && station.tm !== 'No TM'
+    const stationName = station.tm && station.tm !== 'No TM'
       ? `${station.alds_name} (${station.tm})`
       : station.alds_name;
     zeroSaleGroups.get(category)?.push(stationName);
@@ -128,11 +131,24 @@ export function buildExecutiveWhatsAppMessage(telemetry: WhatsAppSalesTelemetry)
     .sort((a, b) => b.sale_qty - a.sale_qty)
     .slice(0, 3);
 
+  const rspSuffix = telemetry.effective_rsp && telemetry.effective_rsp > 0
+    ? ` | *Eff RSP:* ₹${telemetry.effective_rsp.toFixed(2)}/L${telemetry.collection_gap_per_l && telemetry.collection_gap_per_l > 0 ? ` (Gap ₹${telemetry.collection_gap_per_l.toFixed(2)})` : ''}`
+    : '';
+  const stateLine = telemetry.states_summary && telemetry.states_summary.length > 0
+    ? [
+      `🗺️ *STATE SHARE:* ${telemetry.states_summary
+        .slice(0, 5)
+        .map((st) => `${st.state}: ${formatStationLitres(st.total_sale_qty)}`)
+        .join(' | ')}`,
+    ]
+    : [];
+
   return [
     `🔥 *GO GAS SALES | ${dateLabel}*`,
     `📊 *Total Sales:* ${wholeNumberFormat(telemetry.total_sale_qty)} L (${salesChange} vs 7d avg) | *Total Collection:* ₹${telemetry.total_collection.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     `📈 *7-Day Average:* ${previousAverage === null ? 'N/A' : wholeNumberFormat(previousAverage) + ' L'} | *Forecast (${forecastDate}):* ${forecastSummary}`,
-    `👥 *Active:* ${telemetry.stations_with_sale}/${telemetry.stations_total} | *Paytm Digital:* ${paytmShare}`,
+    `👥 *Active:* ${telemetry.stations_with_sale}/${telemetry.stations_total} | *Paytm Digital:* ${paytmShare}${rspSuffix}`,
+    ...stateLine,
     ...dryOutLines,
     `🛑 *ZERO SALE (${telemetry.zero_sale_count})*`,
     ...(zeroSaleLines.length ? zeroSaleLines : ['• None']),

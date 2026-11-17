@@ -68,9 +68,13 @@ export function getPool(): pg.Pool | null {
   return pool;
 }
 
+export function isLoaderConfigured(): boolean {
+  return Boolean(DB_LOADER_PASSWORD && DB_LOADER_PASSWORD !== 'CHANGE_ME_LOADER');
+}
+
 function getLoaderPool(): pg.Pool {
-  if (!DB_LOADER_PASSWORD) {
-    throw new Error('BOT_LOADER_PASSWORD is required to save forecast feedback.');
+  if (!isLoaderConfigured()) {
+    throw new Error('BOT_LOADER_PASSWORD is not configured (or still set to placeholder CHANGE_ME_LOADER).');
   }
   if (!loaderPool) {
     loaderPool = new Pool({
@@ -151,17 +155,14 @@ async function initializeDatabaseEngine(): Promise<'external'> {
 }
 
 export async function testDbConnection(forceRefresh = false): Promise<boolean> {
-  if (forceRefresh) {
-    if (pool) {
-      try {
-        await pool.end();
-      } catch {
-        lastDbError = 'Unable to close the previous PostgreSQL connection pool.';
-      }
-      pool = null;
+  if (forceRefresh && !isDbAvailable && pool) {
+    try {
+      await pool.end();
+    } catch {
+      lastDbError = 'Unable to close the previous PostgreSQL connection pool.';
     }
+    pool = null;
     activeEngine = null;
-    isDbAvailable = null;
   }
 
   try {
@@ -328,6 +329,10 @@ export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();
     pool = null;
+  }
+  if (loaderPool) {
+    await loaderPool.end();
+    loaderPool = null;
   }
   activeEngine = null;
   isDbAvailable = null;

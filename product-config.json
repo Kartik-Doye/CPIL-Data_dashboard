@@ -1,14 +1,13 @@
 {
   "application": {
     "name": "GO Gas Executive Suite",
-    "port": 3000,
-    "flaskPort": 5000,
-    "baseUrl": "http://localhost:3000",
+    "port": 5050,
+    "baseUrl": "http://localhost:5050",
     "timezone": "Asia/Kolkata",
-    "requestBodyLimit": "50mb",
+    "requestBodyLimit": "1mb",
     "localHostnames": ["localhost", "127.0.0.1", "::1"],
     "localAddressPrefixes": ["127.", "::ffff:127."],
-    "trustedHostSuffixes": [".run.app"]
+    "trustedHostSuffixes": []
   },
   "database": {
     "host": "localhost",
@@ -49,13 +48,49 @@
   },
   "analytics": {
     "fallbackRetailPricePerLitre": 77.2,
+    "defaultStationBenchmarkLitres": 1100,
+    "targetCoverDays": 3,
+    "stockoutWarningDays": 3.0,
+    "stockoutCriticalDays": 1.5,
+    "dispatchCandidateDays": 3.5,
+    "stockoutDipThresholdLitres": 2000,
+    "defaultTankCapacity": "10KL",
+    "tankerFleetCapacitiesKl": [7.5, 10, 20],
+    "stateMap": {
+      "MS": "MH",
+      "AP": "TG",
+      "KAR": "KA",
+      "RAJ": "RJ"
+    },
+    "statusBands": {
+      "achievedPct": 100,
+      "nearPct": 90,
+      "belowPct": 75
+    },
+    "healthScore": {
+      "activeStationWeight": 40,
+      "collectionGapMaxScore": 20,
+      "collectionGapMultiplier": 8,
+      "freeSaleMaxScore": 15,
+      "freeSaleMultiplier": 500,
+      "stockoutMaxScore": 25,
+      "stockoutStationPenalty": 3
+    },
+    "anomalyThresholds": {
+      "volumeSpikeMultiplier": 4.5,
+      "volumeSpikeMinLitres": 4000,
+      "minValidRsp": 20,
+      "maxValidRsp": 150,
+      "dispenserLockDipLitres": 8000,
+      "collectionMismatchMinSaleLitres": 1500,
+      "collectionMismatchMinCollectionRs": 10000
+    },
     "operatingModelMarginsPerLitre": {
       "COCO": 4.8,
       "LOCO": 3.5,
       "DODO": 2.2,
       "default": 2.8
-    },
-    "stockoutDipThresholdLitres": 2000
+    }
   },
   "ui": {
     "copyNoticeDurationMs": 3000,

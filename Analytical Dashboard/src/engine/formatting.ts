@@ -80,6 +80,14 @@ export function classifyZeroSaleReason(tm: string, remark: string): string {
   return 'Unclassified — verify';
 }
 
+export function escapeCsvCell(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  const str = String(val);
+  const neutralized = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  return `"${neutralized.replace(/"/g, '""')}"`;
+}
+
 // Aliases for component ergonomics
 export const formatINR = fmtCurrency;
 export const formatVolume = fmtQty;

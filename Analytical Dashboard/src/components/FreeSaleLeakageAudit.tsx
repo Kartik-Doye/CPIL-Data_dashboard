@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Fuel, AlertTriangle, CheckCircle2, ShieldAlert, Download, Filter } from 'lucide-react';
+import { Fuel, Download } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
-import { fmtQty, fmtCurrency, fmtLakhs } from '../engine/formatting';
+import { fmtQty, fmtCurrency, escapeCsvCell } from '../engine/formatting';
 import productConfig from '../../../product-config.json';
 
 interface FreeSaleLeakageAuditProps {
@@ -21,7 +21,7 @@ export const FreeSaleLeakageAudit: React.FC<FreeSaleLeakageAuditProps> = ({
     .map((s) => {
       const freeLtrs = s.free_sale_litres || s.free_sale || 0;
       const freeRs = s.free_sale_rupees ||
-        freeLtrs * (s.new_rate || productConfig.analytics.fallbackRetailPricePerLitre);
+        freeLtrs * (s.new_rate || s.erp_rate || productConfig.analytics.fallbackRetailPricePerLitre);
       const freePct = s.sale_qty > 0 ? (freeLtrs / s.sale_qty) * 100 : 0;
       const isExcessive = freePct >= filterThresholdPct && freeLtrs > 0;
 
@@ -43,10 +43,10 @@ export const FreeSaleLeakageAudit: React.FC<FreeSaleLeakageAuditProps> = ({
   const exportCSV = () => {
     const headers = ['Station Code', 'ALDS Name', 'State', 'TM', 'Total Sale Qty (L)', 'Free Sale (L)', 'Free Sale Value (Rs)', 'Free Sale %'];
     const rows = auditRows.map((r) => [
-      `"${r.station.erp_code}"`,
-      `"${r.station.alds_name.replace(/"/g, '""')}"`,
-      `"${r.station.state}"`,
-      `"${r.station.tm}"`,
+      escapeCsvCell(r.station.erp_code),
+      escapeCsvCell(r.station.alds_name),
+      escapeCsvCell(r.station.state),
+      escapeCsvCell(r.station.tm),
       r.station.sale_qty,
       r.freeLtrs,
       r.freeRs,

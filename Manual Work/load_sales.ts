@@ -157,6 +157,32 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
       }
       datesSet.add(dStr);
 
+      const saleQty = readNumber(r, ['SALE QTY', 'Sale Qty'], rowNumber, 'Sale Qty');
+      const collection = readNumber(r, ['COLLECTION'], rowNumber, 'Collection');
+      const newRate = readNumber(r, ['NEW RATE', 'New Rate'], rowNumber, 'New Rate');
+      const erpRate = readNumber(r, ['ERP RATE'], rowNumber, 'ERP Rate');
+      const freeSaleLitres = readNumber(r, ['FREE SALE LITRES', 'Free Sale Litres', 'FREE SALE LTR'], rowNumber, 'Free Sale Litres');
+      const paytm = readNumber(r, ['PAYTM'], rowNumber, 'Paytm');
+      const netCashCollection = readNumber(r, ['NET CASH COLLECTION'], rowNumber, 'Net Cash Collection');
+      const netTotalCollectionCell = findCell(r, ['NET TOTAL COLLECTION', 'Net Total Collection']);
+      const netTotalCollection = netTotalCollectionCell && netTotalCollectionCell[1] !== ''
+        ? readNumber(r, ['NET TOTAL COLLECTION', 'Net Total Collection'], rowNumber, 'Net Total Collection')
+        : collection;
+      const effectiveRspCell = findCell(r, ['EFFECTIVE RSP', 'Effective RSP']);
+      const effectiveRsp = effectiveRspCell && effectiveRspCell[1] !== ''
+        ? readNumber(r, ['EFFECTIVE RSP', 'Effective RSP'], rowNumber, 'Effective RSP')
+        : saleQty > 0
+          ? Number((netTotalCollection / saleQty).toFixed(2))
+          : (newRate || erpRate || 0);
+      const collectionCheck = readNumber(r, ['COLLECTION CHECK', 'Collection Check'], rowNumber, 'Collection Check');
+      const schemeAsPerHo = readNumber(r, ['SCHEME AS PER HO', 'Scheme As Per HO'], rowNumber, 'Scheme As Per HO');
+      const freeSalePctCell = findCell(r, ['FREE SALE PCT', 'Free Sale %', 'FREE SALE %']);
+      const freeSalePct = freeSalePctCell && freeSalePctCell[1] !== ''
+        ? readNumber(r, ['FREE SALE PCT', 'Free Sale %', 'FREE SALE %'], rowNumber, 'Free Sale %')
+        : saleQty > 0
+          ? Number(((freeSaleLitres / saleQty) * 100).toFixed(2))
+          : 0;
+
       validRows.push({
         sourceRow: rowNumber,
         erp_code: costCode,
@@ -166,22 +192,27 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
         coordinator: String(findCell(r, ['Coordinator'])?.[1] ?? '').trim(),
         type: String(findCell(r, ['Type'])?.[1] ?? 'LOCO').trim(),
         tank_cap: String(findCell(r, ['TANK CAP', 'Tank Cap'])?.[1] ?? '').trim(),
-        sale_qty: readNumber(r, ['SALE QTY', 'Sale Qty'], rowNumber, 'Sale Qty'),
-        collection: readNumber(r, ['COLLECTION'], rowNumber, 'Collection'),
-        new_rate: readNumber(r, ['NEW RATE', 'New Rate'], rowNumber, 'New Rate'),
+        sale_qty: saleQty,
+        collection,
+        new_rate: newRate,
         other: readNumber(r, ['OTHER'], rowNumber, 'Other'),
         diff: readNumber(r, ['DIFF'], rowNumber, 'Diff'),
-        erp_rate: readNumber(r, ['ERP RATE'], rowNumber, 'ERP Rate'),
+        erp_rate: erpRate,
         ret_test_cal: readNumber(r, ['RET TEST/CAL'], rowNumber, 'Ret Test/Cal'),
-        free_sale_litres: readNumber(r, ['FREE SALE LITRES', 'Free Sale Litres', 'FREE SALE LTR'], rowNumber, 'Free Sale Litres'),
+        free_sale_litres: freeSaleLitres,
         free_sale_rupees: readNumber(r, ['FREE SALE RUPEES', 'Free Sale Rupees'], rowNumber, 'Free Sale Rupees'),
         scheme: String(findCell(r, ['SCHEME'])?.[1] ?? '').trim().toUpperCase() === 'NA'
           ? null
           : readNumber(r, ['SCHEME'], rowNumber, 'Scheme'),
-        paytm: readNumber(r, ['PAYTM'], rowNumber, 'Paytm'),
-        net_cash_collection: readNumber(r, ['NET CASH COLLECTION'], rowNumber, 'Net Cash Collection'),
+        paytm,
+        net_cash_collection: netCashCollection,
         closing_dip_in_ltr: readNumber(r, ['CLOSING DIP IN LTR', 'CLOSING DIP'], rowNumber, 'Closing Dip'),
         remark: String(findCell(r, ['REMARK'])?.[1] ?? '').trim(),
+        net_total_collection: netTotalCollection,
+        effective_rsp: effectiveRsp,
+        collection_check: collectionCheck,
+        scheme_as_per_ho: schemeAsPerHo,
+        free_sale_pct: freeSalePct,
         date: dStr,
       });
     }
@@ -230,12 +261,13 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
           erp_code, alds_name, state, tm, coordinator, type, tank_cap,
           sale_qty, collection, new_rate, other, diff, erp_rate, ret_test_cal,
           free_sale_litres, free_sale_rupees, scheme, paytm, net_cash_collection,
-          closing_dip_in_ltr, remark, sale_date
+          closing_dip_in_ltr, remark, net_total_collection, effective_rsp,
+          collection_check, scheme_as_per_ho, free_sale_pct, sale_date
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11, $12, $13, $14,
           $15, $16, $17, $18, $19,
-          $20, $21, $22
+          $20, $21, $22, $23, $24, $25, $26, $27
         )
       `;
 
@@ -246,7 +278,8 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
             row.erp_code, row.alds_name, row.state, row.tm, row.coordinator, row.type, row.tank_cap,
             row.sale_qty, row.collection, row.new_rate, row.other, row.diff, row.erp_rate, row.ret_test_cal,
             row.free_sale_litres, row.free_sale_rupees, row.scheme, row.paytm, row.net_cash_collection,
-            row.closing_dip_in_ltr, row.remark, fileDate
+            row.closing_dip_in_ltr, row.remark, row.net_total_collection, row.effective_rsp,
+            row.collection_check, row.scheme_as_per_ho, row.free_sale_pct, fileDate
           ]);
         } catch (insertError: any) {
           const dbLocation = insertError.column
@@ -261,6 +294,14 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
 
       await client.query('COMMIT');
       logMessage(`[LOADED] ${path.basename(filePath)}: ${validRows.length} stations, date ${fileDate}, total volume: ${Math.round(totalQty)} L.`);
+
+      // Notify running dashboard server (if active) to invalidate telemetry cache immediately
+      const baseUrl = process.env.APP_BASE_URL || productConfig.application.baseUrl;
+      void fetch(`${baseUrl}/api/telemetry/invalidate`, {
+        method: 'POST',
+        headers: { 'x-go-gas-email-request': 'authorized-client' },
+        signal: AbortSignal.timeout(2000),
+      }).catch(() => {});
 
       client.release();
       await pool.end();

@@ -24,3 +24,10 @@ test('does not recommend a refill when stock already covers the target', () => {
     tankerLabel: 'No refill needed for 3-day target',
   });
 });
+
+test('caps recommended refill volume at physical tank ullage when tank capacity is provided', () => {
+  assert.deepEqual(recommendTanker(4500, 2000, 3, '10KL'), {
+    requiredVolumeLtr: 8000,
+    tankerLabel: '10 KL tanker',
+  });
+});

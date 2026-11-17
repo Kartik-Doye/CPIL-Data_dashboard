@@ -370,7 +370,10 @@ export function parseRecipientNumbers(raw?: string): string[] {
   const source = raw ?? activeRecipientNumbers;
   const recipients = source
     .split(/[,\n;]/)
-    .map((number) => number.trim().replace(/[\s()-]/g, ''))
+    .map((number) => {
+      const cleaned = number.trim().replace(/[\s()-]/g, '');
+      return /^[6-9]\d{9}$/.test(cleaned) ? `91${cleaned}` : cleaned;
+    })
     .filter((number) => number.startsWith('+')
       ? /^\+[1-9]\d{9,14}$/.test(number)
       : /^[1-9]\d{10,14}$/.test(number));
@@ -401,28 +404,43 @@ export function buildTankerDispatchWhatsAppMessage(
 ): string {
   const critical = candidates.filter((c) => c.urgency === 'Critical');
   const warning = candidates.filter((c) => c.urgency === 'Warning');
+  const totalRefillLitres = candidates.reduce((sum, c) => sum + (c.recommendedVolumeLtr || 0), 0);
 
-  const stationRows = critical.slice(0, 10).map((c, i) => (
-    `${i + 1}. *${c.station.alds_name}* (${c.station.erp_code}) - ${c.station.state}\n` +
-    `   Stock: ${numberFormat(c.currentStock)} L | Burn: ${numberFormat(c.dailyBurn)} L/d\n` +
-    `   Coverage: *${c.station.days_left.toFixed(1)} Days* 🚨\n` +
-    `   Dispatch: *${c.recommendedTanker}* (~${numberFormat(c.recommendedVolumeLtr)} L)`
-  )).join('\n\n');
+  const formatRow = (c: typeof candidates[number], i: number, badge: string) => {
+    const owner = c.station.tm && c.station.tm !== 'No TM' ? ` | TM: ${c.station.tm}` : '';
+    return (
+      `${i + 1}. *${c.station.alds_name}* (${c.station.erp_code}) - ${c.station.state}${owner}\n` +
+      `   Stock: ${numberFormat(c.currentStock)} L | Burn: ${numberFormat(c.dailyBurn)} L/d\n` +
+      `   Coverage: *${c.station.days_left.toFixed(1)} Days* ${badge}\n` +
+      `   Dispatch: *${c.recommendedTanker}* (~${numberFormat(c.recommendedVolumeLtr)} L)`
+    );
+  };
+
+  const stationRows = critical.slice(0, 10).map((c, i) => formatRow(c, i, '🚨')).join('\n\n');
+  const warningRows = warning.slice(0, 5).map((c, i) => formatRow(c, i, '⚠️')).join('\n\n');
 
   return [
     `*🚛 GO GAS TANKER REPLENISHMENT DISPATCH MANIFEST*`,
     `📅 *Date:* ${telemetry.date}`,
     `🚨 *Critical (<1.5 Days):* ${critical.length} Stations`,
     `⚠️ *Warning (1.5-3.0 Days):* ${warning.length} Stations`,
-    `📦 *Total Orders Required:* ${candidates.length} Replenishment Trips`,
+    `📦 *Total Orders Required:* ${candidates.length} Replenishment Trips (~${numberFormat(totalRefillLitres)} L)`,
     ``,
     `*PRIORITY 1 DISPATCH SCHEDULE:*`,
     stationRows || 'No stations currently in critical status.',
     critical.length > 10 ? `\n...and ${critical.length - 10} more critical station(s).` : '',
+    ...(warning.length > 0
+      ? [
+          ``,
+          `*PRIORITY 2 WARNING SCHEDULE (1.5–3.0 Days):*`,
+          warningRows,
+          warning.length > 5 ? `\n...and ${warning.length - 5} more warning station(s).` : '',
+        ]
+      : []),
     ``,
     `_Please verify station tank dip & ullage before gate dispatch._`,
     `_GO Gas Supply Chain & Logistics Control Desk_`,
-  ].join('\n');
+  ].filter((line) => line !== undefined).join('\n');
 }
 
 export function getWhatsAppStatus(): WhatsAppServiceStatus {

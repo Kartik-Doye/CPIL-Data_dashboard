@@ -20,6 +20,26 @@ export interface RollingEvalResult {
   }>;
 }
 
+function findDateAwareLag(
+  dates: Date[],
+  actuals: number[],
+  currentIndex: number,
+  lagDays: number,
+  fallbackMean: number,
+): number {
+  const targetTime = dates[currentIndex].getTime() - lagDays * 86400000;
+  for (let k = currentIndex - 1; k >= 0; k--) {
+    const diffMs = Math.abs(dates[k].getTime() - targetTime);
+    if (diffMs < 43200000) {
+      return actuals[k];
+    }
+    if (dates[k].getTime() < targetTime - 43200000) {
+      break;
+    }
+  }
+  return currentIndex >= lagDays ? actuals[currentIndex - lagDays] : fallbackMean;
+}
+
 export function buildFeaturesNoLeak(
   dates: Date[],
   actuals: number[]
@@ -40,12 +60,12 @@ export function buildFeaturesNoLeak(
     // Check festival
     const isFest = isFestivalDate(dt) ? 1.0 : 0.0;
 
-    // Strictly prior lags
-    const lag1 = i >= 1 ? actuals[i - 1] : pastMean;
-    const lag2 = i >= 2 ? actuals[i - 2] : pastMean;
-    const lag7 = i >= 7 ? actuals[i - 7] : pastMean;
+    // Date-aware strictly prior lags
+    const lag1 = findDateAwareLag(dates, actuals, i, 1, pastMean);
+    const lag2 = findDateAwareLag(dates, actuals, i, 2, pastMean);
+    const lag7 = findDateAwareLag(dates, actuals, i, 7, pastMean);
 
-    // Past-only rolling means (last 7 and 30 days prior to i)
+    // Past-only rolling means (last 7 and 30 observations prior to i)
     const window7 = past.length >= 7 ? past.slice(-7) : past;
     const window30 = past.length >= 30 ? past.slice(-30) : past;
     const r7 = window7.length > 0
@@ -74,10 +94,15 @@ export function buildFeaturesNoLeak(
       trendAccel = slopeRecent - slopePrior;
     }
 
+    // Cyclical weekday encoding so linear models capture weekly periodicity without ordinal distortion
+    const dowSin = Math.sin((2 * Math.PI * dow) / 7);
+    const dowCos = Math.cos((2 * Math.PI * dow) / 7);
+
     features.push([
       dow, isWeekend, dom, isFest,
       lag1, lag7, r7, r30,
-      ewma7, lag2, trendAccel
+      ewma7, lag2, trendAccel,
+      dowSin, dowCos,
     ]);
   }
 
@@ -117,12 +142,23 @@ export function sameWeekdayAvg(
   const targetDow = forecastDate.getDay();
   const vals: number[] = [];
   for (let i = 0; i < dates.length; i++) {
-    if (dates[i].getDay() === targetDow) {
+    if (dates[i].getDay() === targetDow && actuals[i] > 0) {
       vals.push(actuals[i]);
     }
   }
   if (vals.length > 0) {
-    return vals.reduce((a, b) => a + b, 0) / vals.length;
+    // Exponentially recency-weighted mean across all occurrences of this weekday in DB
+    // so long-term weekday seasonality is preserved while adapting to current network volume
+    let weightedSum = 0;
+    let weightTotal = 0;
+    const decay = 0.72;
+    for (let k = 0; k < vals.length; k++) {
+      const weeksAgo = vals.length - 1 - k;
+      const w = Math.pow(decay, weeksAgo);
+      weightedSum += vals[k] * w;
+      weightTotal += w;
+    }
+    return weightTotal > 0 ? weightedSum / weightTotal : vals[vals.length - 1];
   }
   return actuals.length > 0 ? actuals.reduce((a, b) => a + b, 0) / actuals.length : 0.0;
 }

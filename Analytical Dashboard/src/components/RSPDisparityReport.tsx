@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { DollarSign, AlertCircle, TrendingDown, ArrowRight, Download, Search, Percent } from 'lucide-react';
+import { DollarSign, Download, Search } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
+import { escapeCsvCell } from '../engine/formatting';
 
 interface RSPDisparityReportProps {
   stations: StationRecord[];
@@ -41,18 +42,33 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
     .filter((d) => d.gapPerLitre > 0)
     .sort((a, b) => b.dailyRevenueLoss - a.dailyRevenueLoss);
   const disparities = allDisparities
-    .filter((d) => d.gapPerLitre >= minGap && d.station.alds_name.toLowerCase().includes(search.toLowerCase()));
+    .filter((d) => {
+      if (d.gapPerLitre < minGap) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        d.station.alds_name.toLowerCase().includes(q) ||
+        d.station.erp_code.toLowerCase().includes(q) ||
+        d.station.state.toLowerCase().includes(q) ||
+        d.station.tm.toLowerCase().includes(q)
+      );
+    });
 
   const totalFlagged = disparities.length;
   const totalDailyLoss = disparities.reduce((sum, d) => sum + d.dailyRevenueLoss, 0);
+  const pricedStations = stations.filter((s) => s.sale_qty > 0 && (s.new_rate > 0 || s.erp_rate > 0));
+  const pricedVolume = pricedStations.reduce((sum, s) => sum + s.sale_qty, 0);
+  const filteredNominalAvgRsp = pricedVolume > 0
+    ? pricedStations.reduce((sum, s) => sum + (s.new_rate || s.erp_rate) * s.sale_qty, 0) / pricedVolume
+    : telemetry.average_rsp;
 
   const exportCSV = () => {
     const headers = ['Station Code', 'ALDS Name', 'State', 'TM', 'Daily Volume (L)', 'Nominal RSP (Rs)', 'Effective RSP (Rs)', 'Gap (Rs/L)', 'Daily Loss (Rs)'];
     const rows = disparities.map((d) => [
-      `"${d.station.erp_code}"`,
-      `"${d.station.alds_name.replace(/"/g, '""')}"`,
-      `"${d.station.state}"`,
-      `"${d.station.tm}"`,
+      escapeCsvCell(d.station.erp_code),
+      escapeCsvCell(d.station.alds_name),
+      escapeCsvCell(d.station.state),
+      escapeCsvCell(d.station.tm),
       d.station.sale_qty,
       d.nominalRsp,
       d.effectiveRsp.toFixed(2),
@@ -111,8 +127,8 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
           </div>
 
           <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-500/30">
-            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 block">Network Nominal Avg RSP</span>
-            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">₹{telemetry.average_rsp.toFixed(2)} / L</span>
+            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 block">Weighted Nominal Avg RSP</span>
+            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">₹{filteredNominalAvgRsp.toFixed(2)} / L</span>
           </div>
         </div>
       </div>

@@ -117,8 +117,14 @@ test('builds a filterable station workbook with proposed owners and actions', as
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.read(Readable.from([buffer]));
   const sheet = workbook.getWorksheet('Station Detail');
+  const stateSheet = workbook.getWorksheet('State MIS Summary');
+  const tmSheet = workbook.getWorksheet('TM Leaderboard');
+  const dispatchSheet = workbook.getWorksheet('Tanker Dispatch Manifest');
 
   assert.ok(sheet);
+  assert.ok(stateSheet);
+  assert.ok(tmSheet);
+  assert.ok(dispatchSheet);
   assert.equal(sheet.autoFilter, 'A1:P1');
   assert.equal(sheet.rowCount, 3);
   assert.equal(sheet.getRow(2).getCell(10).value, 'Critical (<1 day)');
@@ -126,4 +132,7 @@ test('builds a filterable station workbook with proposed owners and actions', as
   assert.equal(sheet.getRow(2).getCell(15).value, 'TM One / Coordinator One');
   assert.equal(sheet.getRow(2).getCell(16).value, 'Today, EOD');
   assert.equal(sheet.getRow(3).getCell(11).value, 'Stock unavailable');
+  assert.equal(stateSheet.rowCount, 3);
+  assert.equal(tmSheet.rowCount, 3);
+  assert.equal(dispatchSheet.rowCount, 3);
 });

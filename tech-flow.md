@@ -345,13 +345,13 @@ $$\text{Urgency Priority} = \begin{cases}
 \end{cases}$$
 
 ### 5.3 Optimal Tanker Sizing Allocation
-Given station $i$ with tank capacity $C_i$, current dip $D_i$, safety target $S_i = 0.90 \times C_i$:
-$$\text{Refill Deficit}_i = S_i - D_i$$
+Given station $i$ with daily burn $B_i$, current dip $D_i$, and optional tank capacity $C_i$, target 3-day stock is $3 B_i$ and physical ullage is $\max(0, C_i - D_i)$:
+$$\text{Refill Deficit}_i = \min\left(\max(0, 3 B_i - D_i), \max(0, C_i - D_i)\right)$$
 
 $$\text{Assigned Tanker} = \begin{cases}
 \text{None}, & \text{Refill Deficit}_i \le 0 \\
-\text{12 KL}, & 0 < \text{Refill Deficit}_i \le 12{,}000\text{ L} \\
-\text{18 KL}, & 12{,}000\text{ L} < \text{Refill Deficit}_i \le 18{,}000\text{ L} \\
-\text{20 KL}, & 18{,}000\text{ L} < \text{Refill Deficit}_i \le 20{,}000\text{ L} \\
+\text{7.5 KL}, & 0 < \text{Refill Deficit}_i \le 7{,}500\text{ L} \\
+\text{10 KL}, & 7{,}500\text{ L} < \text{Refill Deficit}_i \le 10{,}000\text{ L} \\
+\text{20 KL}, & 10{,}000\text{ L} < \text{Refill Deficit}_i \le 20{,}000\text{ L} \\
 \lceil \frac{\text{Refill Deficit}_i}{20{,}000} \rceil \times \text{20 KL Tankers}, & \text{Refill Deficit}_i > 20{,}000\text{ L}
 \end{cases}$$

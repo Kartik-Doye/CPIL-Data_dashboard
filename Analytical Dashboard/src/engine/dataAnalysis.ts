@@ -82,12 +82,28 @@ export function computeDistributionStats(numbers: number[]): any {
   const variance = n > 1 ? varSum / (n - 1) : 0;
   const stdDev = Math.sqrt(variance);
 
-  const skewness = stdDev > 0 ? Number((m3Sum / (n * Math.pow(stdDev, 3))).toFixed(2)) : 0;
-  const kurtosis = stdDev > 0 ? Number((m4Sum / (n * Math.pow(stdDev, 4)) - 3).toFixed(2)) : 0;
+  const skewness = n > 2 && stdDev > 0
+    ? Number(((n / ((n - 1) * (n - 2))) * (m3Sum / Math.pow(stdDev, 3))).toFixed(2))
+    : 0;
+  const kurtosis = n > 3 && stdDev > 0
+    ? Number((
+        ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * (m4Sum / Math.pow(stdDev, 4)) -
+        (3 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3))
+      ).toFixed(2))
+    : 0;
 
-  const q1 = sorted[Math.floor(n * 0.25)];
-  const q3 = sorted[Math.floor(n * 0.75)];
-  const iqr = q3 - q1;
+  const quantile = (p: number) => {
+    const pos = (n - 1) * p;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    return sorted[base + 1] !== undefined
+      ? sorted[base] + rest * (sorted[base + 1] - sorted[base])
+      : sorted[base];
+  };
+
+  const q1 = Number(quantile(0.25).toFixed(2));
+  const q3 = Number(quantile(0.75).toFixed(2));
+  const iqr = Number((q3 - q1).toFixed(2));
 
   return {
     count: n,
@@ -268,17 +284,26 @@ export function simulateWhatIf(
 ): WhatIfOutput {
   const totalSale = stations.reduce((a, b) => a + b.sale_qty, 0);
   const totalColl = stations.reduce((a, b) => a + (b.net_total_collection || b.collection), 0);
-  const effRsp = totalSale > 0 ? totalColl / totalSale : productConfig.analytics.fallbackRetailPricePerLitre;
-  const freeSaleRs = stations.reduce((a, b) => a + (b.free_sale_rupees || 0), 0);
-  const totalNominalRev = stations.reduce(
-    (a, b) => a + (b.new_rate || productConfig.analytics.fallbackRetailPricePerLitre) * b.sale_qty,
+  const activeStations = stations.filter((s) => s.sale_qty > 0);
+  const activeAvgSale = activeStations.length > 0
+    ? Math.round(totalSale / activeStations.length)
+    : productConfig.analytics.defaultStationBenchmarkLitres;
+
+  const pricedStations = activeStations.filter((s) => s.new_rate > 0 || s.erp_rate > 0);
+  const pricedSale = pricedStations.reduce((a, b) => a + b.sale_qty, 0);
+  const totalNominalRev = pricedStations.reduce(
+    (a, b) => a + (b.new_rate || b.erp_rate) * b.sale_qty,
     0
   );
-  const nominalRsp = totalSale > 0 ? totalNominalRev / totalSale : 77.3;
+  const nominalRsp = pricedSale > 0
+    ? totalNominalRev / pricedSale
+    : productConfig.analytics.fallbackRetailPricePerLitre;
+  const effRsp = totalSale > 0 ? totalColl / totalSale : nominalRsp;
+  const freeSaleRs = stations.reduce((a, b) => a + (b.free_sale_rupees || 0), 0);
   const gapPerL = Math.max(0, nominalRsp - effRsp);
 
   const freeSaleSavingsRs = Math.round((inputs.free_sale_reduction_pct / 100) * freeSaleRs);
-  const zeroSaleLitreGain = inputs.reopened_zero_sale_stations * 1050;
+  const zeroSaleLitreGain = inputs.reopened_zero_sale_stations * activeAvgSale;
   const zeroSaleRevenueGain = Math.round(zeroSaleLitreGain * effRsp);
 
   const efficiencyRecoveryRs = Math.round(

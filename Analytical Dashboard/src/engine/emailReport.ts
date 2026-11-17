@@ -5,12 +5,16 @@ import type {
   ExecutiveTelemetry,
   ForecastPoint,
   ForecastResult,
+  StateSummary,
   StationMonthlySales,
   StationRecord,
   StockoutRiskStation,
+  TMSummary,
 } from '../types.js';
 import { buildExecutiveBriefingBody } from './executiveBriefing.js';
 import { classifyZeroSaleReason } from './formatting.js';
+import { getStatePeriodView, getTMPeriodView } from './analyticsViews.js';
+import { recommendTanker } from './tanker.js';
 
 type ExecutiveEmailTelemetry = Omit<
   Pick<
@@ -37,6 +41,8 @@ type ExecutiveEmailTelemetry = Omit<
   zero_sale_stations?: StationRecord[];
   top_declining_stations?: ExecutiveTelemetry['top_declining_stations'];
   top_performing_stations?: StationRecord[];
+  states_summary?: StateSummary[];
+  tm_summary?: TMSummary[];
   all_stations?: StationRecord[];
 };
 
@@ -91,6 +97,8 @@ function stockCoverBand(daysLeft: number, stockLitres: number): string {
 
 export async function buildStationWorkbook(
   telemetry: Pick<ExecutiveTelemetry, 'stockout_risk_stations' | 'top_declining_stations' | 'station_monthly_sales'> & {
+    states_summary?: StateSummary[];
+    tm_summary?: TMSummary[];
     all_stations: Array<Pick<
       StationRecord,
       | 'erp_code'
@@ -103,7 +111,18 @@ export async function buildStationWorkbook(
       | 'closing_dip_in_ltr'
       | 'days_left'
       | 'remark'
-    >>;
+    > & Partial<Pick<
+      StationRecord,
+      | 'type'
+      | 'tank_cap'
+      | 'net_total_collection'
+      | 'new_rate'
+      | 'erp_rate'
+      | 'effective_rsp'
+      | 'paytm'
+      | 'free_sale_litres'
+      | 'rolling_7d_burn'
+    >>>;
   }
 ): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
@@ -180,6 +199,8 @@ export async function buildStationWorkbook(
         ? 'Today, EOD'
         : '';
     const decline = declineByCode.get(station.erp_code);
+    const hasRollingBurn = (station.rolling_7d_burn ?? 0) > 0;
+    const assessCoverEvenOnZeroSale = zeroSale && hasRollingBurn && station.days_left > 0 && station.days_left < 99;
 
     sheet.addRow({
       code: station.erp_code,
@@ -188,10 +209,10 @@ export async function buildStationWorkbook(
       tm: station.tm,
       coordinator: station.coordinator,
       sales: station.sale_qty,
-      collection: station.collection,
+      collection: station.net_total_collection ?? station.collection,
       stock: station.closing_dip_in_ltr,
-      cover: station.sale_qty > 0 ? station.days_left : '',
-      risk: station.sale_qty === 0
+      cover: station.sale_qty > 0 || assessCoverEvenOnZeroSale ? station.days_left : '',
+      risk: station.sale_qty === 0 && !assessCoverEvenOnZeroSale
         ? 'Not assessed (zero sale)'
         : stockCoverBand(station.days_left, station.closing_dip_in_ltr),
       reason,
@@ -208,6 +229,122 @@ export async function buildStationWorkbook(
   sheet.getColumn('stock').numFmt = '#,##0.00';
   sheet.getColumn('cover').numFmt = '0.0';
   sheet.getColumn('decline').numFmt = '0.0';
+
+  // Sheet 2: State MIS Summary
+  const stateSheet = workbook.addWorksheet('State MIS Summary', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  stateSheet.columns = [
+    { header: 'State', key: 'state', width: 14 },
+    { header: 'Total Stations', key: 'stations', width: 16 },
+    { header: 'Zero-Sale Stations', key: 'zero', width: 18 },
+    { header: 'Total Sales (L)', key: 'sales', width: 18 },
+    { header: 'Avg / Station (L)', key: 'avg', width: 18 },
+    { header: 'Net Collections (₹)', key: 'collection', width: 20 },
+    { header: 'Nominal RSP (₹/L)', key: 'nominal_rsp', width: 18 },
+    { header: 'Effective RSP (₹/L)', key: 'effective_rsp', width: 18 },
+    { header: 'Collection Gap (₹/L)', key: 'gap', width: 18 },
+    { header: 'Free Sale (L)', key: 'free_sale', width: 16 },
+    { header: 'Revenue at Risk (₹)', key: 'risk_rs', width: 20 },
+  ];
+  stateSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  stateSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+
+  const statesSummary = telemetry.states_summary ?? getStatePeriodView(telemetry.all_stations as StationRecord[]);
+  for (const st of statesSummary) {
+    stateSheet.addRow({
+      state: st.state,
+      stations: st.stations,
+      zero: st.zero_sale_count,
+      sales: st.total_sale_qty,
+      avg: st.avg_sale_per_station,
+      collection: st.total_collection,
+      nominal_rsp: st.nominal_rsp,
+      effective_rsp: st.effective_rsp,
+      gap: st.collection_gap_per_l,
+      free_sale: st.free_sale_litres,
+      risk_rs: st.revenue_at_risk,
+    });
+  }
+  stateSheet.getColumn('sales').numFmt = '#,##0.00';
+  stateSheet.getColumn('avg').numFmt = '#,##0.00';
+  stateSheet.getColumn('collection').numFmt = '₹#,##0.00';
+  stateSheet.getColumn('nominal_rsp').numFmt = '₹#,##0.00';
+  stateSheet.getColumn('effective_rsp').numFmt = '₹#,##0.00';
+  stateSheet.getColumn('gap').numFmt = '₹#,##0.00';
+  stateSheet.getColumn('risk_rs').numFmt = '₹#,##0.00';
+
+  // Sheet 3: TM Leaderboard
+  const tmSheet = workbook.addWorksheet('TM Leaderboard', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  tmSheet.columns = [
+    { header: 'Rank', key: 'rank', width: 10 },
+    { header: 'Territory Manager', key: 'tm', width: 24 },
+    { header: 'Coordinator', key: 'coordinator', width: 22 },
+    { header: 'Stations', key: 'stations', width: 14 },
+    { header: 'Total Sales (L)', key: 'sales', width: 18 },
+    { header: 'Avg Daily / Station (L)', key: 'avg', width: 22 },
+    { header: 'Zero-Sale Stations', key: 'zero', width: 18 },
+    { header: 'Benchmark Efficiency (%)', key: 'eff', width: 24 },
+  ];
+  tmSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  tmSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+
+  const tmSummary = telemetry.tm_summary ?? getTMPeriodView(telemetry.all_stations as StationRecord[]);
+  tmSummary.forEach((tmRow, idx) => {
+    tmSheet.addRow({
+      rank: idx + 1,
+      tm: tmRow.tm,
+      coordinator: tmRow.coordinator,
+      stations: tmRow.stations,
+      sales: tmRow.total_sale_qty,
+      avg: tmRow.avg_daily_sale,
+      zero: tmRow.zero_sale_count,
+      eff: tmRow.efficiency_pct,
+    });
+  });
+
+  // Sheet 4: Tanker Dispatch Manifest
+  const dispatchSheet = workbook.addWorksheet('Tanker Dispatch Manifest', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  dispatchSheet.columns = [
+    { header: 'Station Code', key: 'code', width: 16 },
+    { header: 'Station Name', key: 'name', width: 28 },
+    { header: 'State', key: 'state', width: 12 },
+    { header: 'TM', key: 'tm', width: 20 },
+    { header: 'Tank Capacity', key: 'tank_cap', width: 16 },
+    { header: 'Closing Stock (L)', key: 'stock', width: 18 },
+    { header: '7d Rolling Burn (L/d)', key: 'burn', width: 20 },
+    { header: 'Cover (days)', key: 'days_left', width: 14 },
+    { header: 'Recommended Tanker', key: 'tanker', width: 22 },
+    { header: 'Refill Volume (L)', key: 'refill', width: 18 },
+    { header: 'Remark', key: 'remark', width: 32 },
+  ];
+  dispatchSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  dispatchSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C2D12' } };
+
+  for (const station of telemetry.all_stations) {
+    if (station.days_left <= 3.5 || station.sale_qty === 0) {
+      const dailyBurn = station.rolling_7d_burn || station.sale_qty || 0;
+      const rec = recommendTanker(dailyBurn, station.closing_dip_in_ltr, 3, station.tank_cap);
+      dispatchSheet.addRow({
+        code: station.erp_code,
+        name: station.alds_name,
+        state: station.state,
+        tm: station.tm,
+        tank_cap: station.tank_cap || '10KL',
+        stock: station.closing_dip_in_ltr,
+        burn: dailyBurn,
+        days_left: station.days_left,
+        tanker: rec.tankerLabel,
+        refill: rec.requiredVolumeLtr,
+        remark: station.remark,
+      });
+    }
+  }
+
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
@@ -240,10 +377,45 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
     return `<p style="margin:8px 0">${escapedLine}</p>`;
   }).join('');
 
+  const statesSummary = telemetry.states_summary
+    ?? (telemetry.all_stations && telemetry.all_stations.length > 0
+      ? getStatePeriodView(telemetry.all_stations)
+      : []);
+
+  const stateTableHtml = statesSummary.length > 0
+    ? `
+      <h2 style="margin:24px 0 8px;font-size:13px;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px">📊 State-wise MIS Summary</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:18px">
+        <thead>
+          <tr style="background:#0f172a;color:#ffffff;text-align:left">
+            <th style="padding:8px;border:1px solid #cbd5e1">State</th>
+            <th style="padding:8px;border:1px solid #cbd5e1;text-align:right">Stations</th>
+            <th style="padding:8px;border:1px solid #cbd5e1;text-align:right">Zero Sale</th>
+            <th style="padding:8px;border:1px solid #cbd5e1;text-align:right">Sales (L)</th>
+            <th style="padding:8px;border:1px solid #cbd5e1;text-align:right">Collections (₹)</th>
+            <th style="padding:8px;border:1px solid #cbd5e1;text-align:right">Eff RSP</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${statesSummary.map((st) => `
+            <tr>
+              <td style="padding:6px 8px;border:1px solid #e2e8f0;font-weight:bold">${escapeHtml(st.state)}</td>
+              <td style="padding:6px 8px;border:1px solid #e2e8f0;text-align:right">${st.stations}</td>
+              <td style="padding:6px 8px;border:1px solid #e2e8f0;text-align:right;color:${st.zero_sale_count > 0 ? '#b91c1c' : '#15803d'}">${st.zero_sale_count}</td>
+              <td style="padding:6px 8px;border:1px solid #e2e8f0;text-align:right;font-weight:bold">${number(st.total_sale_qty)}</td>
+              <td style="padding:6px 8px;border:1px solid #e2e8f0;text-align:right">₹${number(st.total_collection)}</td>
+              <td style="padding:6px 8px;border:1px solid #e2e8f0;text-align:right">₹${st.effective_rsp.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `
+    : '';
+
   return {
     subject: `GO Gas Daily Operations Brief | ${reportDate}`,
     text: briefing.text,
-    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlBody}</div>`,
+    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlBody}${stateTableHtml}</div>`,
   };
 }
 

@@ -283,9 +283,9 @@ async function main() {
   log(`${appName}: Starting Morning Briefing Run`);
   log('====================================================');
 
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  const smtpTo = process.env.SMTP_TO;
+  const smtpUser = process.env.REPORT_SENDER_EMAIL?.trim() || process.env.SMTP_USER?.trim();
+  const smtpPass = (process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS || '').replace(/\s/g, '');
+  const smtpTo = process.env.REPORT_RECIPIENT_EMAILS?.trim() || process.env.SMTP_TO?.trim();
   const smtpHost = process.env.SMTP_HOST || productConfig.email.smtpHost;
   const smtpPort = parseInt(process.env.SMTP_PORT || String(productConfig.email.smtpPort), 10);
   const smtpSecureOverride = process.env.SMTP_SECURE?.trim();

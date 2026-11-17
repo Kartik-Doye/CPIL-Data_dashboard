@@ -1,13 +1,19 @@
 import React, { useState, useMemo } from 'react';
 import { Fuel, Search, ArrowUpDown, Download, AlertTriangle, ShieldCheck, Filter } from 'lucide-react';
 import { StationRecord } from '../types';
+import { escapeCsvCell } from '../engine/formatting';
 
 interface StationDirectoryProps {
   stations: StationRecord[];
   isCompact?: boolean;
+  onSelectStation?: (station: StationRecord) => void;
 }
 
-export const StationDirectory: React.FC<StationDirectoryProps> = ({ stations, isCompact = false }) => {
+export const StationDirectory: React.FC<StationDirectoryProps> = ({
+  stations,
+  isCompact = false,
+  onSelectStation,
+}) => {
   const [search, setSearch] = useState('');
   const [sortField, setSortField] = useState<keyof StationRecord>('sale_qty');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -77,19 +83,19 @@ export const StationDirectory: React.FC<StationDirectoryProps> = ({ stations, is
       'Remark',
     ];
     const rows = sorted.map((s) => [
-      `"${s.erp_code}"`,
-      `"${s.alds_name.replace(/"/g, '""')}"`,
-      `"${s.state}"`,
-      `"${s.type}"`,
-      `"${s.tm}"`,
-      `"${s.coordinator}"`,
+      escapeCsvCell(s.erp_code),
+      escapeCsvCell(s.alds_name),
+      escapeCsvCell(s.state),
+      escapeCsvCell(s.type),
+      escapeCsvCell(s.tm),
+      escapeCsvCell(s.coordinator),
       s.sale_qty,
       s.net_total_collection,
       s.new_rate,
       s.effective_rsp,
       s.closing_dip_in_ltr,
       s.days_left,
-      `"${(s.remark || '').replace(/"/g, '""')}"`,
+      escapeCsvCell(s.remark || ''),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -253,11 +259,12 @@ export const StationDirectory: React.FC<StationDirectoryProps> = ({ stations, is
                 return (
                   <tr
                     key={st.id}
-                    className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
+                    onClick={() => onSelectStation?.(st)}
+                    className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer ${
                       isZero ? 'bg-amber-50/50 dark:bg-amber-950/10' : isStockout ? 'bg-rose-50/50 dark:bg-rose-950/10' : ''
                     }`}
                   >
-                    <td className={`px-3 font-bold text-orange-600 dark:text-orange-400 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                    <td className={`px-3 font-bold text-orange-600 dark:text-orange-400 hover:underline ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                       {st.erp_code}
                     </td>
                     <td className={`px-3 font-sans font-semibold text-slate-900 dark:text-white ${isCompact ? 'py-1.5' : 'py-2.5'}`}>

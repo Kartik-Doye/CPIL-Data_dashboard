@@ -75,11 +75,11 @@ To provide executive leadership, state operations directors, and logistics dispa
   - **Critical Stockout Risk**: $< 1.5$ days buffer (Immediate dispatch required).
   - **Warning Buffer**: $1.5$ to $3.0$ days buffer (Schedule refill within 24h).
   - **Healthy Buffer**: $> 3.0$ days buffer (Normal operations).
-- **FR-4.3**: Calculate optimal refill quantities and match against standard tanker compartment capacities:
-  - Small refill: `12 KL` tanker.
-  - Standard highway refill: `18 KL` tanker.
-  - High-throughput urban refill: `20 KL` tanker.
-  - Deficit $> 20$ KL: Split into multiple sequential tanker orders.
+- **FR-4.3**: Calculate optimal refill quantities (capped by physical tank ullage) and match against standard tanker compartment capacities:
+  - Small refill: `7.5 KL` tanker.
+  - Standard medium refill: `10 KL` tanker.
+  - High-throughput hub refill: `20 KL` tanker.
+  - Deficit $> 20$ KL: Split into multiple sequential 20 KL tanker orders.
 - **FR-4.4**: Generate exportable Tanker Dispatch Manifest with station address, state, TM contact, and recommended tanker capacity.
 
 ### 3.5 FR-5: Revenue Leakage, RSP Disparity, and Free Sale Audit

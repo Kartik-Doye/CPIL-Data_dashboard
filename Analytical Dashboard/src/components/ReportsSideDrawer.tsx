@@ -23,6 +23,7 @@ import {
   Percent,
   TrendingDown,
   UserCheck,
+  Calendar,
 } from 'lucide-react';
 import { ReportTab } from './Navigation';
 
@@ -33,6 +34,7 @@ interface ReportsSideDrawerProps {
   onChangeTab: (tab: ReportTab) => void;
   zeroSaleCount?: number;
   stockoutCount?: number;
+  totalStations?: number;
 }
 
 interface DrawerCategory {
@@ -54,6 +56,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
   onChangeTab,
   zeroSaleCount = 0,
   stockoutCount = 0,
+  totalStations,
 }) => {
   const [search, setSearch] = useState('');
 
@@ -90,7 +93,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
         {
           id: 'dispatch',
           label: 'Report 32: Tanker Dispatch',
-          description: 'Automated 12T/18T AutoLPG truck scheduling & WhatsApp manifest copy',
+          description: 'Automated 7.5 KL / 10 KL / 20 KL AutoLPG truck scheduling & WhatsApp manifest copy',
           icon: <Truck className="w-4 h-4 text-emerald-500" />,
           badge: stockoutCount > 0 ? `${stockoutCount} Urgent` : 'Logistics',
           badgeColor: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-500/30',
@@ -98,7 +101,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
         {
           id: 'stations',
           label: 'Station Directory & Dips',
-          description: 'Master list of 316+ stations with closing tank dips & stockout days',
+          description: `Master list of ${totalStations ?? 'all'} stations with closing tank dips & stockout days`,
           icon: <Fuel className="w-4 h-4 text-cyan-500" />,
           badge: zeroSaleCount > 0 ? `${zeroSaleCount} Zero` : undefined,
           badgeColor: 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-500/30',
@@ -118,7 +121,7 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
         {
           id: 'targets',
           label: 'Sales Benchmark Tracker',
-          description: 'Compare latest-day sales with editable, browser-local benchmarks',
+          description: 'Compare latest-day sales with editable PostgreSQL-synced benchmarks',
           icon: <Target className="w-4 h-4 text-violet-500" />,
         },
       ],
@@ -146,10 +149,30 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
       title: 'Analytics & Collections',
       items: [
         {
+          id: 'period_compare',
+          label: 'Multi-Period Comparisons (DoD / Weekly / MoM)',
+          description: 'Day-over-Day variance, weekly Mon-Sun pacing, MoM growth & weekend dynamics',
+          icon: <Calendar className="w-4 h-4 text-indigo-500" />,
+          badge: 'Reports 4,6,7,18',
+          badgeColor: 'text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-500/30',
+        },
+        {
           id: 'rsp',
           label: 'RSP & Collection Gap Audit',
           description: 'Nominal ERP rate vs effective collection rate per litre analysis',
           icon: <DollarSign className="w-4 h-4 text-emerald-500" />,
+        },
+        {
+          id: 'free_sale_leakage',
+          label: 'Free Sale & Calibration Audit',
+          description: 'Flags testing/calibration gas claims exceeding the volume threshold',
+          icon: <Percent className="w-4 h-4 text-amber-500" />,
+        },
+        {
+          id: 'churn_ai',
+          label: 'Fleet Volume Churn Screener',
+          description: 'Screens active stations for drops below their 3-month and 7-day baseline',
+          icon: <TrendingDown className="w-4 h-4 text-purple-500" />,
         },
         {
           id: 'analysis',
@@ -253,11 +276,10 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
                       <button
                         key={item.id}
                         onClick={() => handleSelect(item.id)}
-                        className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
-                          isActive
-                            ? 'bg-orange-50 dark:bg-orange-500/15 border-orange-200 dark:border-orange-500/30 text-slate-900 dark:text-white shadow-xs'
-                            : 'bg-transparent border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
-                        }`}
+                        className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${isActive
+                          ? 'bg-orange-50 dark:bg-orange-500/15 border-orange-200 dark:border-orange-500/30 text-slate-900 dark:text-white shadow-xs'
+                          : 'bg-transparent border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                          }`}
                       >
                         <div className="flex items-start gap-2.5">
                           <div className="mt-0.5 shrink-0">{item.icon}</div>
@@ -266,10 +288,9 @@ export const ReportsSideDrawer: React.FC<ReportsSideDrawerProps> = ({
                               <span>{item.label}</span>
                               {item.badge && (
                                 <span
-                                  className={`text-[10px] px-1.5 py-0.2 rounded border font-mono ${
-                                    item.badgeColor ||
+                                  className={`text-[10px] px-1.5 py-0.2 rounded border font-mono ${item.badgeColor ||
                                     'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                                  }`}
+                                    }`}
                                 >
                                   {item.badge}
                                 </span>

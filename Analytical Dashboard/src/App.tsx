@@ -1,32 +1,34 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import { Navbar } from './components/Navbar';
 import { Navigation, ReportTab } from './components/Navigation';
 import { FilterBar, FilterState } from './components/FilterBar';
 import { MasterDashboard } from './components/MasterDashboard';
 import { DailyBriefing } from './components/DailyBriefing';
-import { AIMLForecast } from './components/AIMLForecast';
-import { WhatIfSimulator } from './components/WhatIfSimulator';
-import { DataAnalysisSuite } from './components/DataAnalysisSuite';
-import { RSPAnalysis } from './components/RSPAnalysis';
 import { StateAnalysis } from './components/StateAnalysis';
 import { StationDirectory } from './components/StationDirectory';
-import { TeamPerformance } from './components/TeamPerformance';
 import { StationTypeAnalysis } from './components/StationTypeAnalysis';
 import { StationHeatmap } from './components/StationHeatmap';
-import { TargetTracker } from './components/TargetTracker';
 import { AdHocExplorer } from './components/AdHocExplorer';
-import { AllReportsDirectory } from './components/AllReportsDirectory';
-import { TankerDispatchReport } from './components/TankerDispatchReport';
 import { ReportsSideDrawer } from './components/ReportsSideDrawer';
 import { RSPDisparityReport } from './components/RSPDisparityReport';
 import { FreeSaleLeakageAudit } from './components/FreeSaleLeakageAudit';
 import { TMLeaderboard } from './components/TMLeaderboard';
 import { CustomerChurnPredictor } from './components/CustomerChurnPredictor';
-import { DatabaseInspectorModal } from './components/DatabaseInspectorModal';
-import { WhatsAppModal } from './components/WhatsAppModal';
 import { ExecutiveTelemetry, StationRecord, DatabaseDiagnostics } from './types';
-import { Loader2, AlertCircle, Database, RefreshCw } from 'lucide-react';
+import { getStatePeriodView, getTMPeriodView, getTypePeriodView } from './engine/analyticsViews';
+import { Loader2, Database, RefreshCw } from 'lucide-react';
 import productConfig from '../../product-config.json';
+
+const AIMLForecast = lazy(() => import('./components/AIMLForecast').then((m) => ({ default: m.AIMLForecast })));
+const WhatIfSimulator = lazy(() => import('./components/WhatIfSimulator').then((m) => ({ default: m.WhatIfSimulator })));
+const DataAnalysisSuite = lazy(() => import('./components/DataAnalysisSuite').then((m) => ({ default: m.DataAnalysisSuite })));
+const TargetTracker = lazy(() => import('./components/TargetTracker').then((m) => ({ default: m.TargetTracker })));
+const AllReportsDirectory = lazy(() => import('./components/AllReportsDirectory').then((m) => ({ default: m.AllReportsDirectory })));
+const TankerDispatchReport = lazy(() => import('./components/TankerDispatchReport').then((m) => ({ default: m.TankerDispatchReport })));
+const PeriodComparisonSuite = lazy(() => import('./components/PeriodComparisonSuite').then((m) => ({ default: m.PeriodComparisonSuite })));
+const DatabaseInspectorModal = lazy(() => import('./components/DatabaseInspectorModal').then((m) => ({ default: m.DatabaseInspectorModal })));
+const WhatsAppModal = lazy(() => import('./components/WhatsAppModal').then((m) => ({ default: m.WhatsAppModal })));
+const Station360Drawer = lazy(() => import('./components/Station360Drawer').then((m) => ({ default: m.Station360Drawer })));
 
 export function App() {
   const [data, setData] = useState<ExecutiveTelemetry | null>(null);
@@ -36,10 +38,12 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ReportTab>('master');
   const [isDbInspectorOpen, setIsDbInspectorOpen] = useState(false);
   const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
+  const [selectedStationFor360, setSelectedStationFor360] = useState<StationRecord | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isCompact, setIsCompact] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>('');
 
   // Sync theme with document element
   useEffect(() => {
@@ -57,6 +61,7 @@ export function App() {
     state: 'ALL',
     type: 'ALL',
     tm: 'ALL',
+    coordinator: 'ALL',
     search: '',
   });
 
@@ -178,12 +183,16 @@ export function App() {
    * - Validates response content-type
    * - Triggers deep console logging of connection string, live DB stats, and discrepancy analysis
    */
-  const fetchData = async (forceRefresh = false, retryCount = 0) => {
+  const fetchData = async (forceRefresh = false, retryCount = 0, targetDate = selectedDate) => {
     setLoading(true);
     setError(null);
     let shouldRetry = false;
     try {
-      const url = `/api/telemetry${forceRefresh ? '?refresh=true' : ''}`;
+      const params = new URLSearchParams();
+      if (forceRefresh) params.set('refresh', 'true');
+      if (targetDate) params.set('date', targetDate);
+      const qs = params.toString();
+      const url = `/api/telemetry${qs ? `?${qs}` : ''}`;
       const res = await fetch(url);
       
       const contentType = res.headers.get('content-type') || '';
@@ -218,7 +227,7 @@ export function App() {
         );
         shouldRetry = true;
         setTimeout(() => {
-          void fetchData(forceRefresh, retryCount + 1);
+          void fetchData(forceRefresh, retryCount + 1, targetDate);
         }, productConfig.ui.retryDelayMs);
         return;
       }
@@ -247,7 +256,7 @@ export function App() {
         );
         shouldRetry = true;
         setTimeout(() => {
-          void fetchData(forceRefresh, retryCount + 1);
+          void fetchData(forceRefresh, retryCount + 1, targetDate);
         }, productConfig.ui.retryDelayMs);
         return;
       }
@@ -286,22 +295,87 @@ export function App() {
       if (filters.state !== 'ALL' && s.state !== filters.state) return false;
       if (filters.type !== 'ALL' && s.type !== filters.type) return false;
       if (filters.tm !== 'ALL' && s.tm !== filters.tm) return false;
+      if (filters.coordinator !== 'ALL' && s.coordinator !== filters.coordinator) return false;
 
       if (filters.search.trim() !== '') {
         const query = filters.search.toLowerCase();
         const matchCode = s.erp_code.toLowerCase().includes(query);
         const matchName = s.alds_name.toLowerCase().includes(query);
         const matchState = s.state.toLowerCase().includes(query);
+        const matchTm = (s.tm || '').toLowerCase().includes(query);
+        const matchCoord = (s.coordinator || '').toLowerCase().includes(query);
+        const matchType = (s.type || '').toLowerCase().includes(query);
         const matchRemark = (s.remark || '').toLowerCase().includes(query);
-        if (!matchCode && !matchName && !matchState && !matchRemark) return false;
+        if (!matchCode && !matchName && !matchState && !matchTm && !matchCoord && !matchType && !matchRemark) return false;
       }
 
       return true;
     });
   }, [data, filters]);
 
+  const coordinators = useMemo(() => {
+    if (!data?.all_stations) return [];
+    const set = new Set<string>();
+    for (const s of data.all_stations) {
+      if (s.coordinator && s.coordinator !== 'Unassigned') {
+        set.add(s.coordinator);
+      }
+    }
+    return Array.from(set).sort();
+  }, [data]);
+
+  const filteredZeroSaleCount = useMemo(
+    () => filteredStations.filter((s) => s.sale_qty === 0).length,
+    [filteredStations]
+  );
+
+  const filteredStockoutCount = useMemo(
+    () =>
+      filteredStations.filter(
+        (s) =>
+          s.days_left <= 2 ||
+          ((s.closing_dip ?? 0) < productConfig.analytics.stockoutDipThresholdLitres &&
+            (s.rolling_7d_burn || s.sale_qty) > 0)
+      ).length,
+    [filteredStations]
+  );
+
+  const filteredStatesSummary = useMemo(
+    () => getStatePeriodView(filteredStations),
+    [filteredStations]
+  );
+  const filteredTmSummary = useMemo(
+    () => getTMPeriodView(filteredStations),
+    [filteredStations]
+  );
+  const filteredTypeSummary = useMemo(
+    () => getTypePeriodView(filteredStations),
+    [filteredStations]
+  );
+  const filteredTotalVolume = useMemo(
+    () => filteredStations.reduce((sum, s) => sum + s.sale_qty, 0),
+    [filteredStations]
+  );
+
+  const buildExportQueryString = () => {
+    const params = new URLSearchParams();
+    const targetDate = selectedDate || data?.date;
+    if (targetDate) params.set('date', targetDate);
+    if (filters.state !== 'ALL') params.set('state', filters.state);
+    if (filters.type !== 'ALL') params.set('type', filters.type);
+    if (filters.tm !== 'ALL') params.set('tm', filters.tm);
+    if (filters.coordinator !== 'ALL') params.set('coordinator', filters.coordinator);
+    if (filters.search.trim()) params.set('search', filters.search.trim());
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+  };
+
   const handleExportCSV = () => {
-    window.location.href = '/api/export/csv';
+    window.location.href = `/api/export/csv${buildExportQueryString()}`;
+  };
+
+  const handleExportXLSX = () => {
+    window.location.href = `/api/export/xlsx${buildExportQueryString()}`;
   };
 
   return (
@@ -319,8 +393,9 @@ export function App() {
         onClose={() => setIsDrawerOpen(false)}
         activeTab={activeTab}
         onChangeTab={setActiveTab}
-        zeroSaleCount={data?.zero_sale_count || 0}
-        stockoutCount={data?.stockout_risk_stations?.length || 0}
+        zeroSaleCount={filteredZeroSaleCount}
+        stockoutCount={filteredStockoutCount}
+        totalStations={data?.stations_total}
       />
 
       {/* Navbar */}
@@ -330,8 +405,9 @@ export function App() {
         loading={loading}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onRefresh={() => fetchData(true)}
+        onRefresh={() => fetchData(true, 0, selectedDate)}
         onExportCSV={handleExportCSV}
+        onExportXLSX={handleExportXLSX}
         onOpenDrawer={() => setIsDrawerOpen(true)}
         onOpenDbInspector={() => setIsDbInspectorOpen(true)}
         onOpenWhatsApp={() => setIsWhatsAppOpen(true)}
@@ -341,8 +417,8 @@ export function App() {
       <Navigation
         activeTab={activeTab}
         onChangeTab={setActiveTab}
-        zeroSaleCount={data?.zero_sale_count || 0}
-        stockoutCount={data?.stockout_risk_stations?.length || 0}
+        zeroSaleCount={filteredZeroSaleCount}
+        stockoutCount={filteredStockoutCount}
       />
 
       {/* Global Filter Bar */}
@@ -353,6 +429,13 @@ export function App() {
           states={data.states_summary || []}
           types={data.type_summary || []}
           tms={data.tm_summary || []}
+          coordinators={coordinators}
+          availableDates={data.available_dates}
+          selectedDate={selectedDate || data.date}
+          onChangeDate={(d) => {
+            setSelectedDate(d);
+            void fetchData(false, 0, d);
+          }}
           totalMatches={filteredStations.length}
           totalStations={data.stations_total}
           isCompact={isCompact}
@@ -412,12 +495,20 @@ export function App() {
         )}
 
         {data && (
-          <>
+          <Suspense
+            fallback={
+              <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400">
+                <Loader2 className="w-6 h-6 animate-spin text-orange-500" />
+                <p className="text-xs font-medium">Loading report module...</p>
+              </div>
+            }
+          >
             {activeTab === 'master' && (
               <MasterDashboard
                 data={data}
                 filteredStations={filteredStations}
                 isCompact={isCompact}
+                onSelectStation={setSelectedStationFor360}
                 onNavigateToTab={setActiveTab}
               />
             )}
@@ -427,6 +518,16 @@ export function App() {
                 stations={filteredStations}
                 telemetry={data}
                 isCompact={isCompact}
+                onSelectStation={setSelectedStationFor360}
+              />
+            )}
+
+            {activeTab === 'period_compare' && (
+              <PeriodComparisonSuite
+                data={data}
+                stations={filteredStations}
+                isCompact={isCompact}
+                onSelectStation={setSelectedStationFor360}
               />
             )}
 
@@ -439,7 +540,7 @@ export function App() {
               />
             )}
 
-            {activeTab === 'whatif' && <WhatIfSimulator data={data} />}
+            {activeTab === 'whatif' && <WhatIfSimulator data={data} stations={filteredStations} />}
 
             {activeTab === 'analysis' && (
               <DataAnalysisSuite
@@ -474,8 +575,8 @@ export function App() {
 
             {activeTab === 'states' && (
               <StateAnalysis
-                states={data.states_summary || []}
-                totalVolume={data.total_sale_qty}
+                states={filteredStatesSummary}
+                totalVolume={filteredTotalVolume}
               />
             )}
 
@@ -483,24 +584,30 @@ export function App() {
               <StationDirectory
                 stations={filteredStations}
                 isCompact={isCompact}
+                onSelectStation={setSelectedStationFor360}
               />
             )}
 
             {activeTab === 'team' && (
               <TMLeaderboard
-                tms={data.tm_summary || []}
+                tms={filteredTmSummary}
                 isCompact={isCompact}
               />
             )}
 
             {activeTab === 'types' && (
               <StationTypeAnalysis
-                types={data.type_summary || []}
-                totalVolume={data.total_sale_qty}
+                types={filteredTypeSummary}
+                totalVolume={filteredTotalVolume}
               />
             )}
 
-            {activeTab === 'heatmap' && <StationHeatmap stations={filteredStations} />}
+            {activeTab === 'heatmap' && (
+              <StationHeatmap
+                stations={filteredStations}
+                recentDates={data.recent_7d_dates}
+              />
+            )}
 
             {activeTab === 'targets' && (
               <TargetTracker
@@ -516,25 +623,34 @@ export function App() {
                 onSelectTab={setActiveTab}
               />
             )}
-          </>
+          </Suspense>
         )}
       </main>
 
-      {/* PostgreSQL Database Inspector Modal */}
-      <DatabaseInspectorModal
-        isOpen={isDbInspectorOpen}
-        onClose={() => setIsDbInspectorOpen(false)}
-        diagnostics={dbDiagnostics || data?.db_diagnostics}
-        telemetry={data}
-        onReverify={() => fetchData(true)}
-        loading={loading}
-      />
+      <Suspense fallback={null}>
+        {/* PostgreSQL Database Inspector Modal */}
+        <DatabaseInspectorModal
+          isOpen={isDbInspectorOpen}
+          onClose={() => setIsDbInspectorOpen(false)}
+          diagnostics={dbDiagnostics || data?.db_diagnostics}
+          telemetry={data}
+          onReverify={() => fetchData(true, 0, selectedDate)}
+          loading={loading}
+        />
 
-      {/* WhatsApp Automation Center Modal */}
-      <WhatsAppModal
-        isOpen={isWhatsAppOpen}
-        onClose={() => setIsWhatsAppOpen(false)}
-      />
+        {/* WhatsApp Automation Center Modal */}
+        <WhatsAppModal
+          isOpen={isWhatsAppOpen}
+          onClose={() => setIsWhatsAppOpen(false)}
+        />
+
+        {/* Station 360° Drill-Down Drawer */}
+        <Station360Drawer
+          station={selectedStationFor360}
+          onClose={() => setSelectedStationFor360(null)}
+          monthlySales={data?.station_monthly_sales}
+        />
+      </Suspense>
     </div>
   );
 }

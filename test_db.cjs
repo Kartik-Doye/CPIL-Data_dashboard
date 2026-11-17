@@ -5,7 +5,11 @@ const productConfig = require('./product-config.json');
 
 // 1. Parse .env manually (no dependencies required)
 function loadEnv() {
-  const envPath = path.resolve(process.cwd(), 'Analytical Dashboard/.env');
+  const envPaths = [
+    path.resolve(process.cwd(), 'Analytical Dashboard/.env'),
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), 'Manual Work/.env'),
+  ];
   const env = {
     DB_HOST: productConfig.database.host,
     DB_PORT: productConfig.database.port,
@@ -14,20 +18,25 @@ function loadEnv() {
     DB_PASSWORD: '',
   };
 
-  if (fs.existsSync(envPath)) {
-    const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const idx = trimmed.indexOf('=');
-      if (idx !== -1) {
-        const key = trimmed.slice(0, idx).trim();
-        const val = trimmed.slice(idx + 1).trim();
-        if (key === 'DB_HOST') env.DB_HOST = val;
-        if (key === 'DB_PORT') env.DB_PORT = parseInt(val, 10) || productConfig.database.port;
-        if (key === 'DB_NAME') env.DB_NAME = val;
-        if (key === 'DB_USER') env.DB_USER = val;
-        if (key === 'BOT_READER_PASSWORD' || key === 'DB_PASSWORD') env.DB_PASSWORD = val;
+  for (const envPath of envPaths) {
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const idx = trimmed.indexOf('=');
+        if (idx !== -1) {
+          const key = trimmed.slice(0, idx).trim();
+          const val = trimmed.slice(idx + 1).trim();
+          if (!val) continue;
+          if (key === 'DB_HOST' && env.DB_HOST === productConfig.database.host) env.DB_HOST = val;
+          if (key === 'DB_PORT' && env.DB_PORT === productConfig.database.port) {
+            env.DB_PORT = parseInt(val, 10) || productConfig.database.port;
+          }
+          if (key === 'DB_NAME' && env.DB_NAME === productConfig.database.name) env.DB_NAME = val;
+          if (key === 'DB_USER' && env.DB_USER === productConfig.database.readerUser) env.DB_USER = val;
+          if ((key === 'BOT_READER_PASSWORD' || key === 'DB_PASSWORD') && !env.DB_PASSWORD) env.DB_PASSWORD = val;
+        }
       }
     }
   }

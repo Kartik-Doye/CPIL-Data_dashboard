@@ -28,7 +28,8 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
         : 0;
 
       const dropLitres = Math.max(0, rollingAvg3M - s.sale_qty);
-      const dropPct = rollingAvg3M > 0 ? (dropLitres / rollingAvg3M) * 100 : 0;
+      const rawDropPct = rollingAvg3M > 0 ? (dropLitres / rollingAvg3M) * 100 : 0;
+      const dropPct = Number(rawDropPct.toFixed(1));
 
       return {
         station: s,
@@ -78,11 +79,10 @@ export const SalesDropAlerts: React.FC<SalesDropAlertsProps> = ({
             <button
               key={th}
               onClick={() => setFilterThreshold(th)}
-              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-                filterThreshold === th
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${filterThreshold === th
                   ? 'bg-rose-600 text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
+                }`}
             >
               ≥{th}%
             </button>

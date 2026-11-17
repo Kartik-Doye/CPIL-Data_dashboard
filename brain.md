@@ -135,11 +135,11 @@ Standard commercial forecasting libraries often overfit or leak future data into
 - **Refill Logic**:
   $$\text{Deficit} = (\text{Tank Capacity} \times \text{Safety Buffer Ratio}) - \text{Current Closing Dip}$$
 - **Compartment Sizing Optimizer**:
-  - Matches the deficit against fleet tanker capacities:
-    - `12 KL` (Single small station refill or mountain terrain route).
-    - `18 KL` (Standard highway station single delivery).
-    - `20 KL` (High-throughput urban hub delivery).
-  - If deficit exceeds 20 KL, splits into multiple prioritized tanker dispatches.
+  - Matches the 3-day refill deficit (capped at physical tank ullage) against fleet tanker capacities:
+    - `7.5 KL` (Small station refill or low-deficit delivery).
+    - `10 KL` (Standard medium station delivery).
+    - `20 KL` (High-throughput urban/highway hub delivery).
+  - If deficit exceeds 20 KL, splits into multiple prioritized 20 KL tanker dispatches.
 - **Dispatch Priority Scoring**: Prioritizes stations with $<1.5$ days buffer as **Urgent / High Priority**, ensuring supply chain dispatchers never miss an impending stockout.
 
 ### 4.4 Automated Communications & Notification Services

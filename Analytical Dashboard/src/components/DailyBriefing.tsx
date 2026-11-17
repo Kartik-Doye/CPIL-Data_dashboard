@@ -105,20 +105,20 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   return (
     <div className="space-y-6">
       {/* Briefing Top Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs transition-colors">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-xl bg-orange-500/10 text-orange-400 border border-orange-500/20">
+            <div className="p-3 rounded-xl bg-orange-50 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20">
               <FileText className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">Daily 30-Second Executive Briefing</h2>
-                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Daily 30-Second Executive Briefing</h2>
+                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
                   Ready to Dispatch
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Condensed management intelligence formulated for CMD, MD, State Heads, and TMs (Auto-dispatches at {productConfig.email.scheduleLabel}).
               </p>
             </div>
@@ -151,7 +151,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
                 onClick={handleSendWhatsApp}
                 disabled={whatsAppSending}
                 title="Dispatches the executive summary directly via WhatsApp to configured stakeholders."
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait shadow-xs"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:text-slate-100 dark:disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait shadow-xs"
               >
                 {whatsAppSending ? (
                   <LoaderCircle className="w-4 h-4 animate-spin" />
@@ -167,7 +167,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
                 onClick={handleSendEmail}
                 disabled={emailSending}
                 title="Sends the current executive summary to the locally configured recipient(s)."
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-sky-700 hover:bg-sky-600 disabled:bg-slate-700 disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-sky-700 hover:bg-sky-600 disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:text-slate-100 dark:disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait"
               >
                 {emailSending ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
                 <span>{emailSending ? 'Sending Email...' : 'Send Test Email'}</span>
@@ -178,7 +178,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
               <p
                 role="status"
                 aria-live="polite"
-                className={`max-w-md text-xs ${whatsAppStatus.success ? 'text-emerald-400' : 'text-rose-400'}`}
+                className={`max-w-md text-xs ${whatsAppStatus.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
               >
                 {whatsAppStatus.message}
               </p>
@@ -188,7 +188,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
               <p
                 role="status"
                 aria-live="polite"
-                className={`max-w-md text-xs ${emailStatus.success ? 'text-emerald-400' : 'text-rose-400'}`}
+                className={`max-w-md text-xs ${emailStatus.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
               >
                 {emailStatus.message}
               </p>
@@ -203,33 +203,33 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
       {/* Snapshot Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Card 1: Yesterday's Outcome */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-orange-400" />
+        <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs transition-colors">
+          <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400" />
             <span>Operational Outcome</span>
           </h3>
           <div className="space-y-1.5">
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Total Volume Sold:</span>
-              <span className="text-sm font-bold font-mono text-white">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Total Volume Sold:</span>
+              <span className="text-sm font-bold font-mono text-slate-900 dark:text-white">
                 {qty(data.total_sale_qty)} L
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Total Collections:</span>
-              <span className="text-sm font-bold font-mono text-emerald-400">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Total Collections:</span>
+              <span className="text-sm font-bold font-mono text-emerald-600 dark:text-emerald-400">
                 ₹{(data.total_collection / 10000000).toFixed(2)} Cr
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Effective RSP:</span>
-              <span className="text-xs font-mono text-slate-200">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Effective RSP:</span>
+              <span className="text-xs font-mono text-slate-800 dark:text-slate-200">
                 ₹{data.effective_rsp.toFixed(2)}/L
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Collection Gap:</span>
-              <span className="text-xs font-mono text-amber-400">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Collection Gap:</span>
+              <span className="text-xs font-mono text-amber-600 dark:text-amber-400">
                 ₹{data.collection_gap_per_l.toFixed(2)}/L
               </span>
             </div>
@@ -237,73 +237,73 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
         </div>
 
         {/* Card 2: Today's Forecast */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+        <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs transition-colors">
+          <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
             <span>Today's Forecast</span>
           </h3>
           <div className="space-y-1.5">
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Predicted Volume:</span>
-              <span className="text-sm font-bold font-mono text-indigo-300">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Predicted Volume:</span>
+              <span className="text-sm font-bold font-mono text-indigo-600 dark:text-indigo-300">
                 {data.forecast?.forecast?.[0]
                   ? `${qty(data.forecast.forecast[0].predicted_qty)} L`
                   : 'Not available'}
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Confidence Range:</span>
-              <span className="text-xs font-mono text-slate-200">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Confidence Range:</span>
+              <span className="text-xs font-mono text-slate-800 dark:text-slate-200">
                 {data.forecast?.forecast?.[0]
                   ? `${qty(data.forecast.forecast[0].lower_bound)} - ${qty(data.forecast.forecast[0].upper_bound)} L`
                   : 'Not available'}
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">7-Day Projected Total:</span>
-              <span className="text-xs font-mono text-emerald-300">
+              <span className="text-xs text-slate-600 dark:text-slate-300">7-Day Projected Total:</span>
+              <span className="text-xs font-mono text-emerald-600 dark:text-emerald-300">
                 {qty(data.forecast?.predicted_total_7d || 0)} L
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Historical Accuracy:</span>
-              <span className="text-xs font-mono text-indigo-400">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Historical Accuracy:</span>
+              <span className="text-xs font-mono text-indigo-600 dark:text-indigo-400">
                 {data.forecast?.mape_ensemble == null
                   ? 'Not available'
-                  : `${Math.max(0, 100 - data.forecast.mape_ensemble).toFixed(1)}% (${data.forecast.backtest_days ?? 0} days)`}
+                  : `${Math.max(0, 100 - data.forecast.mape_ensemble).toFixed(1)}% (${data.forecast.days_available}d DB / ${data.forecast.backtest_days ?? 0}d scored)`}
               </span>
             </div>
           </div>
         </div>
 
         {/* Card 3: Priority Intervention */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
+        <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs transition-colors">
+          <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <AlertOctagon className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
             <span>Priority Interventions</span>
           </h3>
           <div className="space-y-1.5">
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Stockout Risk (&lt;3d):</span>
-              <span className="text-sm font-bold font-mono text-rose-400">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Stockout Risk (&lt;3d):</span>
+              <span className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400">
                 {data.stockout_risk_stations.length} Stations
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Zero-Sale Stations:</span>
-              <span className="text-sm font-bold font-mono text-amber-400">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Zero-Sale Stations:</span>
+              <span className="text-sm font-bold font-mono text-amber-600 dark:text-amber-400">
                 {data.zero_sale_count} Stations
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Consecutive Declining:</span>
-              <span className="text-xs font-mono text-rose-300">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Consecutive Declining:</span>
+              <span className="text-xs font-mono text-rose-600 dark:text-rose-300">
                 {data.top_declining_stations.length} Stations
               </span>
             </div>
             <div className="flex justify-between items-baseline">
-              <span className="text-xs text-slate-300">Active Station Ratio:</span>
-              <span className="text-xs font-mono text-emerald-400">
+              <span className="text-xs text-slate-600 dark:text-slate-300">Active Station Ratio:</span>
+              <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400">
                 {((data.stations_with_sale / data.stations_total) * 100).toFixed(1)}%
               </span>
             </div>
@@ -312,18 +312,18 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
       </div>
 
       {/* Stockout Warnings Table */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs transition-colors">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-rose-400" />
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-rose-500 dark:text-rose-400" />
             <span>Stock-Out Warnings: Stations with &lt; 3 Days Fuel Remaining</span>
           </h3>
-          <span className="text-xs text-rose-400 font-medium">Action: Tanker Dispatch Needed</span>
+          <span className="text-xs text-rose-600 dark:text-rose-400 font-medium">Action: Tanker Dispatch Needed</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
-            <thead className="bg-slate-950/70 text-slate-400 font-semibold border-b border-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-950/70 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="py-2.5 px-3">Cost Code</th>
                 <th className="py-2.5 px-3">Station Name</th>
@@ -334,30 +334,30 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
                 <th className="py-2.5 px-3">Status / Remark</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
               {data.stockout_risk_stations.map((st) => (
-                <tr key={st.code} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-2 px-3 font-mono text-orange-400 font-medium">{st.code}</td>
-                  <td className="py-2 px-3 font-semibold text-white">{st.name}</td>
-                  <td className="py-2 px-3 text-slate-300">{st.state}</td>
-                  <td className="py-2 px-3 text-right font-mono text-slate-200">
+                <tr key={st.code} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                  <td className="py-2 px-3 font-mono text-orange-600 dark:text-orange-400 font-medium">{st.code}</td>
+                  <td className="py-2 px-3 font-semibold text-slate-900 dark:text-white">{st.name}</td>
+                  <td className="py-2 px-3 text-slate-600 dark:text-slate-300">{st.state}</td>
+                  <td className="py-2 px-3 text-right font-mono text-slate-800 dark:text-slate-200">
                     {st.stock_ltr.toLocaleString('en-IN')}
                   </td>
-                  <td className="py-2 px-3 text-right font-mono text-slate-400">
+                  <td className="py-2 px-3 text-right font-mono text-slate-500 dark:text-slate-400">
                     {st.daily_burn_ltr.toLocaleString('en-IN')}
                   </td>
                   <td className="py-2 px-3 text-center">
                     <span
                       className={`inline-block px-2 py-0.5 rounded font-mono font-bold text-xs ${
                         st.days_left < 1.5
-                          ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                          ? 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
+                          : 'bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
                       }`}
                     >
                       {st.days_left} Days
                     </span>
                   </td>
-                  <td className="py-2 px-3 text-slate-300 italic">{st.remark}</td>
+                  <td className="py-2 px-3 text-slate-600 dark:text-slate-300 italic">{st.remark}</td>
                 </tr>
               ))}
             </tbody>
@@ -366,18 +366,18 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
       </div>
 
       {/* Zero Sale Stations Table */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs transition-colors">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-            <AlertOctagon className="w-4 h-4 text-amber-400" />
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+            <AlertOctagon className="w-4 h-4 text-amber-500 dark:text-amber-400" />
             <span>Zero-Sale Stations Reported Today</span>
           </h3>
-          <span className="text-xs text-amber-400 font-medium">{data.zero_sale_count} Stations</span>
+          <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">{data.zero_sale_count} Stations</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
-            <thead className="bg-slate-950/70 text-slate-400 font-semibold border-b border-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-950/70 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="py-2.5 px-3">Cost Code</th>
                 <th className="py-2.5 px-3">ALDS Name</th>
@@ -388,16 +388,16 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
                 <th className="py-2.5 px-3">Stated Reason (Remark)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
               {data.zero_sale_stations.map((st) => (
-                <tr key={st.id} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-2 px-3 font-mono text-amber-400 font-medium">{st.erp_code}</td>
-                  <td className="py-2 px-3 font-semibold text-white">{st.alds_name}</td>
-                  <td className="py-2 px-3 text-slate-300">{st.state}</td>
-                  <td className="py-2 px-3 text-slate-400">{st.type}</td>
-                  <td className="py-2 px-3 text-slate-300">{st.coordinator}</td>
-                  <td className="py-2 px-3 text-slate-300">{st.tm}</td>
-                  <td className="py-2 px-3 text-rose-300 font-medium">
+                <tr key={st.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                  <td className="py-2 px-3 font-mono text-amber-600 dark:text-amber-400 font-medium">{st.erp_code}</td>
+                  <td className="py-2 px-3 font-semibold text-slate-900 dark:text-white">{st.alds_name}</td>
+                  <td className="py-2 px-3 text-slate-600 dark:text-slate-300">{st.state}</td>
+                  <td className="py-2 px-3 text-slate-500 dark:text-slate-400">{st.type}</td>
+                  <td className="py-2 px-3 text-slate-600 dark:text-slate-300">{st.coordinator}</td>
+                  <td className="py-2 px-3 text-slate-600 dark:text-slate-300">{st.tm}</td>
+                  <td className="py-2 px-3 text-rose-600 dark:text-rose-300 font-medium">
                     {st.remark || 'Zero volume reported (Unspecified)'}
                   </td>
                 </tr>
@@ -408,20 +408,20 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
       </div>
 
       {/* Raw WhatsApp Preview Box */}
-      <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-4 transition-colors">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Share2 className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Share2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             <span>Ready-to-Send WhatsApp Text Preview</span>
           </span>
           <button
             onClick={handleCopy}
-            className="text-xs text-orange-400 hover:text-orange-300 font-medium cursor-pointer"
+            className="text-xs text-orange-600 dark:text-orange-400 hover:text-orange-500 dark:hover:text-orange-300 font-medium cursor-pointer"
           >
             Copy Text
           </button>
         </div>
-        <pre className="text-xs font-mono text-slate-300 bg-slate-900/90 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800">
+        <pre className="text-xs font-mono text-slate-800 dark:text-slate-300 bg-white dark:bg-slate-900/90 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-200 dark:border-slate-800">
           {generateBriefingText()}
         </pre>
       </div>

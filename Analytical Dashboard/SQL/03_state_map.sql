@@ -14,3 +14,9 @@ ON CONFLICT (from_state) DO NOTHING;
 
 INSERT INTO state_map (from_state, to_state) VALUES ('AP', 'TG')
 ON CONFLICT (from_state) DO NOTHING;
+
+INSERT INTO state_map (from_state, to_state) VALUES ('KAR', 'KA')
+ON CONFLICT (from_state) DO NOTHING;
+
+INSERT INTO state_map (from_state, to_state) VALUES ('RAJ', 'RJ')
+ON CONFLICT (from_state) DO NOTHING;

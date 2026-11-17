@@ -136,7 +136,7 @@ export function buildExecutiveBriefingBody(
     ? `• Replenish ${critical.length} critical-stock station(s) by EOD${criticalActions.length ? `: ${formatNamedStations(criticalActions)}` : ''}.`
     : '• No stations currently have less than one day of stock cover.';
   const zeroSaleActionLine = telemetry.zero_sale_count
-    ?     `• Resolve ${telemetry.zero_sale_count} zero-sale station(s) by EOD; assign owners by 10:00 AM and escalate unassigned critical actions or unresolved sale stops/stock gaps to Regional Managers by 10:00 AM.`
+    ? `• Resolve ${telemetry.zero_sale_count} zero-sale station(s) by EOD; assign owners immediately and escalate unassigned critical actions or unresolved sale stops/stock gaps to Regional Managers.`
     : '• No zero-sale station actions are pending.';
   const nextForecastDate = previousDay ? formatDate(previousDay.date) : 'next day';
   const forecastLine = previousDay

@@ -19,16 +19,16 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
 }) => {
   const [filterMode, setFilterMode] = useState<'48h' | '24h' | 'all'>('48h');
 
-  // Calculate projected hours remaining based on 3-day daily burn rate vs closing tank dip
+  // Calculate projected hours remaining based on rolling 7-day / daily burn rate vs closing tank dip
   const avgSale = telemetry.total_sale_qty / (telemetry.stations_with_sale || 1);
   const criticalStations = stations
-    .filter((s) => s.sale_qty > 0) // Active stations
+    .filter((s) => s.sale_qty > 0 || (s.rolling_7d_burn || 0) > 0)
     .map((s) => {
-      const dailyBurn = s.sale_qty > 0 ? s.sale_qty : avgSale;
+      const dailyBurn = s.rolling_7d_burn || (s.sale_qty > 0 ? s.sale_qty : avgSale);
       const closingDip = s.closing_dip_in_ltr || s.closing_dip || 0;
-      const hoursLeft = Number(((closingDip / dailyBurn) * 24).toFixed(1));
+      const hoursLeft = Number(((closingDip / (dailyBurn || 1)) * 24).toFixed(1));
 
-      const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, closingDip);
+      const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, closingDip, undefined, s.tank_cap);
 
       let riskSeverity: 'Critical (<24h)' | 'Urgent (<48h)' | 'Moderate (<72h)' = 'Moderate (<72h)';
       if (hoursLeft <= 24) {
@@ -93,11 +93,10 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
             <button
               key={m}
               onClick={() => setFilterMode(m)}
-              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-                filterMode === m
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${filterMode === m
                   ? 'bg-rose-600 text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
+                }`}
             >
               {m === '24h' ? '<24 Hours' : m === '48h' ? '<48 Hours' : '<72 Hours'}
             </button>
@@ -158,11 +157,10 @@ export const CriticalBurnPredictionAlert: React.FC<CriticalBurnPredictionAlertPr
                 <tr key={item.station.erp_code} className="hover:bg-rose-50/40 dark:hover:bg-slate-800/50 transition-colors">
                   <td className={`px-3 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                     <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded font-bold text-xs ${
-                        item.hoursLeft <= 24
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded font-bold text-xs ${item.hoursLeft <= 24
                           ? 'bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/40'
                           : 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/40'
-                      }`}
+                        }`}
                     >
                       <Clock className="w-3.5 h-3.5 shrink-0 animate-pulse" />
                       {item.hoursLeft}h Left

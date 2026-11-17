@@ -12,7 +12,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
-import { fmtQty } from '../engine/formatting';
+import { fmtQty, escapeCsvCell } from '../engine/formatting';
 import { recommendTanker } from '../engine/tanker';
 import productConfig from '../../../product-config.json';
 
@@ -20,12 +20,14 @@ interface TankerDispatchReportProps {
   stations: StationRecord[];
   telemetry: ExecutiveTelemetry;
   isCompact?: boolean;
+  onSelectStation?: (station: StationRecord) => void;
 }
 
 export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
   stations,
   telemetry,
   isCompact = false,
+  onSelectStation,
 }) => {
   const [selectedUrgency, setSelectedUrgency] = useState<'all' | 'critical' | 'warning'>('all');
   const [copied, setCopied] = useState(false);
@@ -43,26 +45,27 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
 
   const dispatchCandidates = stations
     .filter((s) => {
-      const isUrgentDip = s.days_left <= 3.5;
+      const isUrgentDip = s.days_left <= productConfig.analytics.dispatchCandidateDays;
       const isOutageRemark = Boolean(s.remark && /stock|licence|breakdown|dry/i.test(s.remark));
       return isUrgentDip || isOutageRemark || s.sale_qty === 0;
     })
     .map((s) => {
-      // 3-day forecasted burn
+      // Rolling 7-day or historical burn
       const historicalRows = (telemetry.station_monthly_sales || []).filter((row) => row.erp_code === s.erp_code);
       const historyDays = historicalRows.reduce((sum, row) => sum + row.reporting_days, 0);
       const historicalDailyBurn = historyDays > 0
         ? historicalRows.reduce((sum, row) => sum + row.sale_qty, 0) / historyDays
         : 0;
-      const dailyBurn = s.sale_qty > 0 ? s.sale_qty : historicalDailyBurn || networkDailyBurn;
-      const burn3Day = dailyBurn * 3;
+      const dailyBurn = s.rolling_7d_burn || (s.sale_qty > 0 ? s.sale_qty : historicalDailyBurn || networkDailyBurn);
+      const targetDays = productConfig.analytics.targetCoverDays;
+      const burn3Day = dailyBurn * targetDays;
       const currentStock = s.closing_dip_in_ltr || s.closing_dip || 0;
-      const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, currentStock);
+      const { requiredVolumeLtr, tankerLabel: recommendedTanker } = recommendTanker(dailyBurn, currentStock, targetDays, s.tank_cap);
 
       let urgency: 'Critical' | 'Warning' | 'Standby' = 'Warning';
-      if (s.days_left < 1.5 || s.sale_qty === 0 || /stock/i.test(s.remark || '')) {
+      if (s.days_left < productConfig.analytics.stockoutCriticalDays || s.sale_qty === 0 || /stock/i.test(s.remark || '')) {
         urgency = 'Critical';
-      } else if (s.days_left <= 3.0) {
+      } else if (s.days_left <= productConfig.analytics.stockoutWarningDays) {
         urgency = 'Warning';
       } else {
         urgency = 'Standby';
@@ -91,30 +94,41 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
   const totalReplenishmentLtr = dispatchCandidates.reduce((sum, d) => sum + d.recommendedVolumeLtr, 0);
 
   const handleCopyWhatsApp = () => {
+    const critical = dispatchCandidates.filter((c) => c.urgency === 'Critical');
+    const warning = dispatchCandidates.filter((c) => c.urgency === 'Warning');
+
+    const formatRow = (c: typeof dispatchCandidates[number], i: number, badge: string) => {
+      const owner = c.station.tm && c.station.tm !== 'No TM' ? ` | TM: ${c.station.tm}` : '';
+      return (
+        `${i + 1}. *${c.station.alds_name}* (${c.station.erp_code}) - ${c.station.state}${owner}\n` +
+        `   Stock: ${exactLitres(c.currentStock)} L | Burn: ${exactLitres(c.dailyBurn)} L/d\n` +
+        `   Coverage: *${c.station.days_left.toFixed(1)} Days* ${badge}\n` +
+        `   Dispatch: *${c.recommendedTanker}* (~${exactLitres(c.recommendedVolumeLtr)} L)`
+      );
+    };
+
     const lines = [
-      `🚨 *GO GAS AUTO-LPG TANKER DISPATCH SCHEDULE* 🚨`,
-      `*Date:* ${telemetry.date} | *Total Orders:* ${dispatchCandidates.length}`,
-      `*Estimated Refill Volume:* ${exactLitres(totalReplenishmentLtr)} L`,
-      `------------------------------------------`,
+      `*🚛 GO GAS TANKER REPLENISHMENT DISPATCH MANIFEST*`,
+      `📅 *Date:* ${telemetry.date}`,
+      `🚨 *Critical (<${productConfig.analytics.stockoutCriticalDays} Days):* ${critical.length} Stations`,
+      `⚠️ *Warning (${productConfig.analytics.stockoutCriticalDays}-${productConfig.analytics.stockoutWarningDays} Days):* ${warning.length} Stations`,
+      `📦 *Total Orders Required:* ${dispatchCandidates.length} Replenishment Trips (~${exactLitres(totalReplenishmentLtr)} L)`,
+      ``,
+      `*PRIORITY 1 DISPATCH SCHEDULE:*`,
+      critical.slice(0, 10).map((c, i) => formatRow(c, i, '🚨')).join('\n\n') || 'No stations currently in critical status.',
+      ...(critical.length > 10 ? [`\n...and ${critical.length - 10} more critical station(s).`] : []),
+      ...(warning.length > 0
+        ? [
+            ``,
+            `*PRIORITY 2 WARNING SCHEDULE:*`,
+            warning.slice(0, 5).map((c, i) => formatRow(c, i, '⚠️')).join('\n\n'),
+            ...(warning.length > 5 ? [`\n...and ${warning.length - 5} more warning station(s).`] : []),
+          ]
+        : []),
+      ``,
+      `_Please verify station tank dip & ullage before gate dispatch._`,
+      `_GO Gas Supply Chain & Logistics Control Desk_`,
     ];
-
-    dispatchCandidates.slice(0, 15).forEach((d, idx) => {
-      lines.push(
-        `*${idx + 1}. ${d.station.erp_code} - ${d.station.alds_name}* (${d.station.state})`
-      );
-      lines.push(
-        `   • Stock Dip: ${exactLitres(d.currentStock)} L (${exactLitres(d.station.days_left)} days left)`
-      );
-      lines.push(
-        `   • Recommended Dispatch: *${d.recommendedTanker}*`
-      );
-      if (d.station.remark) lines.push(`   • Remark: _${d.station.remark}_`);
-      lines.push('');
-    });
-
-    if (dispatchCandidates.length > 15) {
-      lines.push(`...and ${dispatchCandidates.length - 15} more stations.`);
-    }
 
     navigator.clipboard.writeText(lines.join('\n'));
     setCopied(true);
@@ -139,19 +153,19 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
     ];
 
     const rows = dispatchCandidates.map((d) => [
-      `"${d.station.erp_code}"`,
-      `"${d.station.alds_name.replace(/"/g, '""')}"`,
-      `"${d.station.state}"`,
-      `"${d.station.tm}"`,
-      `"${d.station.coordinator}"`,
-      `"${d.urgency}"`,
+      escapeCsvCell(d.station.erp_code),
+      escapeCsvCell(d.station.alds_name),
+      escapeCsvCell(d.station.state),
+      escapeCsvCell(d.station.tm),
+      escapeCsvCell(d.station.coordinator),
+      escapeCsvCell(d.urgency),
       d.currentStock,
       d.dailyBurn,
       d.burn3Day,
       d.station.days_left,
-      `"${d.recommendedTanker}"`,
+      escapeCsvCell(d.recommendedTanker),
       d.recommendedVolumeLtr,
-      `"${(d.station.remark || '').replace(/"/g, '""')}"`,
+      escapeCsvCell(d.station.remark || ''),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -362,7 +376,8 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                 filteredDispatches.map((d) => (
                   <tr
                     key={d.station.erp_code}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                    onClick={() => onSelectStation?.(d.station)}
+                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
                   >
                     <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                       {d.urgency === 'Critical' ? (

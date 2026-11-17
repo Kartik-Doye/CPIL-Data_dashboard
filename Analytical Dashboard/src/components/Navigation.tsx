@@ -16,12 +16,14 @@ import {
   Activity,
   ListTree,
   Truck,
+  Calendar,
 } from 'lucide-react';
 
 export type ReportTab =
   | 'master'
   | 'briefing'
   | 'dispatch'
+  | 'period_compare'
   | 'forecast'
   | 'whatif'
   | 'analysis'
@@ -89,6 +91,15 @@ export const Navigation: React.FC<NavigationProps> = ({
       badgeColor: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-500/30',
     },
     {
+      id: 'period_compare',
+      label: 'Period Comparisons (DoD/MoM)',
+      shortLabel: 'Comparisons',
+      icon: <Calendar className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />,
+      category: 'Analytics',
+      badge: 'DoD / MoM',
+      badgeColor: 'text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-500/30',
+    },
+    {
       id: 'forecast',
       label: 'AIML 7-Day Forecast',
       shortLabel: 'Forecast',
@@ -118,6 +129,20 @@ export const Navigation: React.FC<NavigationProps> = ({
       label: 'RSP & Collection Gap',
       shortLabel: 'RSP & Gaps',
       icon: <DollarSign className="w-4 h-4" />,
+      category: 'Analytics',
+    },
+    {
+      id: 'free_sale_leakage',
+      label: 'Free Sale Leakage Audit',
+      shortLabel: 'Free Sale',
+      icon: <Fuel className="w-4 h-4" />,
+      category: 'Analytics',
+    },
+    {
+      id: 'churn_ai',
+      label: 'Fleet Churn Screener',
+      shortLabel: 'Churn Risk',
+      icon: <Sparkles className="w-4 h-4" />,
       category: 'Analytics',
     },
     {

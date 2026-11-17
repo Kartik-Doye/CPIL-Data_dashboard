@@ -19,14 +19,14 @@ SELECT
     sale_date,
     COUNT(*)                                              AS stations,
     SUM(sale_qty)                                         AS sale_qty,
-    SUM(net_total_collection)                             AS net_total_collection,
+    SUM(COALESCE(net_total_collection, collection))       AS net_total_collection,
     SUM(collection)                                       AS collection,
     SUM(paytm)                                            AS paytm,
     SUM(free_sale_litres)                                 AS free_sale_litres,
     SUM(free_sale_rupees)                                 AS free_sale_rupees,
     SUM(net_cash_collection)                              AS net_cash_collection,
-    SUM(new_rate * sale_qty)                              AS rsp_num,
-    SUM(effective_rsp * sale_qty)                         AS eff_rsp_num
+    SUM(COALESCE(NULLIF(new_rate, 0), erp_rate) * sale_qty) AS rsp_num,
+    SUM(COALESCE(effective_rsp, CASE WHEN sale_qty > 0 THEN COALESCE(net_total_collection, collection) / sale_qty ELSE 0 END) * sale_qty) AS eff_rsp_num
 FROM sale_tracker
 GROUP BY sale_date;
 
@@ -39,14 +39,14 @@ SELECT
     COALESCE(m.to_state, s.state)                         AS state,
     COUNT(*)                                              AS stations,
     SUM(s.sale_qty)                                       AS sale_qty,
-    SUM(s.net_total_collection)                           AS net_total_collection,
+    SUM(COALESCE(s.net_total_collection, s.collection))   AS net_total_collection,
     SUM(s.collection)                                     AS collection,
     SUM(s.paytm)                                          AS paytm,
     SUM(s.free_sale_litres)                               AS free_sale_litres,
     SUM(s.free_sale_rupees)                               AS free_sale_rupees,
     SUM(s.net_cash_collection)                            AS net_cash_collection,
-    SUM(s.new_rate * s.sale_qty)                          AS rsp_num,
-    SUM(s.effective_rsp * s.sale_qty)                     AS eff_rsp_num
+    SUM(COALESCE(NULLIF(s.new_rate, 0), s.erp_rate) * s.sale_qty) AS rsp_num,
+    SUM(COALESCE(s.effective_rsp, CASE WHEN s.sale_qty > 0 THEN COALESCE(s.net_total_collection, s.collection) / s.sale_qty ELSE 0 END) * s.sale_qty) AS eff_rsp_num
 FROM sale_tracker s
 LEFT JOIN state_map m ON s.state = m.from_state
 GROUP BY s.sale_date, COALESCE(m.to_state, s.state);
@@ -60,14 +60,14 @@ SELECT
     COALESCE(NULLIF(TRIM(coordinator), ''), 'Unknown')    AS coordinator,
     COUNT(*)                                              AS stations,
     SUM(sale_qty)                                         AS sale_qty,
-    SUM(net_total_collection)                             AS net_total_collection,
+    SUM(COALESCE(net_total_collection, collection))       AS net_total_collection,
     SUM(collection)                                       AS collection,
     SUM(paytm)                                            AS paytm,
     SUM(free_sale_litres)                                 AS free_sale_litres,
     SUM(free_sale_rupees)                                 AS free_sale_rupees,
     SUM(net_cash_collection)                              AS net_cash_collection,
-    SUM(new_rate * sale_qty)                              AS rsp_num,
-    SUM(effective_rsp * s.sale_qty)                       AS eff_rsp_num
+    SUM(COALESCE(NULLIF(new_rate, 0), erp_rate) * sale_qty) AS rsp_num,
+    SUM(COALESCE(effective_rsp, CASE WHEN s.sale_qty > 0 THEN COALESCE(s.net_total_collection, s.collection) / s.sale_qty ELSE 0 END) * s.sale_qty) AS eff_rsp_num
 FROM sale_tracker s
 GROUP BY sale_date, COALESCE(NULLIF(TRIM(coordinator), ''), 'Unknown');
 
@@ -80,14 +80,14 @@ SELECT
     COALESCE(NULLIF(TRIM(tm), ''), 'No TM')               AS tm,
     COUNT(*)                                              AS stations,
     SUM(sale_qty)                                         AS sale_qty,
-    SUM(s.net_total_collection)                           AS net_total_collection,
+    SUM(COALESCE(s.net_total_collection, s.collection))   AS net_total_collection,
     SUM(collection)                                       AS collection,
     SUM(paytm)                                            AS paytm,
     SUM(free_sale_litres)                                 AS free_sale_litres,
     SUM(free_sale_rupees)                                 AS free_sale_rupees,
     SUM(net_cash_collection)                              AS net_cash_collection,
-    SUM(new_rate * sale_qty)                              AS rsp_num,
-    SUM(s.effective_rsp * s.sale_qty)                     AS eff_rsp_num
+    SUM(COALESCE(NULLIF(new_rate, 0), erp_rate) * sale_qty) AS rsp_num,
+    SUM(COALESCE(s.effective_rsp, CASE WHEN s.sale_qty > 0 THEN COALESCE(s.net_total_collection, s.collection) / s.sale_qty ELSE 0 END) * s.sale_qty) AS eff_rsp_num
 FROM sale_tracker s
 GROUP BY sale_date, COALESCE(NULLIF(TRIM(tm), ''), 'No TM');
 
@@ -104,14 +104,14 @@ SELECT
     COALESCE(NULLIF(TRIM(MAX(tm)), ''), 'No TM')          AS tm,
     MAX(type)                                             AS type,
     SUM(sale_qty)                                         AS sale_qty,
-    SUM(net_total_collection)                             AS net_total_collection,
+    SUM(COALESCE(net_total_collection, collection))       AS net_total_collection,
     SUM(collection)                                       AS collection,
     SUM(paytm)                                            AS paytm,
     SUM(free_sale_litres)                                 AS free_sale_litres,
     SUM(free_sale_rupees)                                 AS free_sale_rupees,
     SUM(net_cash_collection)                              AS net_cash_collection,
-    SUM(new_rate * sale_qty)                              AS rsp_num,
-    SUM(effective_rsp * sale_qty)                         AS eff_rsp_num,
+    SUM(COALESCE(NULLIF(new_rate, 0), erp_rate) * sale_qty) AS rsp_num,
+    SUM(COALESCE(effective_rsp, CASE WHEN sale_qty > 0 THEN COALESCE(net_total_collection, collection) / sale_qty ELSE 0 END) * sale_qty) AS eff_rsp_num,
     -- latest closing dip (last value, never summed)
     (ARRAY_AGG(closing_dip_in_ltr ORDER BY sale_date))[1] AS closing_dip,
     MAX(remark)                                           AS remark
@@ -127,14 +127,14 @@ SELECT
     COALESCE(NULLIF(TRIM(type), ''), 'Unknown')           AS type,
     COUNT(*)                                              AS stations,
     SUM(sale_qty)                                         AS sale_qty,
-    SUM(net_total_collection)                             AS net_total_collection,
+    SUM(COALESCE(net_total_collection, collection))       AS net_total_collection,
     SUM(collection)                                       AS collection,
     SUM(paytm)                                            AS paytm,
     SUM(free_sale_litres)                                 AS free_sale_litres,
     SUM(free_sale_rupees)                                 AS free_sale_rupees,
     SUM(net_cash_collection)                              AS net_cash_collection,
-    SUM(new_rate * sale_qty)                              AS rsp_num,
-    SUM(effective_rsp * sale_qty)                         AS eff_rsp_num
+    SUM(COALESCE(NULLIF(new_rate, 0), erp_rate) * sale_qty) AS rsp_num,
+    SUM(COALESCE(effective_rsp, CASE WHEN sale_qty > 0 THEN COALESCE(net_total_collection, collection) / sale_qty ELSE 0 END) * sale_qty) AS eff_rsp_num
 FROM sale_tracker
 GROUP BY sale_date, COALESCE(NULLIF(TRIM(type), ''), 'Unknown');
 
