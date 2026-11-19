@@ -67,6 +67,14 @@
       "nearPct": 90,
       "belowPct": 75
     },
+    "performanceInsights": {
+      "declineThresholdPct": 10,
+      "briefingListLimit": 5,
+      "digitalMissionTargetPct": 50,
+      "cashHeavyThresholdPct": 75,
+      "minCollectionForPaymentMixRs": 1000,
+      "digitalBandsPct": [25, 50, 75]
+    },
     "healthScore": {
       "activeStationWeight": 40,
       "collectionGapMaxScore": 20,

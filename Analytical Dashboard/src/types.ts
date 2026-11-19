@@ -46,6 +46,33 @@ export interface StationRecord {
   trend_slope: number;
   status_band: 'Achieved' | 'On track' | 'At risk' | 'Behind';
   recent_7d_sales?: Array<{ date: string; sale_qty: number }>;
+  daily_target?: number;
+  monthly_target?: number;
+  target_achievement_pct?: number;
+  target_variance_qty?: number;
+  ss_name?: string;
+  historical_months?: Array<{ monthLabel: string; totalAch: number; avgDailyAch: number }>;
+  starting_month_label?: string;
+  starting_month_avg_daily?: number;
+  latest_month_label?: string;
+  latest_month_avg_daily?: number;
+  three_month_avg_daily?: number;
+  three_month_change_litres?: number;
+  three_month_change_pct?: number;
+  target_vs_starting_month_pct?: number;
+  is_consecutive_3m_decline?: boolean;
+  digital_pct?: number;
+  cash_pct?: number;
+  mtd_sale_qty?: number;
+  mtd_reporting_days?: number;
+  mtd_pro_rata_target?: number;
+  mtd_achievement_pct?: number;
+  monthly_target_achieved_pct?: number;
+  required_asking_rate_l_per_day?: number;
+  projected_eom_sale_qty?: number;
+  projected_eom_achievement_pct?: number;
+  prior_7d_digital_pct?: number;
+  cash_spike_pct?: number;
 }
 
 export interface StateSummary {
@@ -71,6 +98,31 @@ export interface TMSummary {
   avg_daily_sale: number;
   zero_sale_count: number;
   efficiency_pct: number;
+  daily_target?: number;
+  monthly_target?: number;
+  target_variance_qty?: number;
+  stations_met_target?: number;
+  historical_months?: Array<{ monthLabel: string; totalAch: number; avgDailyAch: number }>;
+  starting_month_label?: string;
+  starting_month_avg_daily?: number;
+  latest_month_label?: string;
+  latest_month_avg_daily?: number;
+  three_month_avg_daily?: number;
+  three_month_change_litres?: number;
+  three_month_change_pct?: number;
+  target_vs_starting_month_pct?: number;
+  is_consecutive_3m_decline?: boolean;
+  total_paytm?: number;
+  total_cash?: number;
+  digital_pct?: number;
+  cash_pct?: number;
+  mtd_sale_qty?: number;
+  mtd_pro_rata_target?: number;
+  mtd_achievement_pct?: number;
+  monthly_target_achieved_pct?: number;
+  required_asking_rate_l_per_day?: number;
+  projected_eom_sale_qty?: number;
+  projected_eom_achievement_pct?: number;
 }
 
 export interface TypeSummary {
@@ -194,6 +246,10 @@ export interface DailyHistoricalPoint {
   effective_rsp: number;
   active_stations: number;
   zero_sale_count: number;
+  paytm_collection?: number;
+  cash_collection?: number;
+  digital_pct?: number;
+  cash_pct?: number;
 }
 
 export interface StockoutRiskStation {
@@ -302,6 +358,20 @@ export interface ExecutiveTelemetry {
   type_summary: TypeSummary[];
   all_stations: StationRecord[];
   db_diagnostics?: DatabaseDiagnostics;
+  tm_target_meta?: {
+    source_file: string;
+    period_label: string;
+    monthly_target_label?: string;
+    historical_month_labels?: string[];
+    updated_at: string;
+    station_count: number;
+    tm_count: number;
+    total_network_daily_target: number;
+    total_network_monthly_target?: number;
+    tm_total_targets: Record<string, number>;
+    tm_avg_targets: Record<string, number>;
+    station_targets: Record<string, number>;
+  };
 }
 
 export interface WhatIfInput {

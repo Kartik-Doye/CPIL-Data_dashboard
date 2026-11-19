@@ -11,6 +11,7 @@ interface NavbarProps {
   onRefresh: () => void;
   onExportCSV: () => void;
   onExportXLSX?: () => void;
+  onExportPDF?: () => void;
   onOpenDrawer?: () => void;
   onOpenDbInspector?: () => void;
   onOpenWhatsApp?: () => void;
@@ -25,6 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onRefresh,
   onExportCSV,
   onExportXLSX,
+  onExportPDF,
   onOpenDrawer,
   onOpenDbInspector,
   onOpenWhatsApp,
@@ -202,6 +204,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Download className="w-3.5 h-3.5" />
               <span>Workbook (.xlsx)</span>
+            </button>
+          )}
+
+          {onExportPDF && (
+            <button
+              onClick={onExportPDF}
+              disabled={!data}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors cursor-pointer shadow-xs"
+              title={data ? "Download Daily Executive Dossier (.pdf) for active date & filters" : "Data unavailable for export"}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>PDF Dossier</span>
             </button>
           )}
 

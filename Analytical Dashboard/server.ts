@@ -20,6 +20,7 @@ import { query, queryLoader, isLoaderConfigured, testDbConnection, getDbAuditRep
 import { escapeCsvCell } from './src/engine/formatting.js';
 import { StationMonthlySales, StationRecord } from './src/types.js';
 import { sendExecutiveBriefing, buildStationWorkbook } from './src/engine/emailReport.js';
+import { buildExecutivePdfBuffer } from './src/engine/pdfReport.js';
 import http from 'http';
 import cron from 'node-cron';
 import {
@@ -30,6 +31,11 @@ import {
   buildTankerDispatchWhatsAppMessage,
 } from './src/engine/whatsappService.js';
 import { recommendTanker } from './src/engine/tanker.js';
+import {
+  loadTmTargetDailyFromFile,
+  invalidateTmTargetDailyCache,
+  TmTargetDailySummary,
+} from './src/engine/tmTargetDaily.js';
 import { initWhatsAppAutomation } from './src/engine/whatsappAutomation.js';
 import {
   APP_BASE_URL,
@@ -112,6 +118,8 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
         sale_date::text as date,
         SUM(sale_qty)::float as sale_qty,
         SUM(COALESCE(net_total_collection, collection))::float as collection,
+        SUM(COALESCE(paytm, 0))::float as paytm_collection,
+        SUM(COALESCE(net_cash_collection, 0))::float as cash_collection,
         COUNT(DISTINCT erp_code)::int as active_stations,
         COUNT(CASE WHEN sale_qty = 0 THEN 1 END)::int as zero_sale_count
       FROM sale_tracker
@@ -130,11 +138,13 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
 
     console.log(`[DATABASE] Success! Found ${historyRows.length} days of history in PostgreSQL (active date: ${activeDate}).`);
 
-    const recent7dStationRows = await query<{ erp_code: string; date: string; sale_qty: number }>(`
+    const recent7dStationRows = await query<{ erp_code: string; date: string; sale_qty: number; paytm: number; collection: number }>(`
       SELECT
         erp_code,
         sale_date::text AS date,
-        SUM(sale_qty)::float AS sale_qty
+        SUM(sale_qty)::float AS sale_qty,
+        SUM(COALESCE(paytm, 0))::float AS paytm,
+        SUM(COALESCE(net_total_collection, collection, 0))::float AS collection
       FROM sale_tracker
       WHERE sale_date IN (
         SELECT DISTINCT sale_date
@@ -148,11 +158,16 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
     `, [activeDate]);
     const recent7dDates = [...new Set(recent7dStationRows.map((row) => row.date.slice(0, 10)))].sort();
     const previousDate = recent7dDates.filter((d) => d < activeDate).at(-1) ?? null;
-    const recent7dByStation = new Map<string, Array<{ date: string; sale_qty: number }>>();
+    const recent7dByStation = new Map<string, Array<{ date: string; sale_qty: number; paytm: number; collection: number }>>();
     for (const row of recent7dStationRows) {
       const code = row.erp_code;
       const list = recent7dByStation.get(code) ?? [];
-      list.push({ date: row.date.slice(0, 10), sale_qty: Number(row.sale_qty) || 0 });
+      list.push({
+        date: row.date.slice(0, 10),
+        sale_qty: Number(row.sale_qty) || 0,
+        paytm: Number(row.paytm) || 0,
+        collection: Number(row.collection) || 0,
+      });
       recent7dByStation.set(code, list);
     }
 
@@ -230,15 +245,48 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
     const networkAvgSale = activeStns.length > 0 
       ? activeStns.reduce((a: number, b: any) => a + b.sale_qty, 0) / activeStns.length 
       : PRODUCT_CONFIG.analytics.defaultStationBenchmarkLitres;
+    const tmTargetDaily = await loadTmTargetDailyFromFile(
+      path.resolve(__dirname, '..', 'TM Target Daily.xlsx'),
+    ).catch((err) => {
+      console.warn(`[TM TARGET DAILY] Could not read TM Target Daily.xlsx: ${err.message}`);
+      return null;
+    });
     const savedBenchmarks = await loadAppSetting<{
       tmTargets?: Record<string, number>;
       stationTargets?: Record<string, number>;
-    }>('benchmarks', {});
+      mtimeMs?: number;
+    }>('sales_benchmarks', {});
+    const excelIsNewerOrPrimary =
+      !savedBenchmarks.mtimeMs || (tmTargetDaily && tmTargetDaily.mtimeMs >= savedBenchmarks.mtimeMs);
     const statusBandsCfg = PRODUCT_CONFIG.analytics.statusBands;
+    const activeMonthPrefix = activeDate.slice(0, 7);
+    const activeYearNum = Number(activeDate.slice(0, 4)) || 2026;
+    const activeMonthNum = Number(activeDate.slice(5, 7)) || 11;
+    const daysInActiveMonth = new Date(Date.UTC(activeYearNum, activeMonthNum, 0)).getUTCDate() || 30;
+    const elapsedDaysInMonth = Math.max(1, Number(activeDate.slice(8, 10)) || 1);
+    const remainingDaysInMonth = Math.max(0, daysInActiveMonth - elapsedDaysInMonth);
+    const mtdByStation = new Map<string, { sale_qty: number; reporting_days: number }>();
+    for (const mRow of monthlySalesRows) {
+      if (String(mRow.month || '').startsWith(activeMonthPrefix)) {
+        mtdByStation.set(String(mRow.erp_code || '').trim().toUpperCase(), {
+          sale_qty: Number(mRow.sale_qty) || 0,
+          reporting_days: Number(mRow.reporting_days) || 1,
+        });
+      }
+    }
 
     const stations: StationRecord[] = latestStations.map((r: any, i: number) => {
+      const erpKey = String(r.erp_code || '').trim().toUpperCase();
+      const excelStationMeta = tmTargetDaily?.stationMetaByErp[erpKey];
+      const resolvedTm =
+        r.tm && r.tm !== 'No TM'
+          ? r.tm
+          : excelStationMeta?.tm || 'No TM';
+      const ssName = excelStationMeta?.ss || '';
       const saleDateStr = r.sale_date ? r.sale_date.slice(0, 10) : new Date().toISOString().slice(0, 10);
-      const stationRecent7d = recent7dByStation.get(r.erp_code) ?? [{ date: saleDateStr, sale_qty: r.sale_qty || 0 }];
+      const stationRecent7d = recent7dByStation.get(r.erp_code) ?? [
+        { date: saleDateStr, sale_qty: r.sale_qty || 0, paytm: r.paytm || 0, collection: r.net_total_collection || r.collection || 0 },
+      ];
       const activeRecentDays = stationRecent7d.filter((d) => d.sale_qty > 0);
       const rolling7dBurn = activeRecentDays.length > 0
         ? Number((activeRecentDays.reduce((sum, d) => sum + d.sale_qty, 0) / activeRecentDays.length).toFixed(2))
@@ -276,11 +324,21 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
       const effectiveRsp = r.effective_rsp || computedEffRsp;
       const freeSaleLitres = r.free_sale_litres || 0;
       const freeSalePct = r.free_sale_pct || (saleQty > 0 ? Number(((freeSaleLitres / saleQty) * 100).toFixed(2)) : 0);
-      const stationTarget =
-        savedBenchmarks.stationTargets?.[r.erp_code] ??
-        savedBenchmarks.tmTargets?.[r.tm] ??
-        networkAvgSale;
-      const achievementPct = stationTarget > 0 ? (saleQty / stationTarget) * 100 : 0;
+      const excelTarget = excelStationMeta?.dailyTarget;
+      const stationTarget = excelIsNewerOrPrimary
+        ? (excelTarget !== undefined && excelTarget > 0
+          ? excelTarget
+          : savedBenchmarks.stationTargets?.[r.erp_code] ??
+            tmTargetDaily?.tmAvgStationTargets[resolvedTm] ??
+            savedBenchmarks.tmTargets?.[resolvedTm] ??
+            networkAvgSale)
+        : (savedBenchmarks.stationTargets?.[r.erp_code] ??
+          (excelTarget !== undefined && excelTarget > 0 ? excelTarget : undefined) ??
+          savedBenchmarks.tmTargets?.[resolvedTm] ??
+          tmTargetDaily?.tmAvgStationTargets[resolvedTm] ??
+          networkAvgSale);
+      const achievementPct = stationTarget > 0 ? Number(((saleQty / stationTarget) * 100).toFixed(1)) : 0;
+      const targetVarianceQty = Number((saleQty - stationTarget).toFixed(2));
       const statusBand =
         achievementPct >= statusBandsCfg.achievedPct
           ? 'Achieved'
@@ -290,6 +348,45 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
               ? 'At risk'
               : 'Behind';
 
+      const paytmVal = r.paytm || 0;
+      const cashValRaw = r.net_cash_collection || 0;
+      const cashVal = cashValRaw > 0 ? cashValRaw : Math.max(0, netTotalCollection - paytmVal);
+      const paymentDenom = paytmVal + cashVal > 0 ? Math.max(netTotalCollection, paytmVal + cashVal) : netTotalCollection;
+      const digitalPct = paymentDenom > 0 ? Number(((paytmVal / paymentDenom) * 100).toFixed(1)) : 0;
+      const cashPct = paymentDenom > 0 ? Number(((cashVal / paymentDenom) * 100).toFixed(1)) : 0;
+
+      // Prior 7-day Digital % vs Today's Cash Spike %
+      const priorPayDays = priorDays.filter((d) => (d.collection || 0) > 0);
+      const prior7dPaytmSum = priorPayDays.reduce((s, d) => s + (d.paytm || 0), 0);
+      const prior7dCollSum = priorPayDays.reduce((s, d) => s + (d.collection || 0), 0);
+      const prior7dDigitalPct = prior7dCollSum > 0
+        ? Number(((prior7dPaytmSum / prior7dCollSum) * 100).toFixed(1))
+        : digitalPct;
+      const cashSpikePct = Number((prior7dDigitalPct - digitalPct).toFixed(1));
+
+      // Month-to-Date (MTD) Cumulative Pacing & End-of-Month (EOM) Landing Projection
+      const monthlyTargetVal =
+        excelStationMeta?.monthlyTarget && excelStationMeta.monthlyTarget > 0
+          ? excelStationMeta.monthlyTarget
+          : Number((stationTarget * daysInActiveMonth).toFixed(2));
+      const mtdEntry = mtdByStation.get(erpKey);
+      const mtdSaleQty = mtdEntry ? mtdEntry.sale_qty : saleQty;
+      const mtdReportingDays = mtdEntry ? mtdEntry.reporting_days : 1;
+      const mtdProRataTarget = Number((stationTarget * elapsedDaysInMonth).toFixed(2));
+      const mtdAchievementPct = mtdProRataTarget > 0
+        ? Number(((mtdSaleQty / mtdProRataTarget) * 100).toFixed(1))
+        : 0;
+      const monthlyTargetAchievedPct = monthlyTargetVal > 0
+        ? Number(((mtdSaleQty / monthlyTargetVal) * 100).toFixed(1))
+        : 0;
+      const requiredAskingRate = remainingDaysInMonth > 0
+        ? Number((Math.max(0, monthlyTargetVal - mtdSaleQty) / remainingDaysInMonth).toFixed(2))
+        : 0;
+      const projectedEomSaleQty = Number((mtdSaleQty + rolling7dBurn * remainingDaysInMonth).toFixed(2));
+      const projectedEomAchievementPct = monthlyTargetVal > 0
+        ? Number(((projectedEomSaleQty / monthlyTargetVal) * 100).toFixed(1))
+        : 0;
+
       return {
         id: `station-${i + 1}-${r.erp_code}`,
         erp_code: r.erp_code,
@@ -297,7 +394,7 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
         type: r.type,
         coordinator: r.coordinator,
         state: normalizeStateCode(r.state),
-        tm: r.tm,
+        tm: resolvedTm,
         tank_cap: r.tank_cap || PRODUCT_CONFIG.analytics.defaultTankCapacity,
         sale_qty: saleQty,
         collection,
@@ -309,8 +406,8 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
         free_sale_litres: freeSaleLitres,
         free_sale_rupees: r.free_sale_rupees || 0,
         scheme: r.scheme || 0,
-        paytm: r.paytm || 0,
-        net_cash_collection: r.net_cash_collection || 0,
+        paytm: paytmVal,
+        net_cash_collection: cashVal,
         closing_dip_in_ltr: closingDip,
         remark: r.remark || '',
         net_total_collection: netTotalCollection,
@@ -327,6 +424,33 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
         trend_slope: trendSlope,
         status_band: statusBand as any,
         recent_7d_sales: stationRecent7d,
+        daily_target: Number(stationTarget.toFixed(2)),
+        monthly_target: monthlyTargetVal,
+        target_achievement_pct: achievementPct,
+        target_variance_qty: targetVarianceQty,
+        ss_name: ssName,
+        historical_months: excelStationMeta?.historicalMonths ?? [],
+        starting_month_label: excelStationMeta?.startingMonthLabel ?? 'Month 1',
+        starting_month_avg_daily: excelStationMeta?.startingMonthAvgDaily ?? 0,
+        latest_month_label: excelStationMeta?.latestMonthLabel ?? 'Latest Month',
+        latest_month_avg_daily: excelStationMeta?.latestMonthAvgDaily ?? 0,
+        three_month_avg_daily: excelStationMeta?.threeMonthAvgDaily ?? 0,
+        three_month_change_litres: excelStationMeta?.threeMonthChangeLitres ?? 0,
+        three_month_change_pct: excelStationMeta?.threeMonthChangePct ?? 0,
+        target_vs_starting_month_pct: excelStationMeta?.targetVsStartingMonthPct ?? 0,
+        is_consecutive_3m_decline: excelStationMeta?.isConsecutive3mDecline ?? false,
+        digital_pct: digitalPct,
+        cash_pct: cashPct,
+        mtd_sale_qty: mtdSaleQty,
+        mtd_reporting_days: mtdReportingDays,
+        mtd_pro_rata_target: mtdProRataTarget,
+        mtd_achievement_pct: mtdAchievementPct,
+        monthly_target_achieved_pct: monthlyTargetAchievedPct,
+        required_asking_rate_l_per_day: requiredAskingRate,
+        projected_eom_sale_qty: projectedEomSaleQty,
+        projected_eom_achievement_pct: projectedEomAchievementPct,
+        prior_7d_digital_pct: prior7dDigitalPct,
+        cash_spike_pct: cashSpikePct,
       };
     });
 
@@ -339,6 +463,11 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
         const effRsp = hr.sale_qty > 0
           ? hr.collection / hr.sale_qty
           : PRODUCT_CONFIG.analytics.fallbackRetailPricePerLitre;
+        const paytmColl = Number(hr.paytm_collection) || 0;
+        const rawCashColl = Number(hr.cash_collection) || 0;
+        const totalColl = Number(hr.collection) || 0;
+        const cashColl = rawCashColl > 0 ? rawCashColl : Math.max(0, totalColl - paytmColl);
+        const denom = Math.max(totalColl, paytmColl + cashColl, 1);
         return {
           date: hr.date.slice(0, 10),
           day_name: dayNames[dow],
@@ -347,6 +476,10 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
           effective_rsp: Math.round(effRsp * 100) / 100,
           active_stations: hr.active_stations,
           zero_sale_count: hr.zero_sale_count,
+          paytm_collection: paytmColl,
+          cash_collection: cashColl,
+          digital_pct: totalColl > 0 ? Number(((paytmColl / denom) * 100).toFixed(1)) : 0,
+          cash_pct: totalColl > 0 ? Number(((cashColl / denom) * 100).toFixed(1)) : 0,
         };
       });
 
@@ -357,7 +490,8 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
       monthlySalesRows,
       recent7dDates,
       availableDates,
-      previousDate
+      previousDate,
+      tmTargetDaily
     );
   } catch (err: any) {
     console.error('[DATABASE] Critical query failure:', err.message);
@@ -372,11 +506,16 @@ async function processDataset(
   monthlySalesRows: StationMonthlySales[],
   recent7dDates: string[] = [],
   availableDates: string[] = [],
-  previousDate: string | null = null
+  previousDate: string | null = null,
+  tmTargetDaily: TmTargetDailySummary | null = null
 ) {
   const dailyView = getDailyView(stations);
   const statesSummary = getStatePeriodView(stations);
-  const tmSummary = getTMPeriodView(stations);
+  const tmSummary = getTMPeriodView(
+    stations,
+    tmTargetDaily?.tmAvgStationTargets,
+    tmTargetDaily?.tmTotalDailyTargets,
+  );
   const typeSummary = getTypePeriodView(stations);
   const exceptions = getExceptionsView(stations);
   const dataStatus = getDataStatusView(stations);
@@ -730,6 +869,22 @@ async function processDataset(
     exceptions,
     data_status: dataStatus,
     comprehensive_analysis: comprehensiveAnalysis,
+    tm_target_meta: tmTargetDaily
+      ? {
+          source_file: tmTargetDaily.sourceFile,
+          period_label: tmTargetDaily.periodLabel,
+          monthly_target_label: tmTargetDaily.monthlyTargetLabel,
+          historical_month_labels: tmTargetDaily.historicalMonthLabels,
+          updated_at: tmTargetDaily.updatedAt,
+          station_count: tmTargetDaily.stationCount,
+          tm_count: tmTargetDaily.tmCount,
+          total_network_daily_target: tmTargetDaily.totalNetworkDailyTarget,
+          total_network_monthly_target: tmTargetDaily.totalNetworkMonthlyTarget,
+          tm_total_targets: tmTargetDaily.tmTotalDailyTargets,
+          tm_avg_targets: tmTargetDaily.tmAvgStationTargets,
+          station_targets: tmTargetDaily.stationTargetsByErp,
+        }
+      : undefined,
   };
 }
 
@@ -863,13 +1018,54 @@ app.post('/api/telemetry/invalidate', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Telemetry cache invalidated.' });
 });
 
+app.get('/api/targets/tm-daily', async (req: Request, res: Response) => {
+  try {
+    if (req.query.refresh === 'true') {
+      invalidateTmTargetDailyCache();
+    }
+    const summary = await loadTmTargetDailyFromFile(
+      path.resolve(__dirname, '..', 'TM Target Daily.xlsx'),
+    );
+    if (!summary) {
+      res.status(404).json({ error: 'TM Target Daily.xlsx was not found in the workspace root.' });
+      return;
+    }
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/settings/benchmarks', async (_req: Request, res: Response) => {
   try {
-    const benchmarks = await loadAppSetting('sales_benchmarks', {
+    const excelSummary = await loadTmTargetDailyFromFile(
+      path.resolve(__dirname, '..', 'TM Target Daily.xlsx'),
+    ).catch(() => null);
+    const saved = await loadAppSetting('sales_benchmarks', {
       tmTargets: {} as Record<string, number>,
       stationTargets: {} as Record<string, number>,
+      mtimeMs: 0,
     });
-    res.json(benchmarks);
+    const excelIsNewer = !saved.mtimeMs || (excelSummary && excelSummary.mtimeMs >= saved.mtimeMs);
+    const positiveExcelStationTargets = Object.fromEntries(
+      Object.entries(excelSummary?.stationTargetsByErp ?? {}).filter(([, val]) => val > 0),
+    );
+    const tmTargets = excelIsNewer
+      ? { ...(saved.tmTargets || {}), ...(excelSummary?.tmAvgStationTargets || {}) }
+      : { ...(excelSummary?.tmAvgStationTargets || {}), ...(saved.tmTargets || {}) };
+    const stationTargets = excelIsNewer
+      ? { ...(saved.stationTargets || {}), ...positiveExcelStationTargets }
+      : { ...positiveExcelStationTargets, ...(saved.stationTargets || {}) };
+
+    res.json({
+      tmTargets,
+      tmTotalTargets: excelSummary?.tmTotalDailyTargets ?? {},
+      stationTargets,
+      sourceFile: excelSummary?.sourceFile ?? 'TM Target Daily.xlsx',
+      periodLabel: excelSummary?.periodLabel ?? 'Monthly Avg. Daily Target',
+      updatedAt: excelSummary?.updatedAt ?? null,
+      mtimeMs: excelSummary?.mtimeMs ?? saved.mtimeMs ?? 0,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -877,6 +1073,31 @@ app.get('/api/settings/benchmarks', async (_req: Request, res: Response) => {
 
 app.post('/api/settings/benchmarks', async (req: Request, res: Response) => {
   try {
+    if (req.body?.resetToExcel === true) {
+      invalidateTmTargetDailyCache();
+      const excelSummary = await loadTmTargetDailyFromFile(
+        path.resolve(__dirname, '..', 'TM Target Daily.xlsx'),
+      );
+      const positiveExcelStationTargets = Object.fromEntries(
+        Object.entries(excelSummary?.stationTargetsByErp ?? {}).filter(([, val]) => val > 0),
+      );
+      const payload = {
+        tmTargets: excelSummary?.tmAvgStationTargets ?? {},
+        stationTargets: positiveExcelStationTargets,
+        mtimeMs: excelSummary?.mtimeMs ?? Date.now(),
+      };
+      await saveAppSetting('sales_benchmarks', payload);
+      cachedTelemetry = null;
+      lastLoadedTime = 0;
+      res.json({
+        success: true,
+        ...payload,
+        tmTotalTargets: excelSummary?.tmTotalDailyTargets ?? {},
+        periodLabel: excelSummary?.periodLabel ?? 'Monthly Avg. Daily Target',
+      });
+      return;
+    }
+
     const { tmTargets, stationTargets } = req.body || {};
     const validTmTargets: Record<string, number> = {};
     const validStationTargets: Record<string, number> = {};
@@ -892,8 +1113,14 @@ app.post('/api/settings/benchmarks', async (req: Request, res: Response) => {
         if (Number.isFinite(num) && num > 0) validStationTargets[k] = num;
       }
     }
-    const payload = { tmTargets: validTmTargets, stationTargets: validStationTargets };
+    const payload = {
+      tmTargets: validTmTargets,
+      stationTargets: validStationTargets,
+      mtimeMs: Date.now(),
+    };
     await saveAppSetting('sales_benchmarks', payload);
+    cachedTelemetry = null;
+    lastLoadedTime = 0;
     res.json({ success: true, ...payload });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1208,7 +1435,8 @@ function filterStationsFromQuery(stations: StationRecord[], reqQuery: Request['q
       const matchCoord = (s.coordinator || '').toLowerCase().includes(search);
       const matchType = (s.type || '').toLowerCase().includes(search);
       const matchRemark = (s.remark || '').toLowerCase().includes(search);
-      if (!matchCode && !matchName && !matchState && !matchTm && !matchCoord && !matchType && !matchRemark) {
+      const matchSs = (s.ss_name || '').toLowerCase().includes(search);
+      if (!matchCode && !matchName && !matchState && !matchTm && !matchCoord && !matchType && !matchRemark && !matchSs) {
         return false;
       }
     }
@@ -1355,6 +1583,41 @@ app.get('/api/export/xlsx', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/export/pdf', async (req: Request, res: Response) => {
+  try {
+    const requestedDate = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : undefined;
+    const telemetry = await getTelemetryData(false, requestedDate);
+    if (!telemetry) {
+      res.status(503).send('No data available');
+      return;
+    }
+
+    const filteredStations = filterStationsFromQuery(telemetry.all_stations, req.query);
+    const pdfBuffer = buildExecutivePdfBuffer({
+      date: telemetry.date,
+      stations: filteredStations,
+      statesSummary: getStatePeriodView(filteredStations),
+      tmSummary: getTMPeriodView(
+        filteredStations,
+        telemetry.tm_target_meta?.tm_avg_targets,
+        telemetry.tm_target_meta?.tm_total_targets,
+      ),
+      telemetry,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=GO_Gas_Executive_Dossier_${telemetry.date}.pdf`,
+    );
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    res.status(500).send(err.message);
+  }
+});
+
 // Vite SSR / middleware integration in dev mode
 async function startServer() {
   console.log(`[SERVER] Starting in ${process.env.NODE_ENV || 'development'} mode...`);
@@ -1471,6 +1734,30 @@ async function startServer() {
         console.error(`[AUTO-INGEST] Failed to auto-ingest sale.xlsx: ${err.message}`);
       } finally {
         autoLoadInProgress = false;
+      }
+    });
+
+    // Watch TM Target Daily.xlsx for monthly updates & automatic target reload
+    const watchedTmTargetPath = path.resolve(__dirname, '..', 'TM Target Daily.xlsx');
+    let lastTargetMtime = fs.existsSync(watchedTmTargetPath) ? fs.statSync(watchedTmTargetPath).mtimeMs : 0;
+    fs.watchFile(watchedTmTargetPath, { interval: 5000 }, async (curr, prev) => {
+      if (curr.mtimeMs === 0 || curr.mtimeMs <= prev.mtimeMs || curr.mtimeMs === lastTargetMtime) {
+        return;
+      }
+      lastTargetMtime = curr.mtimeMs;
+      try {
+        invalidateTmTargetDailyCache();
+        const summary = await loadTmTargetDailyFromFile(watchedTmTargetPath);
+        if (summary) {
+          console.log(
+            `[TM TARGET DAILY] Detected monthly update in TM Target Daily.xlsx (${summary.periodLabel}): ${summary.stationCount} station targets across ${summary.tmCount} TMs (Total Daily Target: ${summary.totalNetworkDailyTarget} L/d).`,
+          );
+          cachedTelemetry = null;
+          lastLoadedTime = 0;
+          await getTelemetryData(true);
+        }
+      } catch (err: any) {
+        console.error(`[TM TARGET DAILY] Failed to reload TM Target Daily.xlsx: ${err.message}`);
       }
     });
   });

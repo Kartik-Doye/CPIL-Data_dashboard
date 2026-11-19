@@ -283,22 +283,28 @@ export async function buildStationWorkbook(
     { header: 'Territory Manager', key: 'tm', width: 24 },
     { header: 'Coordinator', key: 'coordinator', width: 22 },
     { header: 'Stations', key: 'stations', width: 14 },
+    { header: 'Daily Target (L)', key: 'daily_target', width: 18 },
     { header: 'Total Sales (L)', key: 'sales', width: 18 },
+    { header: 'Variance (Act - Tgt L)', key: 'variance', width: 22 },
     { header: 'Avg Daily / Station (L)', key: 'avg', width: 22 },
     { header: 'Zero-Sale Stations', key: 'zero', width: 18 },
-    { header: 'Benchmark Efficiency (%)', key: 'eff', width: 24 },
+    { header: 'Target Achievement (%)', key: 'eff', width: 24 },
   ];
   tmSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
   tmSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
 
   const tmSummary = telemetry.tm_summary ?? getTMPeriodView(telemetry.all_stations as StationRecord[]);
   tmSummary.forEach((tmRow, idx) => {
+    const dailyTarget = tmRow.daily_target ?? 0;
+    const variance = tmRow.target_variance_qty ?? (tmRow.total_sale_qty - dailyTarget);
     tmSheet.addRow({
       rank: idx + 1,
       tm: tmRow.tm,
       coordinator: tmRow.coordinator,
       stations: tmRow.stations,
+      daily_target: dailyTarget,
       sales: tmRow.total_sale_qty,
+      variance,
       avg: tmRow.avg_daily_sale,
       zero: tmRow.zero_sale_count,
       eff: tmRow.efficiency_pct,
@@ -412,10 +418,50 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
     `
     : '';
 
+  const tmSummaryList = telemetry.tm_summary
+    ?? (telemetry.all_stations && telemetry.all_stations.length > 0
+      ? getTMPeriodView(telemetry.all_stations)
+      : []);
+
+  const tmTableHtml = tmSummaryList.length > 0
+    ? `
+      <h2 style="margin:24px 0 8px;font-size:13px;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px">🎯 TM Daily Target &amp; 3-Month Trend Scorecard</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:18px">
+        <thead>
+          <tr style="background:#1e1b4b;color:#ffffff;text-align:left">
+            <th style="padding:7px;border:1px solid #cbd5e1">TM Name</th>
+            <th style="padding:7px;border:1px solid #cbd5e1;text-align:right">Daily Target (L)</th>
+            <th style="padding:7px;border:1px solid #cbd5e1;text-align:right">Actual Sold (L)</th>
+            <th style="padding:7px;border:1px solid #cbd5e1;text-align:right">% Achieved</th>
+            <th style="padding:7px;border:1px solid #cbd5e1;text-align:right">3-Mo Trend</th>
+            <th style="padding:7px;border:1px solid #cbd5e1;text-align:right">Digital / Cash %</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tmSummaryList.map((t) => {
+            const tgt = t.daily_target ?? 0;
+            const pct = t.efficiency_pct ?? 0;
+            const trend3m = t.three_month_change_pct ?? 0;
+            return `
+            <tr>
+              <td style="padding:6px 7px;border:1px solid #e2e8f0;font-weight:bold">${escapeHtml(t.tm)}</td>
+              <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right">${number(tgt)}</td>
+              <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right;font-weight:bold">${number(t.total_sale_qty)}</td>
+              <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;color:${pct >= 100 ? '#15803d' : pct >= 90 ? '#1d4ed8' : '#b91c1c'}">${pct}%</td>
+              <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right;color:${trend3m < 0 ? '#b91c1c' : '#15803d'}">${trend3m > 0 ? '+' : ''}${trend3m}%</td>
+              <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right">${t.digital_pct ?? 0}% Dig / ${t.cash_pct ?? 0}% Cash</td>
+            </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `
+    : '';
+
   return {
     subject: `GO Gas Daily Operations Brief | ${reportDate}`,
     text: briefing.text,
-    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlBody}${stateTableHtml}</div>`,
+    html: `<div style="max-width:680px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;font-size:14px;line-height:1.55"><p style="margin:0 0 18px"><img src="cid:company-logo" alt="Confidence Group" width="200" style="display:block;width:200px;max-width:100%;height:auto"></p>${htmlBody}${stateTableHtml}${tmTableHtml}</div>`,
   };
 }
 

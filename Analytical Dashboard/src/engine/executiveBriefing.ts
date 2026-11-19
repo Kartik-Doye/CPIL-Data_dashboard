@@ -4,6 +4,7 @@ import type {
   ForecastResult,
   StationRecord,
   StockoutRiskStation,
+  TMSummary,
 } from '../types.js';
 import { classifyZeroSaleReason } from './formatting.js';
 
@@ -17,6 +18,10 @@ export type ExecutiveBriefingTelemetry = Pick<
   | 'total_collection'
   | 'effective_rsp'
 > & {
+  total_paytm_collection?: number;
+  total_cash_collection?: number;
+  tm_summary?: TMSummary[];
+  tm_target_meta?: ExecutiveTelemetry['tm_target_meta'];
   stockout_risk_stations: Array<Pick<StockoutRiskStation, 'code' | 'name' | 'days_left'> & Partial<Pick<StockoutRiskStation, 'stock_ltr'>>>;
   forecast: Pick<ForecastResult, 'mape_ensemble' | 'backtest_days'> & {
     forecast: Array<Pick<ForecastPoint, 'date' | 'predicted_qty'> & Partial<Pick<ForecastPoint, 'p10' | 'p90'>>>;
@@ -143,17 +148,129 @@ export function buildExecutiveBriefingBody(
     ? `• Forecast for ${nextForecastDate}: *${formatLitres(previousDay.predicted_qty)}*${forecastRange}.`
     : '• Next-day forecast is unavailable.';
 
+  const paytmColl = telemetry.total_paytm_collection ?? 0;
+  const cashColl =
+    telemetry.total_cash_collection !== undefined && telemetry.total_cash_collection > 0
+      ? telemetry.total_cash_collection
+      : Math.max(0, telemetry.total_collection - paytmColl);
+  const digitalPctStr = telemetry.total_collection > 0
+    ? `${((paytmColl / telemetry.total_collection) * 100).toFixed(1)}%`
+    : 'N/A';
+  const cashPctStr = telemetry.total_collection > 0
+    ? `${((cashColl / telemetry.total_collection) * 100).toFixed(1)}%`
+    : 'N/A';
+
+  const activePaymentStations = (telemetry.all_stations || []).filter(
+    (s) => (s.net_total_collection || s.collection || 0) >= 1000,
+  );
+  const cashHeavyList = [...activePaymentStations]
+    .map((s) => {
+      const coll = s.net_total_collection || s.collection || 0;
+      const dig = s.paytm || 0;
+      const cash = s.net_cash_collection && s.net_cash_collection > 0 ? s.net_cash_collection : Math.max(0, coll - dig);
+      const denom = Math.max(coll, dig + cash, 1);
+      return { s, cash, cashPct: (cash / denom) * 100 };
+    })
+    .sort((a, b) => b.cash - a.cash)
+    .slice(0, 5);
+  const digitalLeaderList = [...activePaymentStations]
+    .map((s) => {
+      const coll = s.net_total_collection || s.collection || 0;
+      const dig = s.paytm || 0;
+      const cash = s.net_cash_collection && s.net_cash_collection > 0 ? s.net_cash_collection : Math.max(0, coll - dig);
+      const denom = Math.max(coll, dig + cash, 1);
+      return { s, dig, digPct: (dig / denom) * 100 };
+    })
+    .filter((x) => x.dig > 0)
+    .sort((a, b) => b.digPct - a.digPct || b.dig - a.dig)
+    .slice(0, 5);
+
+  const paymentLines: string[] = [];
+  if (telemetry.total_collection > 0) {
+    paymentLines.push(
+      `▸ Payment Mix (Money Security Mission): *Digital ${digitalPctStr}* (₹${formatNumber(paytmColl)}) vs *Cash ${cashPctStr}* (₹${formatNumber(cashColl)}).`,
+    );
+    if (cashHeavyList.length > 0) {
+      paymentLines.push(
+        `▸ Stations taking most cash (priority to convert to digital): ${cashHeavyList
+          .map((x) => `*${x.s.alds_name}* (${getOwner(x.s)}: *${x.cashPct.toFixed(0)}% Cash* / ₹${formatNumber(x.cash)})`)
+          .join(', ')}.`,
+      );
+    }
+    if (digitalLeaderList.length > 0) {
+      paymentLines.push(
+        `▸ Top digital payment stations: ${digitalLeaderList
+          .map((x) => `*${x.s.alds_name}* (${getOwner(x.s)}: *${x.digPct.toFixed(0)}% Digital* / ₹${formatNumber(x.dig)})`)
+          .join(', ')}.`,
+      );
+    }
+  }
+
+  // TMs & Stations below daily target & 3-month declining trend
+  const tmsBelowTarget = (telemetry.tm_summary || [])
+    .filter((t) => (t.daily_target ?? 0) > 0 && t.total_sale_qty < (t.daily_target ?? 0))
+    .sort((a, b) => ((b.daily_target ?? 0) - b.total_sale_qty) - ((a.daily_target ?? 0) - a.total_sale_qty));
+  const stationsBelowTarget = (telemetry.all_stations || [])
+    .filter((s) => (s.daily_target ?? 0) > 0 && s.sale_qty < (s.daily_target ?? 0))
+    .sort((a, b) => ((b.daily_target ?? 0) - b.sale_qty) - ((a.daily_target ?? 0) - a.sale_qty));
+  const decliningTms3m = (telemetry.tm_summary || [])
+    .filter((t) => (t.three_month_change_pct ?? 0) < 0)
+    .sort((a, b) => (a.three_month_change_pct ?? 0) - (b.three_month_change_pct ?? 0));
+  const decliningStations3m = (telemetry.all_stations || [])
+    .filter((s) => (s.starting_month_avg_daily ?? 0) > 0 && (s.three_month_change_pct ?? 0) <= -10)
+    .sort((a, b) => (a.three_month_change_pct ?? 0) - (b.three_month_change_pct ?? 0));
+
+  const targetAndTrendLines: string[] = [];
+  if (tmsBelowTarget.length > 0) {
+    targetAndTrendLines.push(
+      `▸ TMs not achieving daily target (*${tmsBelowTarget.length}*): ${tmsBelowTarget
+        .slice(0, 6)
+        .map((t) => `*${t.tm}* (${formatNumber(t.total_sale_qty)} / ${formatNumber(t.daily_target || 0)} L, *${t.efficiency_pct}%*)`)
+        .join(', ')}${tmsBelowTarget.length > 6 ? `, +${tmsBelowTarget.length - 6} more` : ''}.`,
+    );
+  }
+  if (stationsBelowTarget.length > 0) {
+    targetAndTrendLines.push(
+      `▸ Stations not achieving daily target (*${stationsBelowTarget.length}*): ${stationsBelowTarget
+        .slice(0, 6)
+        .map((s) => `*${s.alds_name}* (${getOwner(s)}: ${formatNumber(s.sale_qty)} / ${formatNumber(s.daily_target || 0)} L, *${s.target_achievement_pct ?? 0}%*)`)
+        .join(', ')}${stationsBelowTarget.length > 6 ? `, +${stationsBelowTarget.length - 6} more` : ''}.`,
+    );
+  }
+  if (decliningTms3m.length > 0) {
+    const startLbl = decliningTms3m[0]?.starting_month_label || 'Start Month';
+    const endLbl = decliningTms3m[0]?.latest_month_label || 'Month 3';
+    targetAndTrendLines.push(
+      `▸ TMs on 3-month declining trend (${startLbl} → ${endLbl}, *${decliningTms3m.length}*): ${decliningTms3m
+        .slice(0, 6)
+        .map((t) => `*${t.tm}* (${formatNumber(t.starting_month_avg_daily || 0)} → ${formatNumber(t.latest_month_avg_daily || 0)} L/d, *${t.three_month_change_pct}%*)`)
+        .join(', ')}.`,
+    );
+  }
+  if (decliningStations3m.length > 0) {
+    const startLbl = decliningStations3m[0]?.starting_month_label || 'Start Month';
+    const endLbl = decliningStations3m[0]?.latest_month_label || 'Month 3';
+    targetAndTrendLines.push(
+      `▸ Stations on 3-month declining trend (${startLbl} → ${endLbl}, *${decliningStations3m.length}*): ${decliningStations3m
+        .slice(0, 6)
+        .map((s) => `*${s.alds_name}* (${getOwner(s)}: ${formatNumber(s.starting_month_avg_daily || 0)} → ${formatNumber(s.latest_month_avg_daily || 0)} L/d, *${s.three_month_change_pct}%*)`)
+        .join(', ')}${decliningStations3m.length > 6 ? `, +${decliningStations3m.length - 6} more` : ''}.`,
+    );
+  }
+
   const lines = [
     title,
     '',
     '🟢 *PERFORMANCE*',
     `• Network sales: *${formatLitres(telemetry.total_sale_qty)}* | Collection: *₹${formatNumber(telemetry.total_collection)}*`,
     `• Realization: *₹${telemetry.effective_rsp.toFixed(2)}/L* | vs 7-day average: *${salesChange}* | Reporting: *${telemetry.stations_with_sale}/${telemetry.stations_total}* | Top-10 share: *${topTenShare}*`,
+    ...paymentLines,
     '',
     '🟠 *EXCEPTIONS*',
     `• Zero-sale stations: *${telemetry.zero_sale_count}*${zeroSaleBreakdown ? ` — ${zeroSaleBreakdown.split(', ').map((item) => `*${item}*`).join(', ')}` : telemetry.zero_sale_count ? ' — reason breakdown unavailable' : ''}.`,
     `• Stock risk: *${critical.length} CRITICAL* (<1 day), *${highRisk.length} HIGH* (1–2 days), ${monitor.length} monitor (2–3 days).`,
     `• Declines: ${severeDeclines === undefined ? 'data unavailable' : `*${severeDeclines} of ${topDecliningStations} stations* are down *48%+* vs 3-month average`}.`,
+    ...targetAndTrendLines,
     '',
     '🔴 *TODAY’S ACTIONS*',
     actionLine,

@@ -306,7 +306,8 @@ export function App() {
         const matchCoord = (s.coordinator || '').toLowerCase().includes(query);
         const matchType = (s.type || '').toLowerCase().includes(query);
         const matchRemark = (s.remark || '').toLowerCase().includes(query);
-        if (!matchCode && !matchName && !matchState && !matchTm && !matchCoord && !matchType && !matchRemark) return false;
+        const matchSs = (s.ss_name || '').toLowerCase().includes(query);
+        if (!matchCode && !matchName && !matchState && !matchTm && !matchCoord && !matchType && !matchRemark && !matchSs) return false;
       }
 
       return true;
@@ -345,8 +346,13 @@ export function App() {
     [filteredStations]
   );
   const filteredTmSummary = useMemo(
-    () => getTMPeriodView(filteredStations),
-    [filteredStations]
+    () =>
+      getTMPeriodView(
+        filteredStations,
+        data?.tm_target_meta?.tm_avg_targets,
+        data?.tm_target_meta?.tm_total_targets
+      ),
+    [filteredStations, data?.tm_target_meta]
   );
   const filteredTypeSummary = useMemo(
     () => getTypePeriodView(filteredStations),
@@ -376,6 +382,10 @@ export function App() {
 
   const handleExportXLSX = () => {
     window.location.href = `/api/export/xlsx${buildExportQueryString()}`;
+  };
+
+  const handleExportPDF = () => {
+    window.location.href = `/api/export/pdf${buildExportQueryString()}`;
   };
 
   return (
@@ -408,6 +418,7 @@ export function App() {
         onRefresh={() => fetchData(true, 0, selectedDate)}
         onExportCSV={handleExportCSV}
         onExportXLSX={handleExportXLSX}
+        onExportPDF={handleExportPDF}
         onOpenDrawer={() => setIsDrawerOpen(true)}
         onOpenDbInspector={() => setIsDbInspectorOpen(true)}
         onOpenWhatsApp={() => setIsWhatsAppOpen(true)}
@@ -591,7 +602,10 @@ export function App() {
             {activeTab === 'team' && (
               <TMLeaderboard
                 tms={filteredTmSummary}
+                stations={filteredStations}
+                date={data.date}
                 isCompact={isCompact}
+                tmTargetMeta={data.tm_target_meta}
               />
             )}
 
@@ -612,6 +626,10 @@ export function App() {
             {activeTab === 'targets' && (
               <TargetTracker
                 stations={filteredStations}
+                date={data.date}
+                history30d={data.history_30d}
+                tmTargetMeta={data.tm_target_meta}
+                onRefreshTelemetry={() => fetchData(true, 0, selectedDate)}
               />
             )}
 

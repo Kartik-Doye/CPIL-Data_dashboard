@@ -170,6 +170,7 @@ export function getCoordinatorPeriodView(stations: StationRecord[]): VCoordinato
 export function getTMPeriodView(
   stations: StationRecord[],
   tmBenchmarks?: Record<string, number>,
+  tmTotalTargets?: Record<string, number>,
 ): TMSummary[] {
   const map: Record<string, StationRecord[]> = {};
   for (const s of stations) {
@@ -189,6 +190,94 @@ export function getTMPeriodView(
       const tSale = list.reduce((a, b) => a + b.sale_qty, 0);
       const tColl = list.reduce((a, b) => a + (b.net_total_collection || b.collection), 0);
       const benchmarkPerStation = tmBenchmarks?.[tm] || dynamicNetworkMean || productConfig.analytics.defaultStationBenchmarkLitres;
+      const stationTargetsSum = list.reduce(
+        (sum, s) => sum + (s.daily_target !== undefined && s.daily_target > 0 ? s.daily_target : 0),
+        0,
+      );
+      const hasStationTargets = list.some((s) => s.daily_target !== undefined && s.daily_target > 0);
+      const dailyTarget = hasStationTargets
+        ? Math.round(stationTargetsSum)
+        : tmTotalTargets?.[tm] !== undefined && tmTotalTargets[tm] > 0
+          ? Math.round(tmTotalTargets[tm])
+          : Math.round(list.length * benchmarkPerStation);
+      const targetVarianceQty = Math.round(tSale - dailyTarget);
+      const achievementPct = dailyTarget > 0
+        ? Number(((tSale / dailyTarget) * 100).toFixed(1))
+        : 0;
+      const stationsMetTarget = list.filter((s) => {
+        const stTarget = s.daily_target !== undefined && s.daily_target > 0 ? s.daily_target : benchmarkPerStation;
+        return stTarget > 0 && s.sale_qty >= stTarget;
+      }).length;
+
+      // Aggregate 3-month historical trajectory across this TM's stations
+      const monthMap = new Map<string, { monthLabel: string; totalAch: number; avgDailyAch: number }>();
+      for (const s of list) {
+        if (!s.historical_months) continue;
+        for (const hm of s.historical_months) {
+          const existing = monthMap.get(hm.monthLabel) || {
+            monthLabel: hm.monthLabel,
+            totalAch: 0,
+            avgDailyAch: 0,
+          };
+          existing.totalAch = Number((existing.totalAch + hm.totalAch).toFixed(2));
+          existing.avgDailyAch = Number((existing.avgDailyAch + hm.avgDailyAch).toFixed(2));
+          monthMap.set(hm.monthLabel, existing);
+        }
+      }
+      const historicalMonths = [...monthMap.values()];
+      const firstM = historicalMonths[0];
+      const lastM = historicalMonths[historicalMonths.length - 1];
+      const startingMonthAvgDaily = firstM?.avgDailyAch || 0;
+      const latestMonthAvgDaily = lastM?.avgDailyAch || 0;
+      const posM = historicalMonths.filter((m) => m.avgDailyAch > 0);
+      const threeMonthAvgDaily = posM.length > 0
+        ? Number((posM.reduce((sum, m) => sum + m.avgDailyAch, 0) / posM.length).toFixed(2))
+        : 0;
+      const threeMonthChangeLitres = Number((latestMonthAvgDaily - startingMonthAvgDaily).toFixed(2));
+      const threeMonthChangePct = startingMonthAvgDaily > 0
+        ? Number((((latestMonthAvgDaily - startingMonthAvgDaily) / startingMonthAvgDaily) * 100).toFixed(1))
+        : 0;
+      const targetVsStartingMonthPct = startingMonthAvgDaily > 0
+        ? Number((((dailyTarget - startingMonthAvgDaily) / startingMonthAvgDaily) * 100).toFixed(1))
+        : 0;
+      const isConsecutive3mDecline =
+        historicalMonths.length >= 3 &&
+        historicalMonths[0].avgDailyAch > 0 &&
+        historicalMonths[1].avgDailyAch < historicalMonths[0].avgDailyAch &&
+        historicalMonths[2].avgDailyAch < historicalMonths[1].avgDailyAch;
+
+      const tPaytm = list.reduce((a, b) => a + (b.paytm || 0), 0);
+      const tCashRaw = list.reduce((a, b) => a + (b.net_cash_collection || 0), 0);
+      const tCash = tCashRaw > 0 ? tCashRaw : Math.max(0, tColl - tPaytm);
+      const paymentDenom = tPaytm + tCash > 0 ? Math.max(tColl, tPaytm + tCash) : tColl;
+      const digitalPct = paymentDenom > 0 ? Number(((tPaytm / paymentDenom) * 100).toFixed(1)) : 0;
+      const cashPct = paymentDenom > 0 ? Number(((tCash / paymentDenom) * 100).toFixed(1)) : 0;
+
+      // Aggregate MTD & EOM pacing metrics
+      const monthlyTarget = Math.round(
+        list.reduce((sum, s) => sum + (s.monthly_target ?? (s.daily_target ?? benchmarkPerStation) * 30), 0),
+      );
+      const mtdSaleQty = Math.round(
+        list.reduce((sum, s) => sum + (s.mtd_sale_qty ?? s.sale_qty), 0),
+      );
+      const mtdProRataTarget = Math.round(
+        list.reduce((sum, s) => sum + (s.mtd_pro_rata_target ?? (s.daily_target ?? benchmarkPerStation)), 0),
+      );
+      const mtdAchievementPct = mtdProRataTarget > 0
+        ? Number(((mtdSaleQty / mtdProRataTarget) * 100).toFixed(1))
+        : 0;
+      const monthlyTargetAchievedPct = monthlyTarget > 0
+        ? Number(((mtdSaleQty / monthlyTarget) * 100).toFixed(1))
+        : 0;
+      const requiredAskingRate = Math.round(
+        list.reduce((sum, s) => sum + (s.required_asking_rate_l_per_day ?? 0), 0),
+      );
+      const projectedEomSaleQty = Math.round(
+        list.reduce((sum, s) => sum + (s.projected_eom_sale_qty ?? s.mtd_sale_qty ?? s.sale_qty), 0),
+      );
+      const projectedEomAchievementPct = monthlyTarget > 0
+        ? Number(((projectedEomSaleQty / monthlyTarget) * 100).toFixed(1))
+        : 0;
 
       return {
         tm,
@@ -198,7 +287,32 @@ export function getTMPeriodView(
         total_collection: Math.round(tColl),
         avg_daily_sale: list.length > 0 ? Math.round(tSale / list.length) : 0,
         zero_sale_count: list.filter((s) => s.sale_qty === 0).length,
-        efficiency_pct: Number((Math.min(100, (tSale / Math.max(1, list.length * benchmarkPerStation)) * 100)).toFixed(1)),
+        efficiency_pct: achievementPct,
+        daily_target: dailyTarget,
+        monthly_target: monthlyTarget,
+        target_variance_qty: targetVarianceQty,
+        stations_met_target: stationsMetTarget,
+        historical_months: historicalMonths,
+        starting_month_label: firstM?.monthLabel || 'Month 1',
+        starting_month_avg_daily: startingMonthAvgDaily,
+        latest_month_label: lastM?.monthLabel || 'Latest Month',
+        latest_month_avg_daily: latestMonthAvgDaily,
+        three_month_avg_daily: threeMonthAvgDaily,
+        three_month_change_litres: threeMonthChangeLitres,
+        three_month_change_pct: threeMonthChangePct,
+        target_vs_starting_month_pct: targetVsStartingMonthPct,
+        is_consecutive_3m_decline: isConsecutive3mDecline,
+        total_paytm: Math.round(tPaytm),
+        total_cash: Math.round(tCash),
+        digital_pct: digitalPct,
+        cash_pct: cashPct,
+        mtd_sale_qty: mtdSaleQty,
+        mtd_pro_rata_target: mtdProRataTarget,
+        mtd_achievement_pct: mtdAchievementPct,
+        monthly_target_achieved_pct: monthlyTargetAchievedPct,
+        required_asking_rate_l_per_day: requiredAskingRate,
+        projected_eom_sale_qty: projectedEomSaleQty,
+        projected_eom_achievement_pct: projectedEomAchievementPct,
       };
     })
     .sort((a, b) => b.total_sale_qty - a.total_sale_qty);
