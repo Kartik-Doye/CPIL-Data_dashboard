@@ -59,9 +59,9 @@ const smtpSecureOverride = process.env.SMTP_SECURE?.trim();
 export const SMTP_SECURE = smtpSecureOverride
   ? smtpSecureOverride.toLowerCase() === 'true'
   : productConfig.email.smtpSecure;
-export const SMTP_USER = process.env.SMTP_USER || '';
-export const SMTP_PASS = process.env.SMTP_PASS || '';
-export const SMTP_TO = process.env.SMTP_TO || '';
+export const SMTP_USER = process.env.SMTP_USER || process.env.REPORT_SENDER_EMAIL || '';
+export const SMTP_PASS = process.env.SMTP_PASS || process.env.REPORT_SENDER_APP_PASSWORD || '';
+export const SMTP_TO = process.env.SMTP_TO || process.env.REPORT_RECIPIENT_EMAILS || '';
 export const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || productConfig.email.fromName;
 
 export const APP_NAME = process.env.APP_NAME || productConfig.application.name;

@@ -277,6 +277,9 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({
 
     return {
       ...s,
+      daily_target: target,
+      target_achievement_pct: benchmarkPct,
+      target_variance_qty: varianceQty,
       tmTarget,
       excelStationTarget: excelStationTarget ?? 0,
       target,
@@ -367,7 +370,7 @@ export const TargetTracker: React.FC<TargetTrackerProps> = ({
     .sort((a, b) => b.totalTarget - a.totalTarget);
 
   const handleCopyTmWhatsApp = (tmName: string) => {
-    const text = buildTmPersonalizedWhatsAppBrief(tmName, stations, date, periodLabel);
+    const text = buildTmPersonalizedWhatsAppBrief(tmName, stationTargets, date, periodLabel);
     navigator.clipboard.writeText(text);
     setCopiedTmBrief({ tm: tmName, text });
   };

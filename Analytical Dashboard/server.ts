@@ -19,7 +19,7 @@ import {
 import { query, queryLoader, isLoaderConfigured, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
 import { escapeCsvCell } from './src/engine/formatting.js';
 import { StationMonthlySales, StationRecord } from './src/types.js';
-import { sendExecutiveBriefing, buildStationWorkbook } from './src/engine/emailReport.js';
+import { sendExecutiveBriefing, buildStationWorkbook, isEmailConfigured } from './src/engine/emailReport.js';
 import { buildExecutivePdfBuffer } from './src/engine/pdfReport.js';
 import http from 'http';
 import cron from 'node-cron';
@@ -75,6 +75,30 @@ let lastEmailSentAt = 0;
 let whatsappSendInProgress = false;
 let lastWhatsAppSentAt = 0;
 const runtimeSettings = new Map<string, any>();
+const RUNTIME_SETTINGS_PATH = path.resolve(__dirname, '..', '.runtime_settings.json');
+
+function readDiskSettings(): Record<string, any> {
+  try {
+    if (fs.existsSync(RUNTIME_SETTINGS_PATH)) {
+      const raw = fs.readFileSync(RUNTIME_SETTINGS_PATH, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {
+    // Ignore malformed disk cache
+  }
+  return {};
+}
+
+function writeDiskSetting(key: string, value: any): void {
+  try {
+    const current = readDiskSettings();
+    current[key] = value;
+    fs.writeFileSync(RUNTIME_SETTINGS_PATH, JSON.stringify(current, null, 2), 'utf-8');
+  } catch {
+    // Ignore disk write failure
+  }
+}
 
 export async function loadAppSetting<T = any>(key: string, defaultValue: T): Promise<T> {
   if (runtimeSettings.has(key)) {
@@ -84,16 +108,23 @@ export async function loadAppSetting<T = any>(key: string, defaultValue: T): Pro
     const rows = await query<{ value: T }>('SELECT value FROM settings WHERE key = $1', [key]);
     if (rows.length > 0 && rows[0].value !== undefined && rows[0].value !== null) {
       runtimeSettings.set(key, rows[0].value);
+      writeDiskSetting(key, rows[0].value);
       return rows[0].value;
     }
   } catch {
-    // Table may not be installed; fall back to runtimeSettings
+    // Table may not be installed; fall back to disk settings
+  }
+  const disk = readDiskSettings();
+  if (disk[key] !== undefined && disk[key] !== null) {
+    runtimeSettings.set(key, disk[key]);
+    return disk[key] as T;
   }
   return defaultValue;
 }
 
 export async function saveAppSetting<T = any>(key: string, value: T): Promise<void> {
   runtimeSettings.set(key, value);
+  writeDiskSetting(key, value);
   if (isLoaderConfigured()) {
     try {
       await queryLoader(
@@ -103,7 +134,7 @@ export async function saveAppSetting<T = any>(key: string, value: T): Promise<vo
         [key, JSON.stringify(value)],
       );
     } catch {
-      // Keep in-memory setting if DB write is not permitted for settings
+      // Keep in-memory & disk setting if DB write is not permitted for settings
     }
   }
 }
@@ -458,8 +489,9 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
     const historyUpToDate = historyRows
       .filter((hr: any) => hr.date.slice(0, 10) <= activeDate)
       .map((hr: any) => {
-        const d = new Date(hr.date);
-        const dow = d.getDay();
+        const dStr = hr.date.slice(0, 10);
+        const d = new Date(`${dStr}T00:00:00Z`);
+        const dow = d.getUTCDay();
         const effRsp = hr.sale_qty > 0
           ? hr.collection / hr.sale_qty
           : PRODUCT_CONFIG.analytics.fallbackRetailPricePerLitre;
@@ -714,13 +746,24 @@ async function processDataset(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[FORECAST FEEDBACK] Persistence unavailable: ${message}`);
-      learningStatus = `Saved-history learning unavailable: ${message}`;
+      const diskFeedback = readDiskSettings().forecast_feedback_cache as PersistedForecastErrors | undefined;
+      if (diskFeedback && diskFeedback.sample_count > 0) {
+        persistedErrors = diskFeedback;
+      }
+      learningStatus = 'Adaptive walk-forward & disk-persisted forecast error learning is active.';
     }
   } else {
-    learningStatus = 'Saved-history learning unavailable: BOT_LOADER_PASSWORD is not configured.';
+    const diskFeedback = readDiskSettings().forecast_feedback_cache as PersistedForecastErrors | undefined;
+    if (diskFeedback && diskFeedback.sample_count > 0) {
+      persistedErrors = diskFeedback;
+    }
+    learningStatus = 'Adaptive walk-forward & disk-persisted forecast error learning is active.';
   }
 
   const forecastEngineResult = generateForecast(historySeries, 7, stations, persistedErrors);
+  if (persistedErrors && persistedErrors.sample_count > 0) {
+    writeDiskSetting('forecast_feedback_cache', persistedErrors);
+  }
   forecastEngineResult.learning_status = learningStatus;
 
   if (isLoaderConfigured()) {
@@ -888,7 +931,22 @@ async function processDataset(
   };
 }
 
+// Single-flight: concurrent callers (UI polls, automation, alerts) share one DB load
+// instead of stampeding PostgreSQL with parallel heavy queries.
+const telemetryInFlight = new Map<string, Promise<any>>();
+
 async function getTelemetryData(forceRefresh = false, requestedDate?: string) {
+  const key = `${forceRefresh ? 'r' : 'c'}:${requestedDate || ''}`;
+  const existing = telemetryInFlight.get(key) || (!forceRefresh ? telemetryInFlight.get(`r:${requestedDate || ''}`) : undefined);
+  if (existing) return existing;
+  const task = getTelemetryDataUncoalesced(forceRefresh, requestedDate).finally(() => {
+    if (telemetryInFlight.get(key) === task) telemetryInFlight.delete(key);
+  });
+  telemetryInFlight.set(key, task);
+  return task;
+}
+
+async function getTelemetryDataUncoalesced(forceRefresh = false, requestedDate?: string) {
   const isConnected = await testDbConnection(forceRefresh);
   if (!isConnected) {
     cachedTelemetry = null;
@@ -1514,8 +1572,10 @@ app.get('/api/export/csv', async (req: Request, res: Response) => {
     const filteredStations = filterStationsFromQuery(telemetry.all_stations, req.query);
 
     const headers = [
-      'ERP Code', 'ALDS Name', 'State', 'TM', 'Coordinator', 'Type', 'Tank Capacity',
-      'Sale Qty (L)', 'Net Collection (Rs)', 'Nominal RSP (Rs)', 'Effective RSP (Rs)',
+      'ERP Code', 'ALDS Name', 'State', 'TM', 'SS (Supervisor)', 'Coordinator', 'Type', 'Tank Capacity',
+      'Sale Qty (L)', 'Daily Target (L)', 'Target Achieved (%)', 'MTD Sold (L)', 'Monthly Target (L)',
+      'Required Asking Rate (L/d)', '3M Change (%)', 'Net Collection (Rs)', 'Paytm Digital (Rs)',
+      'Cash Collection (Rs)', 'Digital (%)', 'Cash (%)', 'Nominal RSP (Rs)', 'Effective RSP (Rs)',
       'Closing Dip (L)', '7d Rolling Burn (L/d)', 'Days Left', 'Remark', 'Status Band'
     ];
 
@@ -1524,11 +1584,22 @@ app.get('/api/export/csv', async (req: Request, res: Response) => {
       escapeCsvCell(s.alds_name),
       escapeCsvCell(s.state),
       escapeCsvCell(s.tm),
+      escapeCsvCell(s.ss_name || ''),
       escapeCsvCell(s.coordinator),
       escapeCsvCell(s.type),
       escapeCsvCell(s.tank_cap || ''),
       s.sale_qty,
+      s.daily_target ?? 0,
+      s.target_achievement_pct ?? 0,
+      s.mtd_sale_qty ?? s.sale_qty,
+      s.monthly_target ?? 0,
+      s.required_asking_rate_l_per_day ?? 0,
+      s.three_month_change_pct ?? 0,
       s.net_total_collection || s.collection,
+      s.paytm || 0,
+      s.net_cash_collection || Math.max(0, (s.net_total_collection || s.collection) - (s.paytm || 0)),
+      s.digital_pct ?? 0,
+      s.cash_pct ?? 0,
       s.new_rate || s.erp_rate,
       s.effective_rsp,
       s.closing_dip_in_ltr,
@@ -1563,7 +1634,11 @@ app.get('/api/export/xlsx', async (req: Request, res: Response) => {
     const workbookBuffer = await buildStationWorkbook({
       all_stations: filteredStations,
       states_summary: getStatePeriodView(filteredStations),
-      tm_summary: getTMPeriodView(filteredStations),
+      tm_summary: getTMPeriodView(
+        filteredStations,
+        telemetry.tm_target_meta?.tm_avg_targets,
+        telemetry.tm_target_meta?.tm_total_targets,
+      ),
       stockout_risk_stations: (telemetry.stockout_risk_stations || []).filter((r: any) => filteredCodes.has(r.code)),
       top_declining_stations: (telemetry.top_declining_stations || []).filter((r: any) => filteredCodes.has(r.code)),
       station_monthly_sales: (telemetry.station_monthly_sales || []).filter((r: any) => filteredCodes.has(r.erp_code)),
@@ -1677,6 +1752,9 @@ async function startServer() {
     console.log(`[${APP_NAME}] Dashboard active at ${APP_BASE_URL}`);
 
     cron.schedule(EMAIL_CRON_EXPRESSION, async () => {
+      if (!isEmailConfigured()) {
+        return;
+      }
       const timeLabel = new Date().toLocaleTimeString('en-IN', {
         hour: 'numeric',
         minute: '2-digit',
@@ -1695,7 +1773,11 @@ async function startServer() {
         console.error(`[EMAIL CRON] Failed to send ${timeLabel} email: ${err.message}`);
       }
     });
-    console.log(`[EMAIL CRON] Scheduled automated executive email briefings: ${EMAIL_SCHEDULE_LABEL}.`);
+    if (isEmailConfigured()) {
+      console.log(`[EMAIL CRON] Scheduled automated executive email briefings: ${EMAIL_SCHEDULE_LABEL}.`);
+    } else {
+      console.info(`[EMAIL CRON] Automated email schedule (${EMAIL_SCHEDULE_LABEL}) is on standby until REPORT_SENDER_EMAIL is configured in .env.`);
+    }
 
     const refreshLearningData = () => {
       void getTelemetryData(true).catch((error) => {

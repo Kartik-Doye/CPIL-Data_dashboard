@@ -7,6 +7,7 @@ import {
   buildExecutiveWhatsAppMessage,
   buildTankerDispatchWhatsAppMessage,
   isRetryableWhatsAppInitializationError,
+  isRetryableWhatsAppDispatchError,
   isWhatsAppSessionProfileLockError,
   setWhatsAppRecipients,
   sendWhatsAppMessage,
@@ -34,6 +35,27 @@ test('only retries transient WhatsApp browser navigation failures', () => {
     true,
   );
   assert.equal(isRetryableWhatsAppInitializationError(new Error('Authentication failed.')), false);
+});
+
+test('recognizes detached frame and transient browser errors during WhatsApp dispatch for safe retry', () => {
+  assert.equal(
+    isRetryableWhatsAppDispatchError(new Error("Attempted to use detached Frame '978A8CE3C7E62D5AE5EB9737F44A4584'.")),
+    true,
+  );
+  assert.equal(
+    isRetryableWhatsAppDispatchError(new Error('Execution context was destroyed, most likely because of a navigation.')),
+    true,
+  );
+  assert.equal(
+    isRetryableWhatsAppDispatchError(new Error('Protocol error (Runtime.callFunctionOn): Target closed.')),
+    true,
+  );
+  assert.equal(
+    isRetryableWhatsAppDispatchError(new Error('Session closed. Most likely the page has been closed.')),
+    true,
+  );
+  assert.equal(isRetryableWhatsAppDispatchError(new Error('This number is not registered on WhatsApp.')), false);
+  assert.equal(isRetryableWhatsAppDispatchError(new Error('Authentication failed.')), false);
 });
 
 test('recognizes locked WhatsApp browser session files for safe recovery', () => {
@@ -128,15 +150,16 @@ test('formats WhatsApp sales brief with totals, sales alerts, and forecast', () 
     },
   });
 
-  assert.match(msg, /GO GAS SALES \| 06 Nov/);
-  assert.match(msg, /\*Total Sales:\* 3,42,850 L \(↑7\.1% vs 7d avg\) \| \*Total Collection:\* ₹2,64,33,735\.00/);
-  assert.match(msg, /\*7-Day Average:\* 3,20,000 L \| \*Forecast \(07 Nov\):\* 3,48,200 L \(range 3,20,000–3,75,000 L\)/);
-  assert.match(msg, /\*Active:\* 312\/316 \| \*Paytm Digital:\* 29\.6%/);
-  assert.match(msg, /DRY-OUT ALERT \(<1 Day Stock\)[\s\S]*YUSUFGUDA \(TG\) — 0\.3d/);
-  assert.match(msg, /ZERO SALE \(3\)[\s\S]*No Stock:\* Thiravator[\s\S]*No Report:\* Karim Nagar[\s\S]*Stopped:\* Gadag \(Chinmay\)/);
-  assert.match(msg, /SHARP DROPS[\s\S]*Viliarasampti \(TN\): ↓72%[\s\S]*MKB Nagar \(TN\): ↓69%[\s\S]*Belgavi \(KA\): ↓61%/);
-  assert.match(msg, /TOP:\* Nashik Adgao \(8\.2K L\) \| Dwarka \(7\.3K L\)/);
-  assert.doesNotMatch(msg, /Target Today/);
+  assert.match(msg, /GO GAS EXECUTIVE BRIEF \| 06 Nov/);
+  assert.match(msg, /Respected Leadership, sharing today's analytical summary:/);
+  assert.match(msg, /\*Sales:\* 3,42,850 L \(↑7\.1% vs 7d\) \| \*Collection:\* ₹2,64,33,735/);
+  assert.match(msg, /\*Payment Mix:\* Digital 29\.6% \| Cash 70\.4%/);
+  assert.match(msg, /\*Active:\* 312\/316 \| \*Forecast \(07 Nov\):\* 3,48,200 L \| \*7d Proj:\* 2415\.4K L/);
+  assert.match(msg, /\*Dry-Out \(<1d\):\* YUSUFGUDA \(0\.3d\)/);
+  assert.match(msg, /\*Zero-Sale:\* 3/);
+  assert.match(msg, /\*Top:\* Nashik Adgao \(8\.2K L\)/);
+  assert.match(msg, /Warm regards, \*GO Gas Analytics Desk\*/);
+  assert.ok(msg.trim().split(/\s+/).length <= 100, `Expected <= 100 words, got ${msg.trim().split(/\s+/).length}`);
 });
 
 test('reports unavailable sales comparisons and forecasts clearly', () => {
@@ -163,13 +186,13 @@ test('reports unavailable sales comparisons and forecasts clearly', () => {
     },
   });
 
-  assert.match(msg, /\*Total Sales:\* 1,000 L \(N\/A vs 7d avg\)/);
-  assert.match(msg, /\*7-Day Average:\* N\/A \| \*Forecast \(unavailable\):\* Unavailable/);
-  assert.match(msg, /\*Paytm Digital:\* N\/A/);
-  assert.match(msg, /\*DRY-OUT ALERT \(<1 Day Stock\)\*\n• None/);
-  assert.match(msg, /\*ZERO SALE \(0\)\*\n• None/);
-  assert.match(msg, /\*SHARP DROPS\*\n• None/);
-  assert.match(msg, /TOP:\* No sales data/);
+  assert.match(msg, /\*Sales:\* 1,000 L \(N\/A vs 7d\)/);
+  assert.match(msg, /\*Forecast \(unavailable\):\* Unavailable/);
+  assert.match(msg, /Digital N\/A/);
+  assert.match(msg, /\*Dry-Out \(<1d\):\* None/);
+  assert.match(msg, /\*Zero-Sale:\* 0/);
+  assert.match(msg, /\*Top:\* No sales data/);
+  assert.ok(msg.trim().split(/\s+/).length <= 80, `Expected <= 80 words, got ${msg.trim().split(/\s+/).length}`);
 });
 
 test('classifies zero-sale reasons without treating unknown remarks as reporting gaps', () => {
@@ -231,6 +254,7 @@ test('formats tanker dispatch WhatsApp manifest with prioritized critical orders
   assert.match(msg, /Critical \(<1\.5 Days\):\* 1 Stations/);
   assert.match(msg, /YUSUFGUDA/);
   assert.match(msg, /18-Ton \/ 33,000 L/);
+  assert.ok(msg.trim().split(/\s+/).length <= 80, `Expected <= 80 words, got ${msg.trim().split(/\s+/).length}`);
 });
 
 test('reports WhatsApp Web as disconnected until a real session is authenticated', () => {

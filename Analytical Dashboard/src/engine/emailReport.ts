@@ -289,6 +289,12 @@ export async function buildStationWorkbook(
     { header: 'Avg Daily / Station (L)', key: 'avg', width: 22 },
     { header: 'Zero-Sale Stations', key: 'zero', width: 18 },
     { header: 'Target Achievement (%)', key: 'eff', width: 24 },
+    { header: 'MTD Sold (L)', key: 'mtd_sold', width: 18 },
+    { header: 'Monthly Target (L)', key: 'monthly_target', width: 20 },
+    { header: 'Required Asking Rate (L/d)', key: 'asking_rate', width: 24 },
+    { header: '3-Month Trend (%)', key: 'trend_3m', width: 18 },
+    { header: 'Digital Payment (%)', key: 'digital_pct', width: 20 },
+    { header: 'Cash Payment (%)', key: 'cash_pct', width: 18 },
   ];
   tmSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
   tmSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
@@ -308,6 +314,12 @@ export async function buildStationWorkbook(
       avg: tmRow.avg_daily_sale,
       zero: tmRow.zero_sale_count,
       eff: tmRow.efficiency_pct,
+      mtd_sold: tmRow.mtd_sale_qty ?? tmRow.total_sale_qty,
+      monthly_target: tmRow.monthly_target ?? dailyTarget * 30,
+      asking_rate: tmRow.required_asking_rate_l_per_day ?? 0,
+      trend_3m: tmRow.three_month_change_pct ?? 0,
+      digital_pct: tmRow.digital_pct ?? 0,
+      cash_pct: tmRow.cash_pct ?? 0,
     });
   });
 
@@ -465,13 +477,23 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   };
 }
 
-function readEmailConfig() {
-  const sender = process.env.REPORT_SENDER_EMAIL?.trim();
-  const recipients = process.env.REPORT_RECIPIENT_EMAILS
+export function isEmailConfigured(): boolean {
+  const sender = (process.env.REPORT_SENDER_EMAIL || process.env.SMTP_USER)?.trim();
+  const recipients = (process.env.REPORT_RECIPIENT_EMAILS || process.env.SMTP_TO)
     ?.split(',')
     .map((email) => email.trim())
     .filter(Boolean);
-  const password = process.env.REPORT_SENDER_APP_PASSWORD?.replace(/\s/g, '');
+  const password = (process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s/g, '');
+  return Boolean(sender && recipients?.length && password);
+}
+
+function readEmailConfig() {
+  const sender = (process.env.REPORT_SENDER_EMAIL || process.env.SMTP_USER)?.trim();
+  const recipients = (process.env.REPORT_RECIPIENT_EMAILS || process.env.SMTP_TO)
+    ?.split(',')
+    .map((email) => email.trim())
+    .filter(Boolean);
+  const password = (process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s/g, '');
 
   if (!sender || !recipients?.length || !password) {
     throw new Error(

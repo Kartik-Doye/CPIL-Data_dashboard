@@ -107,7 +107,12 @@ export function buildExecutivePdfBuffer(params: {
     ensureSpace(rowH * 2);
 
     const renderRow = (cells: string[], isHeader: boolean, isEven: boolean) => {
-      ensureSpace(rowH + 2);
+      if (cursorY - (rowH + 2) < MARGIN_B) {
+        startNewPage();
+        if (!isHeader) {
+          renderRow(headers, true, false);
+        }
+      }
       if (isHeader) {
         ops.push('0.12 0.16 0.25 rg');
         ops.push(`${MARGIN_L} ${cursorY - rowH} ${CONTENT_W} ${rowH} re f`);

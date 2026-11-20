@@ -156,13 +156,14 @@ async function initializeDatabaseEngine(): Promise<'external'> {
 
 export async function testDbConnection(forceRefresh = false): Promise<boolean> {
   if (forceRefresh && !isDbAvailable && pool) {
-    try {
-      await pool.end();
-    } catch {
-      lastDbError = 'Unable to close the previous PostgreSQL connection pool.';
-    }
+    // Detach the old pool first so concurrent requests pick up a fresh one,
+    // then close it after in-flight queries have had time to finish.
+    const stalePool = pool;
     pool = null;
     activeEngine = null;
+    setTimeout(() => {
+      stalePool.end().catch(() => {});
+    }, Math.max(DB_STATEMENT_TIMEOUT_MS, 5000) + 1000).unref?.();
   }
 
   try {
@@ -294,30 +295,46 @@ export async function getDbAuditReport(forceRefresh = false) {
   }
 }
 
+function isTransientPoolError(err: any): boolean {
+  return /Cannot use a pool after calling end|Connection terminated|connection timeout|ECONNRESET/i.test(String(err?.message || err));
+}
+
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
-  await ensureDatabaseEngine();
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await ensureDatabaseEngine();
 
-  if (activeEngine !== 'external') {
-    throw new Error('External PostgreSQL is required; no fallback database is enabled.');
-  }
-
-  const p = getPool();
-  if (!p) {
-    throw new Error('External PostgreSQL connection pool is unavailable.');
-  }
-  try {
-    const client = await p.connect();
-    try {
-      await client.query(`SET statement_timeout = ${DB_STATEMENT_TIMEOUT_MS}`);
-      const res = await client.query(sql, params);
-      return res.rows as T[];
-    } finally {
-      client.release();
+    if (activeEngine !== 'external') {
+      throw new Error('External PostgreSQL is required; no fallback database is enabled.');
     }
-  } catch (err: any) {
-    console.warn(`[External DB Query Warning] ${err.message}`);
-    throw err;
+
+    const p = getPool();
+    if (!p) {
+      throw new Error('External PostgreSQL connection pool is unavailable.');
+    }
+    try {
+      const client = await p.connect();
+      try {
+        await client.query(`SET statement_timeout = ${DB_STATEMENT_TIMEOUT_MS}`);
+        const res = await client.query(sql, params);
+        return res.rows as T[];
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      if (attempt === 1 && isTransientPoolError(err)) {
+        // Pool was swapped/closed or a connection dropped mid-flight: retry once on a fresh pool
+        if (pool === p && /Cannot use a pool after calling end/i.test(String(err?.message))) {
+          pool = null;
+          activeEngine = null;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        continue;
+      }
+      console.warn(`[External DB Query Warning] ${err.message}`);
+      throw err;
+    }
   }
+  throw new Error('External PostgreSQL query failed after retry.');
 }
 
 export async function queryOne<T = any>(sql: string, params: any[] = []): Promise<T | null> {

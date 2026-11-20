@@ -1,4 +1,7 @@
+import fs from 'fs';
 import http from 'http';
+import path from 'path';
+import { fileURLToPath } from 'node:url';
 import { Server as SocketIOServer } from 'socket.io';
 import cron, { ScheduledTask } from 'node-cron';
 import type { Express, NextFunction, Request, Response } from 'express';
@@ -15,6 +18,7 @@ import {
   disconnectWhatsAppClient,
   getWhatsAppSessionState,
   initializeWhatsAppClient,
+  isWhatsAppPairingInProgress,
   parseRecipientNumbers,
   refreshWhatsAppClient,
   setWhatsAppRecipients,
@@ -36,6 +40,35 @@ let targetPhoneNumber = parseRecipientNumbers().join(',');
 let dailyMessageText = WHATSAPP_DAILY_MESSAGE;
 let ioInstance: SocketIOServer | null = null;
 let scheduledTask: ScheduledTask | null = null;
+const RUNTIME_SETTINGS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../.runtime_settings.json',
+);
+
+function readDiskWhatsAppConfig(): { targetPhoneNumber?: string; dailyMessageText?: string } | null {
+  try {
+    if (fs.existsSync(RUNTIME_SETTINGS_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_PATH, 'utf-8'));
+      return parsed?.whatsapp_config ?? null;
+    }
+  } catch {
+    // Ignore disk parse error
+  }
+  return null;
+}
+
+function writeDiskWhatsAppConfig(cfg: { targetPhoneNumber: string; dailyMessageText: string }) {
+  try {
+    let current: Record<string, any> = {};
+    if (fs.existsSync(RUNTIME_SETTINGS_PATH)) {
+      current = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_PATH, 'utf-8')) || {};
+    }
+    current.whatsapp_config = cfg;
+    fs.writeFileSync(RUNTIME_SETTINGS_PATH, JSON.stringify(current, null, 2), 'utf-8');
+  } catch {
+    // Ignore disk write error
+  }
+}
 
 function isLoopbackAddress(address = '') {
   const normalized = address.toLowerCase();
@@ -92,7 +125,19 @@ export function initWhatsAppAutomation(
   initializeWhatsAppClient(updateConnectionState);
   updateConnectionState(getWhatsAppSessionState());
 
-  // Load persisted WhatsApp recipients & message from PostgreSQL settings table if available
+  // Load persisted WhatsApp recipients & message from disk first, then PostgreSQL settings table if available
+  const diskSaved = readDiskWhatsAppConfig();
+  if (diskSaved?.targetPhoneNumber) {
+    const parsed = parseRecipientNumbers(diskSaved.targetPhoneNumber);
+    if (parsed.length > 0) {
+      targetPhoneNumber = parsed.join(',');
+      setWhatsAppRecipients(parsed);
+    }
+  }
+  if (diskSaved?.dailyMessageText) {
+    dailyMessageText = String(diskSaved.dailyMessageText).trim();
+  }
+
   void (async () => {
     try {
       const rows = await query<{ value: { targetPhoneNumber?: string; dailyMessageText?: string } }>(
@@ -110,6 +155,7 @@ export function initWhatsAppAutomation(
         if (saved.dailyMessageText) {
           dailyMessageText = String(saved.dailyMessageText).trim();
         }
+        writeDiskWhatsAppConfig({ targetPhoneNumber, dailyMessageText });
       }
     } catch {
       // Ignore if settings table is not yet installed
@@ -130,7 +176,7 @@ export function initWhatsAppAutomation(
 
     try {
       const recipients = parseRecipientNumbers(targetPhoneNumber);
-      const message = triggerType.startsWith('scheduled') && buildExecutiveMessage
+      const message = buildExecutiveMessage
         ? await buildExecutiveMessage()
         : dailyMessageText;
       const result = await sendWhatsAppMessage('briefing', message, recipients);
@@ -165,10 +211,18 @@ export function initWhatsAppAutomation(
     });
   }
 
-  app.get('/api/whatsapp/config', (_req: Request, res: Response) => {
+  app.get('/api/whatsapp/config', async (_req: Request, res: Response) => {
+    let previewMessage = dailyMessageText;
+    if (buildExecutiveMessage) {
+      try {
+        previewMessage = await buildExecutiveMessage();
+      } catch {
+        // Fall back to default message if DB telemetry is unavailable
+      }
+    }
     res.json({
       targetPhoneNumber,
-      dailyMessageText,
+      dailyMessageText: previewMessage,
       connectionStatus,
       qrCodeData: currentQrCode,
       connectionError,
@@ -186,6 +240,7 @@ export function initWhatsAppAutomation(
     targetPhoneNumber = recipients.join(',');
     setWhatsAppRecipients(recipients);
     if (message) dailyMessageText = String(message).trim();
+    writeDiskWhatsAppConfig({ targetPhoneNumber, dailyMessageText });
 
     if (isLoaderConfigured()) {
       void queryLoader(
@@ -243,8 +298,15 @@ export function initWhatsAppAutomation(
   });
 
   app.post('/api/whatsapp/refresh-qr', async (_req: Request, res: Response) => {
+    if (isWhatsAppPairingInProgress()) {
+      res.status(409).json({
+        success: false,
+        error: 'Your phone is still linking this device. Keep WhatsApp open on the phone and wait for it to finish — refreshing now would cancel the link.',
+      });
+      return;
+    }
     try {
-      await refreshWhatsAppClient();
+      await refreshWhatsAppClient(true);
       const state = getWhatsAppSessionState();
       res.json({ success: state.connectionStatus !== 'Connection error', qr: state.qrCodeData, ...state });
     } catch (err: unknown) {

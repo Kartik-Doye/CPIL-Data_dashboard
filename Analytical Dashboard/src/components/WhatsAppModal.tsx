@@ -109,7 +109,29 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
         .catch(() => {});
     });
 
+    // Periodically sync status from /api/whatsapp/config while modal is open in case a socket event was missed
+    const statusPoll = setInterval(() => {
+      fetch('/api/whatsapp/config')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data) return;
+          if (data.connectionStatus) {
+            setStatus(data.connectionStatus);
+            if (data.connectionStatus === 'Ready') {
+              setQrCodeData('');
+              setShowQr(false);
+              setConnectionError('');
+            }
+          }
+          if (data.connectionStatus !== 'Ready' && data.qrCodeData) {
+            setQrCodeData(data.qrCodeData);
+          }
+        })
+        .catch(() => {});
+    }, 3000);
+
     return () => {
+      clearInterval(statusPoll);
       socket.disconnect();
     };
   }, [isOpen]);
@@ -314,7 +336,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                       className={`w-2.5 h-2.5 rounded-full ${
                         status === 'Ready'
                           ? 'bg-emerald-500 animate-pulse'
-                          : status.includes('Scan')
+                          : status.includes('Scan') || status.includes('Linking')
                           ? 'bg-amber-500 animate-pulse'
                           : 'bg-rose-500'
                       }`}
@@ -325,7 +347,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                         className={
                           status === 'Ready'
                             ? 'text-emerald-600 dark:text-emerald-400 font-bold'
-                            : status.includes('Scan')
+                            : status.includes('Scan') || status.includes('Linking')
                             ? 'text-amber-500 font-bold'
                             : 'text-rose-500 font-bold'
                         }
@@ -334,6 +356,11 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                       </span>
                     </span>
                   </div>
+                  {status.includes('Linking') && (
+                    <p className="text-amber-600 dark:text-amber-400 text-[11px]">
+                      QR scanned. Keep WhatsApp open on your phone until it finishes linking (can take 1–3 minutes). Do not refresh the QR.
+                    </p>
+                  )}
                   <p className="text-slate-500 dark:text-slate-400 text-[11px] flex items-center gap-1.5">
                     <Clock className="w-3 h-3 text-orange-400" />
                     <span>Daily Schedule: <strong>{scheduledTime}</strong></span>
@@ -341,7 +368,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {status !== 'Ready' ? (
+                  {status !== 'Ready' && !status.includes('Linking') ? (
                     <button
                       type="button"
                       onClick={handlePairDirectly}
@@ -478,19 +505,28 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                 </div>
 
                 <label className="block space-y-1">
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">
-                    Manual/Test Broadcast Copy:
+                  <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>Executive WhatsApp Message Preview (Single Message, Max 100 Words):</span>
+                    <span
+                      className={`text-[10px] font-mono ${
+                        message.trim().split(/\s+/).filter(Boolean).length > 100
+                          ? 'text-rose-600 dark:text-rose-400 font-bold'
+                          : 'text-emerald-600 dark:text-emerald-400'
+                      }`}
+                    >
+                      {message.trim() ? message.trim().split(/\s+/).filter(Boolean).length : 0} / 100 words
+                    </span>
                   </span>
                   <textarea
-                    rows={4}
-                    placeholder="Write your automated daily update copy here..."
+                    rows={5}
+                    placeholder="Write your polite, concise executive update here (max 100 words)..."
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs focus:border-emerald-500 outline-none resize-y"
                     required
                   />
                   <p className="text-[10px] text-slate-500">
-                    Scheduled broadcasts use the live executive summary; this text is only used for manual test broadcasts.
+                    One and only one polite, executive-grade message (strictly under 100 words) is dispatched per broadcast.
                   </p>
                 </label>
 

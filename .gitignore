@@ -3,6 +3,7 @@ dist/
 coverage/
 .wwebjs_auth/
 .wwebjs_cache/
+.runtime_settings.json
 .env
 .env.*
 !.env.example

@@ -109,10 +109,15 @@ const SAMPLE_STATIONS: StationRecord[] = [
 
 test('builds personalized per-TM WhatsApp action card and vector PDF dossier buffer', () => {
   const brief = buildTmPersonalizedWhatsAppBrief('Ravi Salvi', SAMPLE_STATIONS, '2026-11-18', 'Nov. 2026 Avg. daily Tgt.');
-  assert.ok(brief.includes('*GO GAS TERRITORY ACTION BRIEF — TM Ravi Salvi'));
+  assert.ok(brief.includes('*GO GAS TERRITORY RESEARCH BRIEF — TM Ravi Salvi'));
+  assert.ok(brief.includes('Dear *Ravi Salvi*, sharing your concise daily insights:'));
   assert.ok(brief.includes('2,595 L/day'));
+  assert.ok(brief.includes('*Projection:* Next-Day ~*1,200 L* | 7d ~*8.4K L* | EOM Landing: *72.5%*'));
   assert.ok(brief.includes('[SS: Dnyaneshwar Karande]'));
   assert.ok(brief.includes('Ahmednagar'));
+  assert.ok(brief.includes('Warm regards, *GO Gas Analytics*'));
+  const wordCount = brief.trim().split(/\s+/).length;
+  assert.ok(wordCount <= 100, `Expected TM WhatsApp brief <= 100 words, got ${wordCount}`);
 
   const pdfBuffer = buildExecutivePdfBuffer({
     date: '2026-11-18',

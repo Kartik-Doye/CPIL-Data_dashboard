@@ -335,7 +335,7 @@ export function App() {
       filteredStations.filter(
         (s) =>
           s.days_left <= 2 ||
-          ((s.closing_dip ?? 0) < productConfig.analytics.stockoutDipThresholdLitres &&
+          ((s.closing_dip_in_ltr ?? s.closing_dip ?? 0) < productConfig.analytics.stockoutDipThresholdLitres &&
             (s.rolling_7d_burn || s.sale_qty) > 0)
       ).length,
     [filteredStations]
