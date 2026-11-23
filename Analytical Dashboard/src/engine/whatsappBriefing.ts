@@ -81,6 +81,12 @@ export function buildExecutiveWhatsAppMessage(telemetry: WhatsAppSalesTelemetry)
   const totalProjEom = allStationsList.reduce((s, st) => s + (st.projected_eom_sale_qty || 0), 0);
   const totalMonthlyTgt = allStationsList.reduce((s, st) => s + (st.monthly_target || 0), 0);
   const networkEomPct = totalMonthlyTgt > 0 ? Number(((totalProjEom / totalMonthlyTgt) * 100).toFixed(1)) : null;
+  const totalScheme = allStationsList.reduce((s, st) => s + (st.scheme || 0), 0);
+  const totalDiscount = allStationsList.reduce((s, st) => s + (st.discount || st.scheme || 0), 0);
+  const effectiveDiscount = totalDiscount > 0 ? totalDiscount : totalScheme;
+  const discountPerL = telemetry.total_sale_qty > 0 && effectiveDiscount > 0
+    ? (effectiveDiscount / telemetry.total_sale_qty).toFixed(2)
+    : null;
 
   const forecastSummary = forecast
     ? `${wholeNumberFormat(forecast.predicted_qty)} L${forecast7dTotal > 0 ? ` | *7d Proj:* ${formatStationLitres(forecast7dTotal)}` : ''}${networkEomPct !== null && networkEomPct > 0 ? ` | *EOM Proj:* ${networkEomPct}%` : ''}`
@@ -156,7 +162,7 @@ export function buildExecutiveWhatsAppMessage(telemetry: WhatsAppSalesTelemetry)
   return [
     `🙏 *GO GAS EXECUTIVE BRIEF | ${dateLabel}*`,
     `Respected Leadership, sharing today's analytical summary:`,
-    `📊 *Sales:* ${wholeNumberFormat(telemetry.total_sale_qty)} L (${salesChange} vs 7d) | *Collection:* ₹${wholeNumberFormat(telemetry.total_collection)}`,
+    `📊 *Sales:* ${wholeNumberFormat(telemetry.total_sale_qty)} L (${salesChange} vs 7d) | *Collection:* ₹${wholeNumberFormat(telemetry.total_collection)}${effectiveDiscount > 0 ? ` | *Discount:* ₹${wholeNumberFormat(effectiveDiscount)}${discountPerL ? ` (₹${discountPerL}/L)` : ''}` : ''}`,
     `💳 *Payment Mix:* Digital ${paytmShare} | Cash ${cashShare}${topCashStation ? ` (Top Cash: ${topCashStation.name} ${topCashStation.cashPct}%)` : ''}`,
     `📈 *Active:* ${telemetry.stations_with_sale}/${telemetry.stations_total} | *Forecast (${forecastDate}):* ${forecastSummary}`,
     ...(targetSummaryLine ? [targetSummaryLine] : []),

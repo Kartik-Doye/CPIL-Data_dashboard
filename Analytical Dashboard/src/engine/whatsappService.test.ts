@@ -9,6 +9,7 @@ import {
   isRetryableWhatsAppInitializationError,
   isRetryableWhatsAppDispatchError,
   isWhatsAppSessionProfileLockError,
+  hasSavedSessionOnDisk,
   setWhatsAppRecipients,
   sendWhatsAppMessage,
 } from './whatsappService.js';
@@ -32,6 +33,10 @@ test('neutralizes CSV formula injection in exported text cells', () => {
 test('only retries transient WhatsApp browser navigation failures', () => {
   assert.equal(
     isRetryableWhatsAppInitializationError(new Error('Execution context was destroyed, most likely because of a navigation.')),
+    true,
+  );
+  assert.equal(
+    isRetryableWhatsAppInitializationError(new Error("ProtocolError: Runtime.callFunctionOn timed out. Increase the 'protocolTimeout' setting")),
     true,
   );
   assert.equal(isRetryableWhatsAppInitializationError(new Error('Authentication failed.')), false);
@@ -61,6 +66,10 @@ test('recognizes detached frame and transient browser errors during WhatsApp dis
 test('recognizes locked WhatsApp browser session files for safe recovery', () => {
   assert.equal(
     isWhatsAppSessionProfileLockError(new Error('EBUSY: resource busy or locked, unlink CrashpadMetrics-active.pma')),
+    true,
+  );
+  assert.equal(
+    isWhatsAppSessionProfileLockError(new Error('Error: The browser is already running for C:\\app\\.wwebjs_auth\\session-go-gas-primary. Use a different `userDataDir` or stop the running browser first.')),
     true,
   );
   assert.equal(isWhatsAppSessionProfileLockError(new Error('Authentication failed.')), false);
@@ -268,4 +277,72 @@ test('does not report a successful dispatch when WhatsApp Web is disconnected', 
     sendWhatsAppMessage('test', 'Hello Test', ['+919876543210']),
     /WhatsApp Web is not connected/
   );
+});
+
+test('formats WhatsApp sales brief with schema discount and scheme amounts when present', () => {
+  const msg = buildExecutiveWhatsAppMessage({
+    date: '2026-11-06',
+    total_sale_qty: 342850,
+    total_collection: 26433735,
+    total_paytm_collection: 7820500,
+    stations_with_sale: 312,
+    stations_total: 316,
+    zero_sale_count: 3,
+    stockout_risk_stations: [],
+    zero_sale_stations: [],
+    top_declining_stations: [],
+    top_performing_stations: [],
+    all_stations: [
+      {
+        id: 'st-1',
+        erp_code: 'JODO1',
+        alds_name: 'Station 1',
+        state: 'TG',
+        type: 'LOCO',
+        coordinator: 'Vikram',
+        tm: 'Suresh',
+        tank_cap: '10KL',
+        sale_qty: 2000,
+        collection: 154000,
+        new_rate: 77,
+        other: 0,
+        diff: 0,
+        erp_rate: 77,
+        ret_test_cal: 0,
+        free_sale_litres: 0,
+        free_sale_rupees: 0,
+        scheme: 15000,
+        discount: 15000,
+        paytm: 0,
+        net_cash_collection: 154000,
+        closing_dip_in_ltr: 1000,
+        remark: '',
+        net_total_collection: 154000,
+        effective_rsp: 77,
+        collection_check: 0,
+        scheme_as_per_ho: 0,
+        free_sale_pct: 0,
+        sale_date: '2026-11-06',
+        days_left: 2,
+        trend_slope: 0,
+        status_band: 'Achieved',
+      },
+    ],
+    forecast: {
+      horizon_days: 7,
+      predicted_total_7d: 0,
+      mape_ensemble: null,
+      mape_linear: null,
+      mape_holt_winters: null,
+      mape_naive: null,
+      forecast: [],
+    },
+  });
+
+  assert.match(msg, /\*Discount:\* ₹15,000/);
+});
+
+test('hasSavedSessionOnDisk detects presence of saved session directory safely', () => {
+  const result = hasSavedSessionOnDisk();
+  assert.equal(typeof result, 'boolean');
 });

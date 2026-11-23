@@ -437,6 +437,7 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
         free_sale_litres: freeSaleLitres,
         free_sale_rupees: r.free_sale_rupees || 0,
         scheme: r.scheme || 0,
+        discount: Number(((r.scheme || 0) + (r.diff || 0)).toFixed(2)),
         paytm: paytmVal,
         net_cash_collection: cashVal,
         closing_dip_in_ltr: closingDip,

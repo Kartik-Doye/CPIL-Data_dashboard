@@ -39,7 +39,7 @@ let connectionError: string | undefined;
 let targetPhoneNumber = parseRecipientNumbers().join(',');
 let dailyMessageText = WHATSAPP_DAILY_MESSAGE;
 let ioInstance: SocketIOServer | null = null;
-let scheduledTask: ScheduledTask | null = null;
+let scheduledTasks: ScheduledTask[] = [];
 const RUNTIME_SETTINGS_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../../.runtime_settings.json',
@@ -122,8 +122,10 @@ export function initWhatsAppAutomation(
   ioInstance = io;
   app.use('/api/whatsapp', requireLocalWhatsAppAccess);
 
-  initializeWhatsAppClient(updateConnectionState);
-  updateConnectionState(getWhatsAppSessionState());
+  server.once('listening', () => {
+    initializeWhatsAppClient(updateConnectionState);
+    updateConnectionState(getWhatsAppSessionState());
+  });
 
   // Load persisted WhatsApp recipients & message from disk first, then PostgreSQL settings table if available
   const diskSaved = readDiskWhatsAppConfig();
@@ -193,14 +195,18 @@ export function initWhatsAppAutomation(
     }
   }
 
-  if (scheduledTask) scheduledTask.stop();
-  scheduledTask = null;
-  if (!WHATSAPP_CRON_EXPRESSION) {
+  for (const task of scheduledTasks) task.stop();
+  scheduledTasks = [];
+  const cronExpressions = WHATSAPP_CRON_EXPRESSION
+    .split(';')
+    .map((expression) => expression.trim())
+    .filter(Boolean);
+  if (cronExpressions.length === 0) {
     console.error('[WHATSAPP CRON] Automated broadcasts disabled. Set WHATSAPP_CRON_EXPRESSION in the project-root .env file.');
-  } else if (!cron.validate(WHATSAPP_CRON_EXPRESSION)) {
+  } else if (cronExpressions.some((expression) => !cron.validate(expression))) {
     console.error(`[WHATSAPP CRON] Automated broadcasts disabled. Invalid WHATSAPP_CRON_EXPRESSION: ${WHATSAPP_CRON_EXPRESSION}`);
   } else {
-    scheduledTask = cron.schedule(WHATSAPP_CRON_EXPRESSION, () => {
+    scheduledTasks = cronExpressions.map((expression) => cron.schedule(expression, () => {
       const timeLabel = new Date().toLocaleTimeString('en-IN', {
         hour: 'numeric',
         minute: '2-digit',
@@ -208,7 +214,7 @@ export function initWhatsAppAutomation(
       });
       console.log(`[WHATSAPP CRON] Running automated daily broadcast at ${timeLabel}...`);
       void sendBroadcast(`scheduled-${timeLabel}`);
-    });
+    }, { timezone: APP_TIMEZONE }));
   }
 
   app.get('/api/whatsapp/config', async (_req: Request, res: Response) => {
@@ -306,7 +312,7 @@ export function initWhatsAppAutomation(
       return;
     }
     try {
-      await refreshWhatsAppClient(true);
+      await refreshWhatsAppClient();
       const state = getWhatsAppSessionState();
       res.json({ success: state.connectionStatus !== 'Connection error', qr: state.qrCodeData, ...state });
     } catch (err: unknown) {
@@ -327,7 +333,7 @@ export function initWhatsAppAutomation(
     }
   });
 
-  console.log(`[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO; daily schedule: ${scheduledTask ? WHATSAPP_SCHEDULE_LABEL : 'disabled'}.`);
+  console.log(`[WHATSAPP AUTOMATION] WhatsApp Web session initialized with Socket.IO; daily schedule: ${scheduledTasks.length ? WHATSAPP_SCHEDULE_LABEL : 'disabled'}.`);
 }
 
 export function updateAutomationMessage(newText: string) {

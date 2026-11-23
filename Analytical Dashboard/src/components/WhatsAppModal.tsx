@@ -336,7 +336,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                       className={`w-2.5 h-2.5 rounded-full ${
                         status === 'Ready'
                           ? 'bg-emerald-500 animate-pulse'
-                          : status.includes('Scan') || status.includes('Linking')
+                          : status.includes('Scan') || status.includes('Linking') || status.includes('Connecting')
                           ? 'bg-amber-500 animate-pulse'
                           : 'bg-rose-500'
                       }`}
@@ -347,7 +347,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                         className={
                           status === 'Ready'
                             ? 'text-emerald-600 dark:text-emerald-400 font-bold'
-                            : status.includes('Scan') || status.includes('Linking')
+                            : status.includes('Scan') || status.includes('Linking') || status.includes('Connecting')
                             ? 'text-amber-500 font-bold'
                             : 'text-rose-500 font-bold'
                         }
@@ -356,6 +356,11 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                       </span>
                     </span>
                   </div>
+                  {status.includes('Restoring') && (
+                    <p className="text-emerald-600 dark:text-emerald-400 text-[11px]">
+                      Restoring your saved WhatsApp session from device... Connecting automatically.
+                    </p>
+                  )}
                   {status.includes('Linking') && (
                     <p className="text-amber-600 dark:text-amber-400 text-[11px]">
                       QR scanned. Keep WhatsApp open on your phone until it finishes linking (can take 1–3 minutes). Do not refresh the QR.
@@ -393,7 +398,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                     onClick={handleRefreshQr}
                     disabled={pairingLoading}
                     className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
-                    title="Refresh QR code"
+                    title="Restart WhatsApp while preserving the saved session"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
