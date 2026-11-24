@@ -51,6 +51,7 @@ let whatsappClient: InstanceType<typeof Client> | null = null;
 let whatsappClientReady = false;
 let initializingClient = false;
 let initializationTask: Promise<void> | null = null;
+let clientRefreshTask: Promise<void> | null = null;
 let sessionState: WhatsAppSessionState = {
   connectionStatus: 'Disconnected',
   qrCodeData: '',
@@ -216,7 +217,7 @@ function startSessionKeepAlive(client: InstanceType<typeof Client>) {
     if (whatsappClient !== client || !whatsappClientReady || isWhatsAppPairingInProgress()) return;
     try {
       const state = String((await client.getState()) || '');
-      const healthy = !state || ['CONNECTED', 'OPENING', 'PAIRING', 'SYNCING', 'RESUMING'].includes(state);
+      const healthy = ['CONNECTED', 'OPENING', 'PAIRING', 'SYNCING', 'RESUMING'].includes(state);
       consecutiveBadStates = healthy ? 0 : consecutiveBadStates + 1;
       // Require ~2+ minutes of a persistently bad socket before restarting Chrome;
       // brief TIMEOUT/offline blips self-heal and must not tear down the session.
@@ -355,6 +356,69 @@ function protectAsyncPageEventHandlers(client: InstanceType<typeof Client>): voi
         throw new Error('Could not protect WhatsApp page-navigation handlers from unhandled errors.');
       }
       protectedPages.add(page);
+
+      let compatibilityCheckScheduled = false;
+      const detectUnsupportedLoginPage = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        if (compatibilityCheckScheduled || whatsappClient !== client || !initializingClient) return;
+        compatibilityCheckScheduled = true;
+        const diagnostics = await (page as { evaluate: (fn: () => unknown) => Promise<unknown> }).evaluate(() => {
+          const w = window as unknown as {
+            Debug?: { VERSION?: string };
+            location: Location;
+            require?: (name: string) => { Socket?: object; BackendEventBus?: object } | null;
+          };
+          let hasLegacySocket = false;
+          let hasBackendEventBus = false;
+          try {
+            hasLegacySocket = Boolean(w.require?.('WAWebSocketModel')?.Socket);
+          } catch {
+            // The new login page may not register the legacy socket module.
+          }
+          try {
+            hasBackendEventBus = Boolean(w.require?.('WAWebBackendEventBus')?.BackendEventBus);
+          } catch {
+            // Some WhatsApp Web builds do not register the new event bus module.
+          }
+          return {
+            pathname: w.location.pathname,
+            hasDebugVersion: Boolean(w.Debug?.VERSION),
+            hasLegacySocket,
+            hasBackendEventBus,
+            webVersion: String(w.Debug?.VERSION || ''),
+          };
+        }) as {
+          pathname: string;
+          hasDebugVersion: boolean;
+          hasLegacySocket: boolean;
+          hasBackendEventBus: boolean;
+          webVersion: string;
+        };
+        if (!isUnsupportedWhatsAppLoginPage(diagnostics)) return;
+
+        const message = 'WhatsApp Web has moved to an unsupported login page. The installed WhatsApp client cannot read its QR code yet; update the WhatsApp client when a compatible release is available. The saved login was preserved.';
+        initializingClient = false;
+        whatsappClient = null;
+        whatsappClientReady = false;
+        clearKeepAliveTimers();
+        updateSessionState({
+          connectionStatus: 'Connection error',
+          qrCodeData: '',
+          connectionError: message,
+        });
+        console.error(`[WHATSAPP] Unsupported WhatsApp Web login page detected (build ${diagnostics.webVersion}); stopping initialization instead of waiting for the socket timeout.`);
+        try {
+          await client.destroy();
+        } catch (error) {
+          const destroyMessage = error instanceof Error ? error.message : String(error);
+          console.error(`[WHATSAPP] Failed to stop the browser after detecting an unsupported login page: ${destroyMessage}`);
+        }
+      };
+      pageOn.call(page, 'domcontentloaded', () => {
+        void detectUnsupportedLoginPage().catch((error: unknown) => {
+          console.error(`[WHATSAPP] Failed to inspect WhatsApp login-page compatibility: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      });
     }
 
     // Advertise the *real* installed Chrome version. A stale hard-coded UA (e.g. Chrome 131)
@@ -424,6 +488,22 @@ function protectPageInjection(client: InstanceType<typeof Client>): void {
 
 function resolveProjectPath(configuredPath: string): string {
   return path.resolve(PROJECT_ROOT, configuredPath);
+}
+
+export function isUnsupportedWhatsAppLoginPage(state: {
+  pathname: string;
+  hasDebugVersion: boolean;
+  hasLegacySocket: boolean;
+  hasBackendEventBus?: boolean;
+}): boolean {
+  return (state.pathname === '/login' || state.pathname.startsWith('/login/'))
+    && state.hasDebugVersion
+    && !state.hasLegacySocket
+    && !state.hasBackendEventBus;
+}
+
+export function isUnsupportedWhatsAppLoginPageError(message?: string): boolean {
+  return Boolean(message && /unsupported login page/i.test(message));
 }
 
 function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof Client> {
@@ -546,14 +626,16 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
     initializingClient = false;
     whatsappClientReady = false;
     if (reason === 'LOGOUT') {
+      whatsappClient = null;
       updateSessionState({
-        connectionStatus: 'Connecting (Restoring session)',
+        connectionStatus: 'Connection error',
         qrCodeData: '',
-        connectionError:
-          'WhatsApp Web reported a logout or page restart. Keeping the saved session and trying to reconnect; a new QR is needed only if WhatsApp rejects the saved login.',
+        connectionError: 'WhatsApp Web reported that this session was logged out. The saved product profile was preserved. Use New QR if you want to pair again.',
       });
-      console.warn('[WHATSAPP] WhatsApp Web reported LOGOUT; preserving the saved LocalAuth profile and attempting to restore the session.');
-      scheduleSessionRecovery('LOGOUT', 1500);
+      console.warn('[WHATSAPP] WhatsApp Web reported LOGOUT; preserving the saved LocalAuth profile. A new QR can be requested manually.');
+      void activeClient.destroy().catch((error: unknown) => {
+        console.error(`[WHATSAPP] Failed to close the logged-out browser: ${error instanceof Error ? error.message : String(error)}`);
+      });
       return;
     }
     whatsappClient = null;
@@ -659,24 +741,59 @@ export function initializeWhatsAppClient(
 }
 
 export async function refreshWhatsAppClient(resetProfile = false) {
+  if (clientRefreshTask) {
+    await clientRefreshTask;
+    return;
+  }
+
+  const task = refreshWhatsAppClientInternal(resetProfile);
+  clientRefreshTask = task;
+  try {
+    await task;
+  } finally {
+    if (clientRefreshTask === task) clientRefreshTask = null;
+  }
+}
+
+async function refreshWhatsAppClientInternal(resetProfile: boolean) {
   clearKeepAliveTimers();
-  if (initializationTask) await initializationTask;
+  const taskToStop = initializationTask;
+  if (taskToStop && !resetProfile) await taskToStop;
   const activeClient = whatsappClient;
   if (activeClient) {
-    await activeClient.destroy().catch(() => {});
     if (whatsappClient === activeClient) {
       whatsappClient = null;
       whatsappClientReady = false;
       initializingClient = false;
     }
+    try {
+      await activeClient.destroy();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[WHATSAPP] Failed to stop the browser before session refresh: ${message}`);
+      if (resetProfile) {
+        updateSessionState({ connectionStatus: 'Connection error', qrCodeData: '', connectionError: message });
+        throw error;
+      }
+    }
+  }
+  if (resetProfile && taskToStop) {
+    await taskToStop;
   }
   if (resetProfile) {
-    const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-    for (const dirName of ['session', 'session-go-gas-primary']) {
-      const targetDir = path.join(baseDataPath, dirName);
-      if (fs.existsSync(targetDir)) {
-        await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 4 }).catch(() => {});
+    updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: '' });
+    try {
+      const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
+      for (const dirName of ['session', 'session-go-gas-primary']) {
+        const targetDir = path.join(baseDataPath, dirName);
+        if (fs.existsSync(targetDir)) {
+          await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 4 });
+        }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      updateSessionState({ connectionStatus: 'Connection error', qrCodeData: '', connectionError: message });
+      throw error;
     }
     console.info('[WHATSAPP] Cleared stale LocalAuth session directory for fresh QR pairing.');
   }

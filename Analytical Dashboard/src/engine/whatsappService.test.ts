@@ -9,6 +9,8 @@ import {
   isRetryableWhatsAppInitializationError,
   isRetryableWhatsAppDispatchError,
   isWhatsAppSessionProfileLockError,
+  isUnsupportedWhatsAppLoginPage,
+  isUnsupportedWhatsAppLoginPageError,
   hasSavedSessionOnDisk,
   setWhatsAppRecipients,
   sendWhatsAppMessage,
@@ -73,6 +75,43 @@ test('recognizes locked WhatsApp browser session files for safe recovery', () =>
     true,
   );
   assert.equal(isWhatsAppSessionProfileLockError(new Error('Authentication failed.')), false);
+});
+
+test('recognizes the unsupported logged-out WhatsApp login route without a socket module', () => {
+  assert.equal(isUnsupportedWhatsAppLoginPage({
+    pathname: '/login/',
+    hasDebugVersion: true,
+    hasLegacySocket: false,
+  }), true);
+  assert.equal(isUnsupportedWhatsAppLoginPage({
+    pathname: '/login/',
+    hasDebugVersion: true,
+    hasLegacySocket: false,
+    hasBackendEventBus: true,
+  }), false);
+  assert.equal(isUnsupportedWhatsAppLoginPage({
+    pathname: '/',
+    hasDebugVersion: true,
+    hasLegacySocket: false,
+  }), false);
+  assert.equal(isUnsupportedWhatsAppLoginPage({
+    pathname: '/login/',
+    hasDebugVersion: true,
+    hasLegacySocket: true,
+  }), false);
+  assert.equal(isUnsupportedWhatsAppLoginPage({
+    pathname: '/login/',
+    hasDebugVersion: false,
+    hasLegacySocket: false,
+  }), false);
+});
+
+test('recognizes unsupported login errors so fresh-QR requests can preserve saved credentials', () => {
+  assert.equal(isUnsupportedWhatsAppLoginPageError(
+    'WhatsApp Web has moved to an unsupported login page.',
+  ), true);
+  assert.equal(isUnsupportedWhatsAppLoginPageError('Authentication failed.'), false);
+  assert.equal(isUnsupportedWhatsAppLoginPageError(undefined), false);
 });
 
 test('uses the saved recipient list for later WhatsApp sends', () => {
@@ -339,7 +378,7 @@ test('formats WhatsApp sales brief with schema discount and scheme amounts when 
     },
   });
 
-  assert.match(msg, /\*Discount:\* ₹15,000/);
+  assert.match(msg, /\*Discount \(est\.\):\* ₹15,000/);
 });
 
 test('hasSavedSessionOnDisk detects presence of saved session directory safely', () => {

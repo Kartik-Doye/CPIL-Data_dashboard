@@ -8,6 +8,7 @@ import sys
 import os
 import argparse
 import datetime
+import re
 import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
@@ -116,6 +117,36 @@ def process_file(file_path, dry_run=False):
         except (TypeError, ValueError):
             raise ValueError(f'[FAILED] Row {index + 2}, column "{source_col}" ({col}): expected a number, got "{raw}".')
 
+    def estimate_scheme_discount(value, sale_qty, sale_rate, row_number):
+        if pd.isna(value) or str(value).strip() == "":
+            return 0
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip()
+        if text.upper() == "NA":
+            return 0
+        try:
+            return float(text.replace(",", ""))
+        except ValueError:
+            pass
+
+        percentage = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+        if percentage:
+            return round(sale_qty * sale_rate * float(percentage.group(1)) / 100, 2)
+
+        currency_amount = re.search(r"(?:₹\s*|(?:RS\.?|INR)\s*)([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+        if currency_amount:
+            amount = float(currency_amount.group(1).replace(",", ""))
+            if re.search(r"(?:PER\s*(?:LITRE|LTR|L)|/\s*L(?:ITRE|TR)?)", text, re.IGNORECASE):
+                return round(amount * sale_qty, 2)
+            return amount
+
+        raise ValueError(
+            f'[FAILED] Row {row_number}, column "SCHEME" (Scheme): '
+            f'could not estimate discount from "{text}".'
+        )
+
     try:
         for index, row in df.iterrows():
             for label, aliases in [
@@ -128,14 +159,15 @@ def process_file(file_path, dry_run=False):
                 ("Ret Test/Cal", ["RET TEST/CAL"]),
                 ("Free Sale Litres", ["FREE SALE LITRES", "Free Sale Litres"]),
                 ("Free Sale Rupees", ["FREE SALE RUPEES", "Free Sale Rupees"]),
-                ("Scheme", ["SCHEME"]),
                 ("Paytm", ["PAYTM"]),
                 ("Net Cash Collection", ["NET CASH COLLECTION"]),
                 ("Closing Dip", ["CLOSING DIP IN LTR", "CLOSING DIP"]),
             ]:
-                if label == "Scheme" and str(row.get("SCHEME", "")).strip().upper() == "NA":
-                    continue
                 number_value(row, index, label, aliases)
+            sale_qty = number_value(row, index, "Sale Qty", ["SALE QTY", "Sale Qty"])
+            new_rate = number_value(row, index, "New Rate", ["NEW RATE", "New Rate"])
+            erp_rate = number_value(row, index, "ERP Rate", ["ERP RATE"])
+            estimate_scheme_discount(row.get("SCHEME", 0), sale_qty, new_rate or erp_rate, index + 2)
     except ValueError as e:
         log(str(e))
         return False
@@ -202,8 +234,9 @@ def process_file(file_path, dry_run=False):
             rtest = number_value(r, index, "Ret Test/Cal", ["RET TEST/CAL"])
             flit = number_value(r, index, "Free Sale Litres", ["FREE SALE LITRES", "Free Sale Litres"])
             frup = number_value(r, index, "Free Sale Rupees", ["FREE SALE RUPEES", "Free Sale Rupees"])
-            scheme_val = r.get("SCHEME", 0)
-            scheme = None if str(scheme_val).strip().upper() == "NA" else number_value(r, index, "Scheme", ["SCHEME"])
+            scheme = estimate_scheme_discount(
+                r.get("SCHEME", 0), sqty, nrate or erate, index + 2
+            )
             paytm = number_value(r, index, "Paytm", ["PAYTM"])
             ncash = number_value(r, index, "Net Cash Collection", ["NET CASH COLLECTION"])
             cdip = number_value(r, index, "Closing Dip", ["CLOSING DIP IN LTR", "CLOSING DIP"])

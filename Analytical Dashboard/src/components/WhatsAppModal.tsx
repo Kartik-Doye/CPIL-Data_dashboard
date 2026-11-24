@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { QRCodeSVG } from 'qrcode.react';
 import productConfig from '../../../product-config.json';
@@ -32,6 +32,15 @@ interface WhatsAppModalProps {
   onClose: () => void;
 }
 
+function isUnsupportedLoginError(message: string): boolean {
+  return /unsupported login page/i.test(message);
+}
+
+function getDisplayConnectionError(error: string): string {
+  if (!isUnsupportedLoginError(error)) return error;
+  return 'WhatsApp Web changed its login page. The installed client cannot generate a QR yet. Your saved login was preserved; pairing will be available when a compatible client release is available.';
+}
+
 export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose }) => {
   const [status, setStatus] = useState<string>('');
   const [qrCodeData, setQrCodeData] = useState<string>('');
@@ -48,6 +57,19 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
   const [broadcastResult, setBroadcastResult] = useState<{ message: string; success: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<'portal' | 'logs'>('portal');
   const [logs, setLogs] = useState<WhatsAppLog[]>([]);
+  const unsupportedLoginPage = useRef(false);
+  const connectionErrorActive = useRef(false);
+
+  const updateConnectionError = (error: string) => {
+    unsupportedLoginPage.current = isUnsupportedLoginError(error);
+    connectionErrorActive.current = Boolean(error);
+    setConnectionError(getDisplayConnectionError(error));
+    if (connectionErrorActive.current) {
+      setStatus('Connection error');
+      setQrCodeData('');
+      setShowQr(false);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -62,10 +84,16 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
             : []
         );
         if (data.dailyMessageText) setMessage(data.dailyMessageText);
-        if (data.connectionStatus) setStatus(data.connectionStatus);
         if (data.scheduledTime) setScheduledTime(data.scheduledTime);
-        setConnectionError(data.connectionError || '');
-        const currentQrCode = data.connectionStatus === 'Ready' ? '' : data.qrCodeData || '';
+        const error = data.connectionError || '';
+        updateConnectionError(error);
+        const effectiveStatus = isUnsupportedLoginError(error)
+          ? 'Connection error'
+          : data.connectionStatus;
+        if (effectiveStatus) setStatus(effectiveStatus);
+        const currentQrCode = effectiveStatus === 'Ready' || isUnsupportedLoginError(error)
+          ? ''
+          : data.qrCodeData || '';
         setQrCodeData(currentQrCode);
         setShowQr(Boolean(currentQrCode));
       })
@@ -81,10 +109,15 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
     const socket: Socket = io({ path: '/socket.io' });
 
     socket.on('status-update', (latestStatus: string) => {
+      if (connectionErrorActive.current) {
+        setStatus('Connection error');
+        return;
+      }
       setStatus(latestStatus);
       if (latestStatus === 'Ready') {
         setQrCodeData(''); // Wipe QR code once authenticated
         setShowQr(false);
+        updateConnectionError('');
       }
     });
 
@@ -94,7 +127,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
     });
 
     socket.on('connection-error', (error: string) => {
-      setConnectionError(error);
+      updateConnectionError(error);
     });
 
     socket.on('broadcast-success', (payload: any) => {
@@ -115,15 +148,18 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!data) return;
+          const error = data.connectionError || '';
+          updateConnectionError(error);
           if (data.connectionStatus) {
-            setStatus(data.connectionStatus);
-            if (data.connectionStatus === 'Ready') {
+            const effectiveStatus = error ? 'Connection error' : data.connectionStatus;
+            setStatus(effectiveStatus);
+            if (effectiveStatus === 'Ready') {
               setQrCodeData('');
               setShowQr(false);
-              setConnectionError('');
+              updateConnectionError('');
             }
           }
-          if (data.connectionStatus !== 'Ready' && data.qrCodeData) {
+          if (!error && data.connectionStatus !== 'Ready' && data.qrCodeData) {
             setQrCodeData(data.qrCodeData);
           }
         })
@@ -207,9 +243,13 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
   };
 
   const handlePairDirectly = async () => {
+    if (unsupportedLoginPage.current) {
+      updateConnectionError('WhatsApp is on an unsupported login page, so this client cannot generate a QR yet. Your saved login was not removed.');
+      return;
+    }
     setPairingLoading(true);
     setShowQr(true);
-    setConnectionError('');
+    updateConnectionError('');
     try {
       const res = await fetch('/api/whatsapp/pair', { method: 'POST' });
       const data = await res.json();
@@ -217,20 +257,24 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
         throw new Error(data.connectionError || data.error || 'Could not start WhatsApp pairing.');
       }
       setStatus(data.connectionStatus);
-      setConnectionError(data.connectionError || '');
+      updateConnectionError(data.connectionError || '');
       setQrCodeData(data.qrCodeData || '');
     } catch (err) {
-      setConnectionError(err instanceof Error ? err.message : String(err));
+      updateConnectionError(err instanceof Error ? err.message : String(err));
     } finally {
       setPairingLoading(false);
     }
   };
 
   const handleRefreshQr = async () => {
+    if (unsupportedLoginPage.current) {
+      updateConnectionError('WhatsApp is on an unsupported login page, so restarting cannot generate a QR yet. Your saved login was not removed.');
+      return;
+    }
     setPairingLoading(true);
     setShowQr(true);
     setQrCodeData('');
-    setConnectionError('');
+    updateConnectionError('');
     try {
       const res = await fetch('/api/whatsapp/refresh-qr', { method: 'POST' });
       const data = await res.json();
@@ -239,9 +283,37 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       }
       setQrCodeData(data.qrCodeData || data.qr || '');
       setStatus(data.connectionStatus || data.status);
-      setConnectionError(data.connectionError || '');
+      updateConnectionError(data.connectionError || '');
     } catch (err) {
-      setConnectionError(err instanceof Error ? err.message : String(err));
+      updateConnectionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPairingLoading(false);
+    }
+  };
+
+  const handleGenerateNewQr = async () => {
+    if (unsupportedLoginPage.current) {
+      updateConnectionError('WhatsApp is on an unsupported login page, so a new QR cannot be generated yet. Your saved login was not removed.');
+      return;
+    }
+    if (!window.confirm('Generate a new QR? This removes the saved WhatsApp login from this product, and you will need to scan again.')) {
+      return;
+    }
+    setPairingLoading(true);
+    setShowQr(true);
+    setQrCodeData('');
+    updateConnectionError('');
+    try {
+      const res = await fetch('/api/whatsapp/new-qr', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.connectionError || data.error || 'Could not generate a new WhatsApp QR code.');
+      }
+      setQrCodeData(data.qrCodeData || data.qr || '');
+      setStatus(data.connectionStatus || data.status);
+      updateConnectionError(data.connectionError || '');
+    } catch (err) {
+      updateConnectionError(err instanceof Error ? err.message : String(err));
     } finally {
       setPairingLoading(false);
     }
@@ -254,9 +326,9 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
       setStatus(data.status);
       setQrCodeData('');
       setShowQr(false);
-      setConnectionError(data.error || '');
+      updateConnectionError(data.error || '');
     } catch (err) {
-      setConnectionError(err instanceof Error ? err.message : String(err));
+      updateConnectionError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -373,18 +445,35 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {status !== 'Ready' && !status.includes('Linking') ? (
+                  {status !== 'Ready' && !status.includes('Linking') && (
                     <button
                       type="button"
                       onClick={handlePairDirectly}
-                      disabled={pairingLoading}
+                      disabled={pairingLoading || unsupportedLoginPage.current}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold transition-colors cursor-pointer text-xs flex items-center gap-1 shadow-xs"
-                      title="Pair session directly to enable automated daily delivery"
+                      title={unsupportedLoginPage.current
+                        ? 'QR pairing is unavailable until a compatible WhatsApp client release is available.'
+                        : 'Pair session directly to enable automated daily delivery'}
                     >
                       <QrCode className="w-3.5 h-3.5" />
-                      <span>{pairingLoading ? 'Connecting…' : 'Show Pairing QR'}</span>
+                      <span>{pairingLoading ? 'Connecting…' : unsupportedLoginPage.current ? 'Pairing unavailable' : 'Show Pairing QR'}</span>
                     </button>
-                  ) : (
+                  )}
+                  {status
+                    && !status.includes('Linking') && (
+                    <button
+                      type="button"
+                      onClick={handleGenerateNewQr}
+                      disabled={pairingLoading || unsupportedLoginPage.current}
+                      className="px-2.5 py-1.5 rounded-lg border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 disabled:opacity-60 transition-colors text-xs cursor-pointer"
+                      title={unsupportedLoginPage.current
+                        ? 'A QR cannot be generated until WhatsApp Web is supported; your saved login will be preserved.'
+                        : 'Remove the saved product session and generate a new pairing QR'}
+                    >
+                      {unsupportedLoginPage.current ? 'New QR unavailable' : 'New QR'}
+                    </button>
+                  )}
+                  {(status === 'Ready' || status.includes('Linking')) && (
                     <button
                       type="button"
                       onClick={handleDisconnect}
@@ -396,9 +485,11 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({ isOpen, onClose })
                   <button
                     type="button"
                     onClick={handleRefreshQr}
-                    disabled={pairingLoading}
+                    disabled={pairingLoading || unsupportedLoginPage.current}
                     className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
-                    title="Restart WhatsApp while preserving the saved session"
+                    title={unsupportedLoginPage.current
+                      ? 'Restarting cannot generate a QR until a compatible WhatsApp client release is available.'
+                      : 'Restart WhatsApp while preserving the saved session'}
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>

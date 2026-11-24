@@ -17,8 +17,9 @@ of adding a date column, saving as CSV, and importing via pgAdmin.
 4. Validates the file:
    - Header `Cost Code` must be found (case/spaces ignored).
    - All 28 columns must be present.
-   - Number columns must hold numbers only.
-   - `NA` is allowed **only** in the `SCHEME` column (stored as empty/NULL).
+   - Number columns must hold numbers only. `SCHEME` may also contain a
+     discount description such as `5% DISCOUNT` or `RS. 20 DISCOUNT`.
+   - Blank or `NA` Scheme values are treated as no discount.
    - A blank or repeated Cost Code stops the file.
 5. Inserts all rows for that date in **one transaction** — either the whole
    day loads, or nothing does.
@@ -26,6 +27,12 @@ of adding a date column, saving as CSV, and importing via pgAdmin.
 
 The loader does not create an archive copy. The source workbook remains where
 you saved it; save a separate backup yourself only if you need one.
+
+Textual Scheme discounts are estimates stored in the numeric `scheme` field:
+percentage discounts are applied to the full daily sale quantity at the
+station's listed rate (assuming all sales qualify), per-litre amounts are
+multiplied by daily sale quantity, and other fixed amounts are counted once
+per station/day. Per-filling totals cannot be exact without transaction counts.
 
 The database user `bot_loader` can only **SELECT** and **INSERT**. It cannot
 UPDATE or DELETE, so the script can never erase history.

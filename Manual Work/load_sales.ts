@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import pg from 'pg';
 import productConfig from '../product-config.json';
 import { readSpreadsheetRows } from '../Analytical Dashboard/src/engine/excel.js';
+import { estimateSchemeDiscount } from './schemeDiscount.js';
 
 const { Pool } = pg;
 
@@ -161,6 +162,8 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
       const collection = readNumber(r, ['COLLECTION'], rowNumber, 'Collection');
       const newRate = readNumber(r, ['NEW RATE', 'New Rate'], rowNumber, 'New Rate');
       const erpRate = readNumber(r, ['ERP RATE'], rowNumber, 'ERP Rate');
+      const schemeCell = findCell(r, ['SCHEME']);
+      const scheme = estimateSchemeDiscount(schemeCell?.[1], saleQty, newRate || erpRate, rowNumber);
       const freeSaleLitres = readNumber(r, ['FREE SALE LITRES', 'Free Sale Litres', 'FREE SALE LTR'], rowNumber, 'Free Sale Litres');
       const paytm = readNumber(r, ['PAYTM'], rowNumber, 'Paytm');
       const netCashCollection = readNumber(r, ['NET CASH COLLECTION'], rowNumber, 'Net Cash Collection');
@@ -201,9 +204,7 @@ export async function processSaleFile(filePath: string, isDryRun = false) {
         ret_test_cal: readNumber(r, ['RET TEST/CAL'], rowNumber, 'Ret Test/Cal'),
         free_sale_litres: freeSaleLitres,
         free_sale_rupees: readNumber(r, ['FREE SALE RUPEES', 'Free Sale Rupees'], rowNumber, 'Free Sale Rupees'),
-        scheme: String(findCell(r, ['SCHEME'])?.[1] ?? '').trim().toUpperCase() === 'NA'
-          ? null
-          : readNumber(r, ['SCHEME'], rowNumber, 'Scheme'),
+        scheme,
         paytm,
         net_cash_collection: netCashCollection,
         closing_dip_in_ltr: readNumber(r, ['CLOSING DIP IN LTR', 'CLOSING DIP'], rowNumber, 'Closing Dip'),

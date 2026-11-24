@@ -162,7 +162,7 @@ export function buildExecutiveWhatsAppMessage(telemetry: WhatsAppSalesTelemetry)
   return [
     `🙏 *GO GAS EXECUTIVE BRIEF | ${dateLabel}*`,
     `Respected Leadership, sharing today's analytical summary:`,
-    `📊 *Sales:* ${wholeNumberFormat(telemetry.total_sale_qty)} L (${salesChange} vs 7d) | *Collection:* ₹${wholeNumberFormat(telemetry.total_collection)}${effectiveDiscount > 0 ? ` | *Discount:* ₹${wholeNumberFormat(effectiveDiscount)}${discountPerL ? ` (₹${discountPerL}/L)` : ''}` : ''}`,
+    `📊 *Sales:* ${wholeNumberFormat(telemetry.total_sale_qty)} L (${salesChange} vs 7d) | *Collection:* ₹${wholeNumberFormat(telemetry.total_collection)}${effectiveDiscount > 0 ? ` | *Discount (est.):* ₹${wholeNumberFormat(effectiveDiscount)}${discountPerL ? ` (₹${discountPerL}/L)` : ''}` : ''}`,
     `💳 *Payment Mix:* Digital ${paytmShare} | Cash ${cashShare}${topCashStation ? ` (Top Cash: ${topCashStation.name} ${topCashStation.cashPct}%)` : ''}`,
     `📈 *Active:* ${telemetry.stations_with_sale}/${telemetry.stations_total} | *Forecast (${forecastDate}):* ${forecastSummary}`,
     ...(targetSummaryLine ? [targetSummaryLine] : []),
