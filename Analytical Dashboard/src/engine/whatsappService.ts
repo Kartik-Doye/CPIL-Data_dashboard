@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import whatsappWeb from 'whatsapp-web.js';
 import type { ExecutiveTelemetry, StationRecord } from '../types.js';
@@ -69,6 +70,10 @@ function clearKeepAliveTimers() {
     clearTimeout(autoReconnectTimer);
     autoReconnectTimer = null;
   }
+  if (sessionRecoveryTimer) {
+    clearTimeout(sessionRecoveryTimer);
+    sessionRecoveryTimer = null;
+  }
   if (keepAliveInterval) {
     clearInterval(keepAliveInterval);
     keepAliveInterval = null;
@@ -85,13 +90,17 @@ let lastSessionRecoveryAt = 0;
 // After the QR is scanned, WhatsApp performs an end-to-end handshake and initial history
 // sync with the phone. Restarting or re-injecting the browser during this window makes the
 // phone show "Logging in..." forever and the device never appears under Linked Devices.
-const PAIRING_GRACE_MS = 4 * 60_000;
+const PAIRING_GRACE_MS = 3 * 60_000;
 let pairingStartedAt = 0;
 
 function markPairingStarted() {
   if (autoReconnectTimer) {
     clearTimeout(autoReconnectTimer);
     autoReconnectTimer = null;
+  }
+  if (sessionRecoveryTimer) {
+    clearTimeout(sessionRecoveryTimer);
+    sessionRecoveryTimer = null;
   }
   if (!pairingStartedAt) {
     pairingStartedAt = Date.now();
@@ -102,7 +111,7 @@ function markPairingStarted() {
   }
 }
 
-function clearPairing() {
+export function clearPairing() {
   pairingStartedAt = 0;
 }
 
@@ -111,9 +120,9 @@ export function isWhatsAppPairingInProgress(): boolean {
 }
 
 /**
- * Restart the browser client (keeping the saved LocalAuth profile) after a logout or a
- * stuck page. If the saved credentials are still valid, it reconnects silently; if WhatsApp
- * has unlinked this device, a fresh QR code is shown in the dashboard automatically.
+ * Restart the browser client after a logout or a stuck page.
+ * When resetProfile is true (e.g. phone unlinked the device), clears the revoked session
+ * so a fresh QR code is generated immediately.
  */
 function scheduleSessionRecovery(reason: string, delayMs = 4000, resetProfile = false) {
   if (!WHATSAPP_ENABLED || sessionRecoveryTimer) return;
@@ -135,6 +144,7 @@ function scheduleSessionRecovery(reason: string, delayMs = 4000, resetProfile = 
 
 function startReadyStateDetection(client: InstanceType<typeof Client>) {
   if (readyPollInterval) clearInterval(readyPollInterval);
+  let readyConfirmedTicks = 0;
   readyPollInterval = setInterval(async () => {
     if (whatsappClient !== client) {
       if (readyPollInterval) clearInterval(readyPollInterval);
@@ -165,29 +175,30 @@ function startReadyStateDetection(client: InstanceType<typeof Client>) {
           hasWid = Boolean(prefs?.getMaybeMePnUser?.() || prefs?.getMaybeMeLidUser?.());
         } catch {}
         const wwebReady = typeof w.WWebJS !== 'undefined';
-        // A WID appears the instant the QR is scanned, long before the phone finishes linking.
-        // Only a CONNECTED socket that has completed its initial sync is a real, usable link.
-        const linked = socketState === 'CONNECTED' && hasSynced;
-        const scanned = hasWid || socketState === 'OPENING' || socketState === 'CONNECTED';
-        if (linked && typeof w.onAppStateHasSyncedEvent === 'function' && !wwebReady) {
+        const linked = hasWid && socketState === 'CONNECTED' && hasSynced;
+        // Only trigger onAppStateHasSyncedEvent once per page load if hasSynced was already true before listener attachment
+        if (linked && typeof w.onAppStateHasSyncedEvent === 'function' && !wwebReady && !w.__goGasSyncTriggered) {
+          w.__goGasSyncTriggered = true;
           void w.onAppStateHasSyncedEvent();
         }
-        return { linked, scanned, synced: hasSynced, wwebReady, socketState };
-      })) as { linked?: boolean; scanned?: boolean; synced?: boolean; wwebReady?: boolean; socketState?: string } | null;
-
-      if (check?.scanned && !check?.linked && !whatsappClientReady && sessionState.qrCodeData) {
-        markPairingStarted();
-      }
+        return { linked, synced: hasSynced, wwebReady, socketState };
+      })) as { linked?: boolean; synced?: boolean; wwebReady?: boolean; socketState?: string } | null;
 
       if (check?.linked && check?.wwebReady && !whatsappClientReady) {
-        clearPairing();
-        whatsappClientReady = true;
-        initializingClient = false;
-        updateSessionState({ connectionStatus: 'Ready', qrCodeData: '' });
-        startSessionKeepAlive(client);
-        console.log('[WHATSAPP] Detected active linked WhatsApp Web session via live page probe; status promoted to Ready.');
-        if (readyPollInterval) clearInterval(readyPollInterval);
-        readyPollInterval = null;
+        readyConfirmedTicks++;
+        // Allow Client.js one cycle (~2s) to emit Events.READY naturally after LoadUtils finishes
+        if (readyConfirmedTicks >= 2 && !whatsappClientReady) {
+          clearPairing();
+          whatsappClientReady = true;
+          initializingClient = false;
+          updateSessionState({ connectionStatus: 'Ready', qrCodeData: '' });
+          startSessionKeepAlive(client);
+          console.log('[WHATSAPP] Detected active linked WhatsApp Web session via live page probe; status promoted to Ready.');
+          if (readyPollInterval) clearInterval(readyPollInterval);
+          readyPollInterval = null;
+        }
+      } else {
+        readyConfirmedTicks = 0;
       }
     } catch {
       // Ignore evaluation errors while page is navigating
@@ -210,21 +221,73 @@ function scheduleAutoReconnect(reason: string, delayMs = 8000) {
   }, delayMs);
 }
 
+async function sendActivePresenceHeartbeat(client: InstanceType<typeof Client>): Promise<string> {
+  const page = Reflect.get(client, 'pupPage') as {
+    isClosed?: () => boolean;
+    evaluate?: (fn: () => unknown) => Promise<unknown>;
+  } | null;
+  if (!page || page.isClosed?.() || typeof page.evaluate !== 'function') {
+    return 'CLOSED';
+  }
+  return String(
+    (await page.evaluate(() => {
+      const w = window as unknown as Record<string, any>;
+      try {
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        document.hasFocus = () => true;
+      } catch {}
+
+      let socketState = '';
+      try {
+        const sock = w.require?.('WAWebSocketModel')?.Socket;
+        socketState = String(sock?.state || '');
+        if (socketState === 'TIMEOUT' || socketState === 'CLOSED') {
+          if (typeof sock?.poke === 'function') sock.poke();
+          else if (typeof sock?.launch === 'function') sock.launch();
+        }
+      } catch {}
+
+      if (!socketState) {
+        try {
+          const s = w.require?.('WAWebBackendEventBus')?.BackendEventBus?.socketState;
+          if (s) socketState = String(s);
+        } catch {}
+      }
+
+      if (!socketState || socketState === 'CONNECTED') {
+        try {
+          w.require?.('WAWebPresenceChatAction')?.sendPresenceAvailable?.();
+        } catch {}
+      }
+      return socketState;
+    })) || ''
+  );
+}
+
 function startSessionKeepAlive(client: InstanceType<typeof Client>) {
   if (keepAliveInterval) clearInterval(keepAliveInterval);
   let consecutiveBadStates = 0;
+  // Send an immediate presence heartbeat as soon as session becomes Ready
+  void sendActivePresenceHeartbeat(client).catch(() => {});
+
   keepAliveInterval = setInterval(async () => {
     if (whatsappClient !== client || !whatsappClientReady || isWhatsAppPairingInProgress()) return;
     try {
-      const state = String((await client.getState()) || '');
-      const healthy = ['CONNECTED', 'OPENING', 'PAIRING', 'SYNCING', 'RESUMING'].includes(state);
-      consecutiveBadStates = healthy ? 0 : consecutiveBadStates + 1;
-      // Require ~2+ minutes of a persistently bad socket before restarting Chrome;
-      // brief TIMEOUT/offline blips self-heal and must not tear down the session.
+      const page = Reflect.get(client, 'pupPage') as { isClosed?: () => boolean } | null;
+      if (page?.isClosed?.()) {
+        console.warn('[WHATSAPP] Keep-alive detected closed browser page; reconnecting with saved session...');
+        await refreshWhatsAppClient(false);
+        return;
+      }
+      const state = await sendActivePresenceHeartbeat(client);
+      // Empty state or standard active/reconnecting states are healthy; never tear down a live session on empty state
+      const unhealthy = ['UNPAIRED', 'UNPAIRED_IDLE', 'CONFLICT', 'DEPRECATED_VERSION', 'TOS_BLOCK', 'SMB_TOS_BLOCK'].includes(state);
+      consecutiveBadStates = unhealthy ? consecutiveBadStates + 1 : 0;
       if (consecutiveBadStates >= 3) {
         consecutiveBadStates = 0;
-        console.warn(`[WHATSAPP] Keep-alive detected persistent socket state "${state}"; restarting session with saved login...`);
-        await refreshWhatsAppClient();
+        console.warn(`[WHATSAPP] Keep-alive detected persistent unlinked socket state "${state}"; restarting session...`);
+        await refreshWhatsAppClient(false);
       }
     } catch {
       // Ignore transient page evaluation hiccups during navigation
@@ -276,15 +339,18 @@ function handlePageEventError(client: InstanceType<typeof Client>, error: unknow
     console.warn(`[WHATSAPP] Puppeteer could not read a navigation response body; continuing with the live session: ${message}`);
     return;
   }
+  if (isPageNavigationRace(error)) {
+    console.warn(`[WHATSAPP] Ignoring transient browser navigation/context event: ${message}`);
+    return;
+  }
+  if (whatsappClient === client && whatsappClientReady) {
+    console.warn(`[WHATSAPP] Ignoring non-fatal browser page event on active Ready session: ${message}`);
+    return;
+  }
   if (isWhatsAppSessionProfileLockError(error)) {
-    const recoveryMessage = 'WhatsApp could not update its locked browser session. Select Refresh QR to restart WhatsApp; do not delete .wwebjs_auth.';
-    console.error(`[WHATSAPP] Session-profile cleanup failed while Chrome may still be using it: ${message}`);
+    console.warn(`[WHATSAPP] Session-profile lock encountered during page event; scheduling non-destructive recovery: ${message}`);
     if (whatsappClient === client) {
-      updateSessionState({
-        connectionStatus: 'Connection error',
-        qrCodeData: '',
-        connectionError: recoveryMessage,
-      });
+      scheduleSessionRecovery('profile_lock', 2500, false);
     }
     return;
   }
@@ -296,15 +362,16 @@ function handlePageEventError(client: InstanceType<typeof Client>, error: unknow
         console.info('[WHATSAPP] Page is still syncing with the phone; not restarting during linking.');
         return;
       }
-      // The page never finished loading WhatsApp Web (usually right after a logout/unlink).
-      // Restart the browser so the user gets a working QR or a silent reconnect.
       whatsappClientReady = false;
       updateSessionState({
         connectionStatus: 'Connecting (Scan QR)',
         qrCodeData: '',
-        connectionError: 'WhatsApp Web stopped responding; restarting the browser session automatically...',
       });
-      scheduleSessionRecovery(message);
+      scheduleSessionRecovery(message, 2500, false);
+      return;
+    }
+    // If a QR code is already displayed, do not wipe it on a background page warning
+    if (sessionState.qrCodeData) {
       return;
     }
     updateSessionState({
@@ -323,6 +390,9 @@ function protectAsyncPageEventHandlers(client: InstanceType<typeof Client>): voi
   }
 
   const guardedAfterBrowserInitialized = async (...args: unknown[]) => {
+    const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
+    recordBrowserPid(client, baseDataPath);
+
     const page = Reflect.get(client, 'pupPage');
     if (page && typeof page === 'object' && !protectedPages.has(page)) {
       const pageOn = Reflect.get(page, 'on');
@@ -336,6 +406,13 @@ function protectAsyncPageEventHandlers(client: InstanceType<typeof Client>): voi
         }
 
         const guardedListener = (...eventArgs: unknown[]) => {
+          // Ignore child iframe navigations so they never trigger main-page re-injection
+          if (eventName === 'framenavigated') {
+            const frame = eventArgs[0] as { parentFrame?: () => unknown } | undefined;
+            if (frame && typeof frame.parentFrame === 'function' && frame.parentFrame() !== null) {
+              return undefined;
+            }
+          }
           try {
             const result = Reflect.apply(listener, page, eventArgs);
             if (result && typeof Reflect.get(result, 'then') === 'function') {
@@ -356,69 +433,6 @@ function protectAsyncPageEventHandlers(client: InstanceType<typeof Client>): voi
         throw new Error('Could not protect WhatsApp page-navigation handlers from unhandled errors.');
       }
       protectedPages.add(page);
-
-      let compatibilityCheckScheduled = false;
-      const detectUnsupportedLoginPage = async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        if (compatibilityCheckScheduled || whatsappClient !== client || !initializingClient) return;
-        compatibilityCheckScheduled = true;
-        const diagnostics = await (page as { evaluate: (fn: () => unknown) => Promise<unknown> }).evaluate(() => {
-          const w = window as unknown as {
-            Debug?: { VERSION?: string };
-            location: Location;
-            require?: (name: string) => { Socket?: object; BackendEventBus?: object } | null;
-          };
-          let hasLegacySocket = false;
-          let hasBackendEventBus = false;
-          try {
-            hasLegacySocket = Boolean(w.require?.('WAWebSocketModel')?.Socket);
-          } catch {
-            // The new login page may not register the legacy socket module.
-          }
-          try {
-            hasBackendEventBus = Boolean(w.require?.('WAWebBackendEventBus')?.BackendEventBus);
-          } catch {
-            // Some WhatsApp Web builds do not register the new event bus module.
-          }
-          return {
-            pathname: w.location.pathname,
-            hasDebugVersion: Boolean(w.Debug?.VERSION),
-            hasLegacySocket,
-            hasBackendEventBus,
-            webVersion: String(w.Debug?.VERSION || ''),
-          };
-        }) as {
-          pathname: string;
-          hasDebugVersion: boolean;
-          hasLegacySocket: boolean;
-          hasBackendEventBus: boolean;
-          webVersion: string;
-        };
-        if (!isUnsupportedWhatsAppLoginPage(diagnostics)) return;
-
-        const message = 'WhatsApp Web has moved to an unsupported login page. The installed WhatsApp client cannot read its QR code yet; update the WhatsApp client when a compatible release is available. The saved login was preserved.';
-        initializingClient = false;
-        whatsappClient = null;
-        whatsappClientReady = false;
-        clearKeepAliveTimers();
-        updateSessionState({
-          connectionStatus: 'Connection error',
-          qrCodeData: '',
-          connectionError: message,
-        });
-        console.error(`[WHATSAPP] Unsupported WhatsApp Web login page detected (build ${diagnostics.webVersion}); stopping initialization instead of waiting for the socket timeout.`);
-        try {
-          await client.destroy();
-        } catch (error) {
-          const destroyMessage = error instanceof Error ? error.message : String(error);
-          console.error(`[WHATSAPP] Failed to stop the browser after detecting an unsupported login page: ${destroyMessage}`);
-        }
-      };
-      pageOn.call(page, 'domcontentloaded', () => {
-        void detectUnsupportedLoginPage().catch((error: unknown) => {
-          console.error(`[WHATSAPP] Failed to inspect WhatsApp login-page compatibility: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      });
     }
 
     // Advertise the *real* installed Chrome version. A stale hard-coded UA (e.g. Chrome 131)
@@ -452,6 +466,18 @@ function protectPageInjection(client: InstanceType<typeof Client>): void {
   let injectionTask: Promise<unknown> | null = null;
   const guardedInject = async (...args: unknown[]) => {
     if (injectionTask) return injectionTask;
+    // If the session is already Ready and window.WWebJS is intact on the main page, skip redundant re-injection
+    if (whatsappClient === client && whatsappClientReady) {
+      const page = Reflect.get(client, 'pupPage') as { evaluate?: (fn: () => unknown) => Promise<unknown> } | null;
+      if (page && typeof page.evaluate === 'function') {
+        const alreadyInjected = await page
+          .evaluate(() => typeof (window as unknown as Record<string, unknown>).WWebJS !== 'undefined')
+          .catch(() => false);
+        if (alreadyInjected) {
+          return undefined;
+        }
+      }
+    }
     const task = (async () => {
       for (let attempt = 1; attempt <= 5; attempt++) {
         try {
@@ -506,16 +532,220 @@ export function isUnsupportedWhatsAppLoginPageError(message?: string): boolean {
   return Boolean(message && /unsupported login page/i.test(message));
 }
 
+function getChromePidFilePath(baseDataPath: string): string {
+  return path.join(baseDataPath, '.chrome.pid');
+}
+
+function getActiveClientIdFilePath(baseDataPath: string): string {
+  return path.join(baseDataPath, '.active_client_id');
+}
+
+function getActiveClientId(baseDataPath: string): string {
+  try {
+    const file = getActiveClientIdFilePath(baseDataPath);
+    if (fs.existsSync(file)) {
+      const saved = fs.readFileSync(file, 'utf-8').trim();
+      if (/^[-_\w]+$/i.test(saved)) return saved;
+    }
+  } catch {
+    // ignore
+  }
+  const dedicatedProfileDir = path.join(baseDataPath, 'session-go-gas-primary');
+  const legacyProfileDir = path.join(baseDataPath, 'session');
+  if (fs.existsSync(legacyProfileDir) && !fs.existsSync(dedicatedProfileDir)) {
+    return '';
+  }
+  return 'go-gas-primary';
+}
+
+function setActiveClientId(baseDataPath: string, clientId: string): void {
+  try {
+    fs.mkdirSync(baseDataPath, { recursive: true });
+    fs.writeFileSync(getActiveClientIdFilePath(baseDataPath), clientId, 'utf-8');
+  } catch {
+    // ignore
+  }
+}
+
+function getProfileDirForClientId(baseDataPath: string, clientId: string): string {
+  return path.join(baseDataPath, clientId ? `session-${clientId}` : 'session');
+}
+
+function killPidTree(pid: number): void {
+  if (!pid || Number.isNaN(pid) || pid <= 0) return;
+  if (process.platform === 'win32') {
+    try {
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 4000 });
+      return;
+    } catch {
+      // fall through to process.kill
+    }
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // process already exited
+  }
+}
+
+function recordBrowserPid(client: InstanceType<typeof Client>, baseDataPath: string): void {
+  try {
+    const browser = Reflect.get(client, 'pupBrowser') as { process?: () => { pid?: number } | null } | undefined;
+    const pid = browser?.process?.()?.pid;
+    if (pid) {
+      fs.mkdirSync(baseDataPath, { recursive: true });
+      fs.writeFileSync(getChromePidFilePath(baseDataPath), String(pid), 'utf-8');
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function killTrackedChromeProcess(baseDataPath: string): void {
+  try {
+    const pidFile = getChromePidFilePath(baseDataPath);
+    if (fs.existsSync(pidFile)) {
+      const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+      if (pid > 0) {
+        killPidTree(pid);
+      }
+      fs.unlinkSync(pidFile);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function destroyClientAndReleaseLocks(client: InstanceType<typeof Client> | null): Promise<void> {
+  const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
+  if (client) {
+    let pid: number | undefined;
+    try {
+      const browser = Reflect.get(client, 'pupBrowser') as { process?: () => { pid?: number } | null } | undefined;
+      pid = browser?.process?.()?.pid;
+    } catch {
+      // ignore
+    }
+    try {
+      await Promise.race([
+        client.destroy(),
+        new Promise((resolve) => setTimeout(resolve, 4000)),
+      ]);
+    } catch {
+      // ignore destroy errors
+    }
+    if (pid) {
+      killPidTree(pid);
+    }
+  }
+  killTrackedChromeProcess(baseDataPath);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  cleanStaleSessionLocks(baseDataPath);
+}
+
+export function cleanStaleSessionLocks(baseDataPath: string): void {
+  try {
+    if (!fs.existsSync(baseDataPath)) return;
+    const entries = fs.readdirSync(baseDataPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('session')) continue;
+      const profileDir = path.join(baseDataPath, entry.name);
+      const lockFiles = ['lockfile', 'SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+      for (const file of lockFiles) {
+        const fullPath = path.join(profileDir, file);
+        try {
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+            console.info(`[WHATSAPP] Cleaned stale session lock: ${entry.name}/${file}`);
+          }
+        } catch {
+          // Held by an active process
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function isProfileDirLockedByProcess(profileDir: string): boolean {
+  const lockfile = path.join(profileDir, 'lockfile');
+  if (!fs.existsSync(lockfile)) return false;
+  try {
+    fs.unlinkSync(lockfile);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function wipeSessionDirectoryResilient(baseDataPath: string): Promise<void> {
+  if (!fs.existsSync(baseDataPath)) return;
+  killTrackedChromeProcess(baseDataPath);
+  cleanStaleSessionLocks(baseDataPath);
+
+  const entries = fs.readdirSync(baseDataPath, { withFileTypes: true });
+  let activeId = getActiveClientId(baseDataPath);
+  let activeProfileLocked = false;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('session')) continue;
+    const targetDir = path.join(baseDataPath, entry.name);
+    try {
+      await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 200 });
+    } catch {
+      // Windows may hold lockfile or a .pma metrics file if an external zombie Chrome is still running.
+      // Delete unlocked auth sub-paths (IndexedDB, Local Storage, Service Worker, Cookies) individually.
+      const authSubPaths = [
+        path.join(targetDir, 'Default', 'IndexedDB'),
+        path.join(targetDir, 'Default', 'Local Storage'),
+        path.join(targetDir, 'Default', 'Session Storage'),
+        path.join(targetDir, 'Default', 'Service Worker'),
+        path.join(targetDir, 'Default', 'Storage'),
+        path.join(targetDir, 'Default', 'Network'),
+        path.join(targetDir, 'Default', 'Cookies'),
+        path.join(targetDir, 'Default', 'Cookies-journal'),
+      ];
+      for (const sub of authSubPaths) {
+        await fs.promises.rm(sub, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 }).catch(() => {});
+      }
+      if (isProfileDirLockedByProcess(targetDir)) {
+        const expectedDirName = activeId ? `session-${activeId}` : 'session';
+        if (entry.name === expectedDirName) {
+          activeProfileLocked = true;
+        }
+      }
+    }
+  }
+
+  // If the current profile directory's lockfile is held by an unkillable external Chrome process,
+  // rotate to a fresh profile directory so New QR / Unlink always succeeds without EBUSY.
+  if (activeProfileLocked) {
+    activeId = `go-gas-${Date.now()}`;
+    setActiveClientId(baseDataPath, activeId);
+    console.info(`[WHATSAPP] Previous profile directory was locked by an external process; rotated to fresh profile session-${activeId}.`);
+  }
+}
+
 function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof Client> {
   const executablePath = WHATSAPP_CHROME_EXECUTABLE_PATH.trim();
   const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-  const dedicatedProfileDir = path.join(baseDataPath, 'session-go-gas-primary');
-  const legacyProfileDir = path.join(baseDataPath, 'session');
-  // If an existing linked session exists in `.wwebjs_auth/session` and not yet in `session-go-gas-primary`, reuse `session`
-  const useLegacyClientId = fs.existsSync(legacyProfileDir) && !fs.existsSync(dedicatedProfileDir);
+  cleanStaleSessionLocks(baseDataPath);
+
+  let clientId = getActiveClientId(baseDataPath);
+  const currentProfileDir = getProfileDirForClientId(baseDataPath, clientId);
+  if (isProfileDirLockedByProcess(currentProfileDir)) {
+    // Attempt to kill our tracked Chrome PID first
+    killTrackedChromeProcess(baseDataPath);
+    if (isProfileDirLockedByProcess(currentProfileDir)) {
+      clientId = `go-gas-${Date.now()}`;
+      setActiveClientId(baseDataPath, clientId);
+      console.warn(`[WHATSAPP] Profile ${currentProfileDir} is locked by another process; switching to clean profile session-${clientId}.`);
+    }
+  }
 
   const authStrategy = new LocalAuth({
-    ...(useLegacyClientId ? {} : { clientId: 'go-gas-primary' }),
+    ...(clientId ? { clientId } : {}),
     dataPath: baseDataPath,
   });
   if (!allowLogoutCleanup) {
@@ -532,8 +762,15 @@ function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof C
     qrMaxRetries: 0,
     // First-time linking downloads keys + history; 30s (the library default for 0) is too short
     authTimeoutMs: 180_000,
+    evalOnNewDoc: () => {
+      try {
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        document.hasFocus = () => true;
+      } catch {}
+    },
     userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
     webVersionCache: {
       type: 'none',
     },
@@ -548,7 +785,6 @@ function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof C
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
-        '--keep-alive-for-test',
       ],
       ...(executablePath ? { executablePath } : {}),
     },
@@ -616,7 +852,8 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
       connectionError: message,
     });
     console.error(`[WHATSAPP] Authentication failed: ${message}`);
-    scheduleAutoReconnect('auth_failure', 12_000);
+    void destroyClientAndReleaseLocks(activeClient);
+    scheduleAutoReconnect('auth_failure', 8_000);
   });
 
   activeClient.on('disconnected', (reason: string) => {
@@ -626,21 +863,18 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
     initializingClient = false;
     whatsappClientReady = false;
     if (reason === 'LOGOUT') {
-      whatsappClient = null;
       updateSessionState({
-        connectionStatus: 'Connection error',
+        connectionStatus: 'Connecting (Scan QR)',
         qrCodeData: '',
-        connectionError: 'WhatsApp Web reported that this session was logged out. The saved product profile was preserved. Use New QR if you want to pair again.',
       });
-      console.warn('[WHATSAPP] WhatsApp Web reported LOGOUT; preserving the saved LocalAuth profile. A new QR can be requested manually.');
-      void activeClient.destroy().catch((error: unknown) => {
-        console.error(`[WHATSAPP] Failed to close the logged-out browser: ${error instanceof Error ? error.message : String(error)}`);
-      });
+      console.warn('[WHATSAPP] WhatsApp Web reported LOGOUT; clearing revoked session and generating a fresh QR code automatically...');
+      scheduleSessionRecovery('LOGOUT', 1000, true);
       return;
     }
     whatsappClient = null;
     updateSessionState({ connectionStatus: 'Disconnected', qrCodeData: '' });
     console.warn(`[WHATSAPP] WhatsApp Web disconnected (${reason}); will automatically reconnect using saved session...`);
+    void destroyClientAndReleaseLocks(activeClient);
     scheduleAutoReconnect(reason, 6_000);
   });
 
@@ -654,29 +888,12 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
       const message = error instanceof Error ? error.message : String(error);
       whatsappClient = null;
       whatsappClientReady = false;
-      try {
-        await activeClient.destroy();
-      } catch (cleanupError) {
-        const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-        console.error(`[WHATSAPP] Failed to close the browser after initialization failure: ${cleanupMessage}`);
-      }
+      await destroyClientAndReleaseLocks(activeClient);
 
-      if (isWhatsAppSessionProfileLockError(error)) {
-        initializingClient = false;
-        const recoveryMessage = 'The saved WhatsApp browser profile is already in use. Close any other GO Gas server or Chrome process using this profile, then retry. The saved session was preserved.';
-        updateSessionState({
-          connectionStatus: 'Connection error',
-          qrCodeData: '',
-          connectionError: recoveryMessage,
-        });
-        console.error(`[WHATSAPP] Browser profile is already in use; preserving the linked session: ${message}`);
-        return;
-      }
-
-      if (attempt < 3 && isRetryableWhatsAppInitializationError(error) && initializingClient) {
+      if (attempt < 3 && (isRetryableWhatsAppInitializationError(error) || isWhatsAppSessionProfileLockError(error)) && initializingClient) {
         console.warn(`[WHATSAPP] WhatsApp Web initialization interrupted (${message}); retrying (${attempt}/3)...`);
         updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: '' });
-        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
         if (initializingClient && !whatsappClient) {
           await initializeWhatsAppClientAttempt(attempt + 1);
         }
@@ -692,7 +909,7 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
       console.error(
         `[WHATSAPP] Failed to initialize WhatsApp Web: ${error instanceof Error ? error.stack || message : message}`
       );
-      scheduleAutoReconnect('init_error', 15_000);
+      scheduleAutoReconnect('init_error', 10_000);
     }
   ).finally(() => {
     if (initializationTask === attemptTask) initializationTask = null;
@@ -704,13 +921,12 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
 export function hasSavedSessionOnDisk(): boolean {
   try {
     const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-    for (const dirName of ['session-go-gas-primary', 'session']) {
-      const dir = path.join(baseDataPath, dirName);
-      if (fs.existsSync(dir)) {
-        const subfiles = fs.readdirSync(dir);
-        if (subfiles.some((f) => f === 'Default' || f.startsWith('session-') || f === 'IndexedDB')) {
-          return true;
-        }
+    const clientId = getActiveClientId(baseDataPath);
+    const dir = getProfileDirForClientId(baseDataPath, clientId);
+    if (fs.existsSync(dir)) {
+      const subfiles = fs.readdirSync(dir);
+      if (subfiles.some((f) => f === 'Default' || f.startsWith('session-') || f === 'IndexedDB')) {
+        return true;
       }
     }
   } catch {
@@ -742,8 +958,8 @@ export function initializeWhatsAppClient(
 
 export async function refreshWhatsAppClient(resetProfile = false) {
   if (clientRefreshTask) {
-    await clientRefreshTask;
-    return;
+    await clientRefreshTask.catch(() => {});
+    if (!resetProfile) return;
   }
 
   const task = refreshWhatsAppClientInternal(resetProfile);
@@ -757,70 +973,49 @@ export async function refreshWhatsAppClient(resetProfile = false) {
 
 async function refreshWhatsAppClientInternal(resetProfile: boolean) {
   clearKeepAliveTimers();
+  clearPairing();
   const taskToStop = initializationTask;
-  if (taskToStop && !resetProfile) await taskToStop;
   const activeClient = whatsappClient;
-  if (activeClient) {
-    if (whatsappClient === activeClient) {
-      whatsappClient = null;
-      whatsappClientReady = false;
-      initializingClient = false;
-    }
-    try {
-      await activeClient.destroy();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[WHATSAPP] Failed to stop the browser before session refresh: ${message}`);
-      if (resetProfile) {
-        updateSessionState({ connectionStatus: 'Connection error', qrCodeData: '', connectionError: message });
-        throw error;
-      }
-    }
+  whatsappClient = null;
+  whatsappClientReady = false;
+  initializingClient = false;
+
+  await destroyClientAndReleaseLocks(activeClient);
+  if (taskToStop) {
+    await Promise.race([
+      taskToStop.catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
   }
-  if (resetProfile && taskToStop) {
-    await taskToStop;
-  }
+
   if (resetProfile) {
     updateSessionState({ connectionStatus: 'Connecting (Scan QR)', qrCodeData: '' });
-    try {
-      const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-      for (const dirName of ['session', 'session-go-gas-primary']) {
-        const targetDir = path.join(baseDataPath, dirName);
-        if (fs.existsSync(targetDir)) {
-          await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 4 });
-        }
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateSessionState({ connectionStatus: 'Connection error', qrCodeData: '', connectionError: message });
-      throw error;
-    }
-    console.info('[WHATSAPP] Cleared stale LocalAuth session directory for fresh QR pairing.');
+    const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
+    await wipeSessionDirectoryResilient(baseDataPath);
+    console.info('[WHATSAPP] Cleared LocalAuth session directory for fresh QR pairing.');
   }
   initializeWhatsAppClient();
 }
 
 export async function disconnectWhatsAppClient() {
   clearKeepAliveTimers();
-  if (initializationTask) await initializationTask;
+  clearPairing();
+  const taskToStop = initializationTask;
   const activeClient = whatsappClient;
-  if (activeClient) {
-    await activeClient.destroy().catch(() => {});
+  whatsappClient = null;
+  whatsappClientReady = false;
+  initializingClient = false;
+
+  await destroyClientAndReleaseLocks(activeClient);
+  if (taskToStop) {
+    await Promise.race([
+      taskToStop.catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
   }
   const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-  for (const dirName of ['session', 'session-go-gas-primary']) {
-    const targetDir = path.join(baseDataPath, dirName);
-    if (fs.existsSync(targetDir)) {
-      await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 4 }).catch(() => {});
-    }
-  }
-
-  if (whatsappClient === activeClient) {
-    whatsappClient = null;
-    whatsappClientReady = false;
-    initializingClient = false;
-    updateSessionState({ connectionStatus: 'Disconnected', qrCodeData: '' });
-  }
+  await wipeSessionDirectoryResilient(baseDataPath);
+  updateSessionState({ connectionStatus: 'Disconnected', qrCodeData: '' });
 }
 
 const numberFormat = (value: number) => value.toLocaleString('en-IN', {
@@ -925,7 +1120,8 @@ async function ensureWhatsAppPageReady(client: InstanceType<typeof Client>): Pro
     }
   }
 
-  // Ensure page scripts (WWebJS) are intact
+  // Ensure socket is awake and page scripts (WWebJS) are intact before sending
+  await sendActivePresenceHeartbeat(client).catch(() => {});
   if (pupPage && typeof pupPage.evaluate === 'function') {
     const hasWWebJS = await pupPage.evaluate(() => typeof (window as any).WWebJS !== 'undefined').catch(() => false);
     if (!hasWWebJS) {

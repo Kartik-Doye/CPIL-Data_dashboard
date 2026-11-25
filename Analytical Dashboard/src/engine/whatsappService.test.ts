@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import {
   parseRecipientNumbers,
@@ -11,6 +14,7 @@ import {
   isWhatsAppSessionProfileLockError,
   isUnsupportedWhatsAppLoginPage,
   isUnsupportedWhatsAppLoginPageError,
+  cleanStaleSessionLocks,
   hasSavedSessionOnDisk,
   setWhatsAppRecipients,
   sendWhatsAppMessage,
@@ -384,4 +388,18 @@ test('formats WhatsApp sales brief with schema discount and scheme amounts when 
 test('hasSavedSessionOnDisk detects presence of saved session directory safely', () => {
   const result = hasSavedSessionOnDisk();
   assert.equal(typeof result, 'boolean');
+});
+
+test('cleanStaleSessionLocks removes unlocked lockfile and SingletonLock files across session folders', () => {
+  const tmpDir = path.join(os.tmpdir(), `wwebjs-lock-test-${Date.now()}`);
+  const profileDir = path.join(tmpDir, 'session-go-gas-primary');
+  fs.mkdirSync(profileDir, { recursive: true });
+  const lockfile = path.join(profileDir, 'lockfile');
+  fs.writeFileSync(lockfile, '1234');
+  assert.equal(fs.existsSync(lockfile), true);
+
+  cleanStaleSessionLocks(tmpDir);
+  assert.equal(fs.existsSync(lockfile), false);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });

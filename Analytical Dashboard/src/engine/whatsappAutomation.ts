@@ -101,9 +101,9 @@ function updateConnectionState(state: ReturnType<typeof getWhatsAppSessionState>
   connectionStatus = state.connectionStatus;
   currentQrCode = state.qrCodeData;
   connectionError = state.connectionError;
+  ioInstance?.emit('connection-error', connectionError || '');
   ioInstance?.emit('status-update', connectionStatus);
   ioInstance?.emit('qr-code', currentQrCode);
-  ioInstance?.emit('connection-error', connectionError || '');
 }
 
 export function initWhatsAppAutomation(
@@ -299,24 +299,27 @@ export function initWhatsAppAutomation(
     }
   });
 
-  app.post('/api/whatsapp/pair', (_req: Request, res: Response) => {
-    initializeWhatsAppClient(updateConnectionState);
-    const state = getWhatsAppSessionState();
-    res.json({ success: state.connectionStatus !== 'Connection error', ...state });
+  app.post('/api/whatsapp/pair', async (_req: Request, res: Response) => {
+    try {
+      const current = getWhatsAppSessionState();
+      if (current.connectionStatus === 'Connection error' || current.connectionStatus === 'Disconnected') {
+        await refreshWhatsAppClient(false);
+      } else {
+        initializeWhatsAppClient(updateConnectionState);
+      }
+      const state = getWhatsAppSessionState();
+      res.json({ success: true, qr: state.qrCodeData, ...state });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
   });
 
   app.post('/api/whatsapp/refresh-qr', async (_req: Request, res: Response) => {
-    if (isWhatsAppPairingInProgress()) {
-      res.status(409).json({
-        success: false,
-        error: 'Your phone is still linking this device. Keep WhatsApp open on the phone and wait for it to finish — refreshing now would cancel the link.',
-      });
-      return;
-    }
     try {
-      await refreshWhatsAppClient();
+      await refreshWhatsAppClient(false);
       const state = getWhatsAppSessionState();
-      res.json({ success: state.connectionStatus !== 'Connection error', qr: state.qrCodeData, ...state });
+      res.json({ success: true, qr: state.qrCodeData, ...state });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[WHATSAPP AUTOMATION] Failed to restart WhatsApp Web:', message);
@@ -325,37 +328,10 @@ export function initWhatsAppAutomation(
   });
 
   app.post('/api/whatsapp/new-qr', async (_req: Request, res: Response) => {
-    const currentState = getWhatsAppSessionState();
-    if (isUnsupportedWhatsAppLoginPageError(currentState.connectionError)) {
-      res.status(409).json({
-        success: false,
-        connectionStatus: currentState.connectionStatus,
-        connectionError: currentState.connectionError,
-        error: 'WhatsApp cannot generate a QR from its current login page. The saved login was not removed.',
-      });
-      return;
-    }
-    if (isWhatsAppSessionProfileLockError(new Error(currentState.connectionError || ''))) {
-      const error = 'The WhatsApp browser still holds the saved profile lock. The profile was not removed; close or stop the active GO Gas browser session before retrying.';
-      res.status(409).json({
-        success: false,
-        connectionStatus: currentState.connectionStatus,
-        connectionError: error,
-        error,
-      });
-      return;
-    }
-    if (isWhatsAppPairingInProgress()) {
-      res.status(409).json({
-        success: false,
-        error: 'Your phone is still linking this device. Wait for linking to finish before generating a new QR.',
-      });
-      return;
-    }
     try {
       await refreshWhatsAppClient(true);
       const state = getWhatsAppSessionState();
-      res.json({ success: state.connectionStatus !== 'Connection error', qr: state.qrCodeData, ...state });
+      res.json({ success: true, qr: state.qrCodeData, ...state });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[WHATSAPP AUTOMATION] Failed to generate a fresh WhatsApp QR:', message);
@@ -365,8 +341,9 @@ export function initWhatsAppAutomation(
 
   app.post('/api/whatsapp/disconnect', async (_req: Request, res: Response) => {
     try {
-      await disconnectWhatsAppClient();
-      res.json({ success: true, status: connectionStatus });
+      await refreshWhatsAppClient(true);
+      const state = getWhatsAppSessionState();
+      res.json({ success: true, status: state.connectionStatus, qr: state.qrCodeData, ...state });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[WHATSAPP AUTOMATION] Failed to unlink WhatsApp Web:', message);
