@@ -28,6 +28,7 @@ const TankerDispatchReport = lazy(() => import('./components/TankerDispatchRepor
 const PeriodComparisonSuite = lazy(() => import('./components/PeriodComparisonSuite').then((m) => ({ default: m.PeriodComparisonSuite })));
 const DatabaseInspectorModal = lazy(() => import('./components/DatabaseInspectorModal').then((m) => ({ default: m.DatabaseInspectorModal })));
 const WhatsAppModal = lazy(() => import('./components/WhatsAppModal').then((m) => ({ default: m.WhatsAppModal })));
+const SalesUploadModal = lazy(() => import('./components/SalesUploadModal').then((m) => ({ default: m.SalesUploadModal })));
 const Station360Drawer = lazy(() => import('./components/Station360Drawer').then((m) => ({ default: m.Station360Drawer })));
 
 export function App() {
@@ -38,6 +39,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ReportTab>('master');
   const [isDbInspectorOpen, setIsDbInspectorOpen] = useState(false);
   const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
+  const [isSalesUploadOpen, setIsSalesUploadOpen] = useState(false);
   const [selectedStationFor360, setSelectedStationFor360] = useState<StationRecord | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -422,6 +424,7 @@ export function App() {
         onOpenDrawer={() => setIsDrawerOpen(true)}
         onOpenDbInspector={() => setIsDbInspectorOpen(true)}
         onOpenWhatsApp={() => setIsWhatsAppOpen(true)}
+        onOpenSalesUpload={() => setIsSalesUploadOpen(true)}
       />
 
       {/* Navigation Tabs */}
@@ -660,6 +663,17 @@ export function App() {
         <WhatsAppModal
           isOpen={isWhatsAppOpen}
           onClose={() => setIsWhatsAppOpen(false)}
+        />
+
+        {/* In-App Daily Sales Excel Uploader Modal */}
+        <SalesUploadModal
+          isOpen={isSalesUploadOpen}
+          onClose={() => setIsSalesUploadOpen(false)}
+          onUploadSuccess={(ingestedDate, message) => {
+            setSelectedDate(ingestedDate);
+            showToast(message);
+            void fetchData(true, 0, ingestedDate);
+          }}
         />
 
         {/* Station 360° Drill-Down Drawer */}

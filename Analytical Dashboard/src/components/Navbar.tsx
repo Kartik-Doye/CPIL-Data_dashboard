@@ -1,5 +1,5 @@
 import React from 'react';
-import { Flame, RefreshCw, Download, CheckCircle, AlertTriangle, Sun, Moon, PanelLeft, Database } from 'lucide-react';
+import { Flame, RefreshCw, Download, CheckCircle, AlertTriangle, Sun, Moon, PanelLeft, Database, Upload } from 'lucide-react';
 import { ExecutiveTelemetry, DatabaseDiagnostics } from '../types';
 import { getDbConnectionHealth } from '../engine/dbHealth';
 
@@ -15,6 +15,7 @@ interface NavbarProps {
   onOpenDrawer?: () => void;
   onOpenDbInspector?: () => void;
   onOpenWhatsApp?: () => void;
+  onOpenSalesUpload?: () => void;
   dbDiagnostics?: DatabaseDiagnostics | null;
 }
 
@@ -30,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenDrawer,
   onOpenDbInspector,
   onOpenWhatsApp,
+  onOpenSalesUpload,
   dbDiagnostics,
 }) => {
   const health = getDbConnectionHealth(dbDiagnostics || data?.db_diagnostics, loading);
@@ -141,6 +143,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          {/* In-App Sales Workbook Uploader Button */}
+          {onOpenSalesUpload && (
+            <button
+              onClick={onOpenSalesUpload}
+              className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors shadow-xs cursor-pointer bg-orange-50 hover:bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-950/50 dark:hover:bg-orange-900/60 dark:text-orange-300 dark:border-orange-800"
+              title="Upload & Validate Daily Sales Excel (.xlsx) Workbook"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Upload Sales</span>
+            </button>
+          )}
+
           {/* WhatsApp Automation Center Button */}
           {onOpenWhatsApp && (
             <button

@@ -19,7 +19,13 @@ import {
 import { query, queryLoader, isLoaderConfigured, testDbConnection, getDbAuditReport, getDbConnectionDetails } from './src/engine/db.js';
 import { escapeCsvCell } from './src/engine/formatting.js';
 import { StationMonthlySales, StationRecord } from './src/types.js';
-import { sendExecutiveBriefing, buildStationWorkbook, isEmailConfigured } from './src/engine/emailReport.js';
+import {
+  sendExecutiveBriefing,
+  buildStationWorkbook,
+  isEmailConfigured,
+  getEmailConfigStatus,
+  saveRuntimeEmailConfig,
+} from './src/engine/emailReport.js';
 import { buildExecutivePdfBuffer } from './src/engine/pdfReport.js';
 import http from 'http';
 import cron from 'node-cron';
@@ -27,16 +33,26 @@ import {
   getWhatsAppStatus,
   getWhatsAppAuditLog,
   sendWhatsAppMessage,
+  parseRecipientNumbers,
   buildExecutiveWhatsAppMessage,
   buildTankerDispatchWhatsAppMessage,
 } from './src/engine/whatsappService.js';
+import { buildTmPersonalizedWhatsAppBrief } from './src/engine/whatsappBriefing.js';
 import { recommendTanker } from './src/engine/tanker.js';
 import {
   loadTmTargetDailyFromFile,
   invalidateTmTargetDailyCache,
   TmTargetDailySummary,
 } from './src/engine/tmTargetDaily.js';
-import { initWhatsAppAutomation } from './src/engine/whatsappAutomation.js';
+import {
+  initWhatsAppAutomation,
+  getCurrentIstDateAndMinutes,
+  parseCronDailySlots,
+} from './src/engine/whatsappAutomation.js';
+import {
+  previewSalesWorkbookBuffer,
+  ingestSalesWorkbookBuffer,
+} from './src/engine/salesIngest.js';
 import {
   APP_BASE_URL,
   APP_LOCAL_HOSTNAMES,
@@ -62,11 +78,55 @@ const server = http.createServer(app);
 
 app.use(express.json({ limit: APP_REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: APP_REQUEST_BODY_LIMIT }));
-initWhatsAppAutomation(app, server, async () => {
-  const telemetry = await getTelemetryData(true);
-  if (!telemetry) throw new Error('PostgreSQL telemetry is unavailable; the scheduled briefing was not sent.');
-  return buildExecutiveWhatsAppMessage(telemetry);
-});
+initWhatsAppAutomation(
+  app,
+  server,
+  async () => {
+    const telemetry = await getTelemetryData(true);
+    if (!telemetry) throw new Error('PostgreSQL telemetry is unavailable; the scheduled briefing was not sent.');
+    return buildExecutiveWhatsAppMessage(telemetry);
+  },
+  async () => {
+    try {
+      const tmDirectory = await loadAppSetting<{
+        contacts?: Record<string, string>;
+        autoSendDaily?: boolean;
+        autoOnlyBelowTarget?: boolean;
+      }>('tm_whatsapp_contacts', { contacts: {}, autoSendDaily: false, autoOnlyBelowTarget: true });
+      if (!tmDirectory?.autoSendDaily || !tmDirectory.contacts) return;
+
+      const telemetry = await getTelemetryData(false);
+      if (!telemetry?.all_stations) return;
+      const periodLabel = telemetry.tm_target_meta?.period_label || 'Monthly Daily Target';
+      const tmSummaries = new Map<string, any>(
+        (telemetry.tm_summary || []).map((t: any) => [t.tm, t]),
+      );
+
+      for (const [tmName, rawPhone] of Object.entries(tmDirectory.contacts)) {
+        const phones = parseRecipientNumbers(rawPhone);
+        if (phones.length === 0) continue;
+        const summary = tmSummaries.get(tmName);
+        if (
+          tmDirectory.autoOnlyBelowTarget &&
+          summary &&
+          (!summary.daily_target || summary.total_sale_qty >= summary.daily_target)
+        ) {
+          continue;
+        }
+        const brief = buildTmPersonalizedWhatsAppBrief(
+          tmName,
+          telemetry.all_stations,
+          telemetry.date,
+          periodLabel,
+        );
+        await sendWhatsAppMessage('briefing', brief, [phones[0]]);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (err: any) {
+      console.warn(`[TM WHATSAPP AUTO] Post-schedule TM action card dispatch warning: ${err.message}`);
+    }
+  },
+);
 
 let cachedTelemetry: any = null;
 let lastLoadedTime = 0;
@@ -1221,6 +1281,304 @@ function isDispatchAuthorized(req: Request, requiredHeader: string): boolean {
   }
 }
 
+app.get('/api/email/status', (_req: Request, res: Response) => {
+  res.json({
+    ...getEmailConfigStatus(),
+    scheduleLabel: EMAIL_SCHEDULE_LABEL,
+  });
+});
+
+app.post('/api/email/config', (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-email-request')) {
+    res.status(403).json({ error: 'Email configuration is only available from this computer.' });
+    return;
+  }
+  try {
+    const { senderEmail, recipientEmails, appPassword } = req.body || {};
+    const sender = typeof senderEmail === 'string' ? senderEmail.trim() : '';
+    const recipients = typeof recipientEmails === 'string'
+      ? recipientEmails.split(',').map((e: string) => e.trim()).filter(Boolean)
+      : [];
+    if (sender && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender)) {
+      res.status(400).json({ error: 'Invalid Sender Gmail address.' });
+      return;
+    }
+    if (recipients.some((e: string) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))) {
+      res.status(400).json({ error: 'One or more recipient email addresses are invalid.' });
+      return;
+    }
+    saveRuntimeEmailConfig({
+      senderEmail: sender,
+      recipientEmails: recipients.join(', '),
+      appPassword: typeof appPassword === 'string' && appPassword.trim() ? appPassword.trim() : undefined,
+    });
+    res.json({
+      ...getEmailConfigStatus(),
+      scheduleLabel: EMAIL_SCHEDULE_LABEL,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Closed-loop Tanker & Zero-Sale Station Action Status Tracker
+export interface StationActionRecord {
+  status: 'Open' | 'Tanker Dispatched' | 'Dispenser Maintenance' | 'Stock Confirmed' | 'Resolved';
+  note: string;
+  updatedAt: string;
+}
+
+app.get('/api/station-actions', async (req: Request, res: Response) => {
+  try {
+    const requestedDate = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : cachedTelemetry?.date || new Date().toISOString().slice(0, 10);
+    const store = await loadAppSetting<Record<string, Record<string, StationActionRecord>>>('station_action_tracker', {});
+    res.json({
+      date: requestedDate,
+      actions: store[requestedDate] || {},
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/station-actions', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-whatsapp-request')) {
+    res.status(403).json({ error: 'Station action updates are only available from this computer.' });
+    return;
+  }
+  try {
+    const { date, erp_code, status, note } = req.body || {};
+    const dateKey = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+      ? date
+      : cachedTelemetry?.date || new Date().toISOString().slice(0, 10);
+    const code = String(erp_code || '').trim();
+    if (!code) {
+      res.status(400).json({ error: 'Station ERP code is required.' });
+      return;
+    }
+    const allowedStatuses = new Set(['Open', 'Tanker Dispatched', 'Dispenser Maintenance', 'Stock Confirmed', 'Resolved']);
+    const normalizedStatus = allowedStatuses.has(status) ? status : 'Open';
+    const store = await loadAppSetting<Record<string, Record<string, StationActionRecord>>>('station_action_tracker', {});
+    const dateMap = { ...(store[dateKey] || {}) };
+    const entry: StationActionRecord = {
+      status: normalizedStatus,
+      note: typeof note === 'string' ? note.trim().slice(0, 200) : (dateMap[code]?.note || ''),
+      updatedAt: new Date().toISOString(),
+    };
+    dateMap[code] = entry;
+    const nextStore: Record<string, Record<string, StationActionRecord>> = {
+      ...store,
+      [dateKey]: dateMap,
+    };
+    // Keep most recent 45 dates so settings payload stays compact
+    const sortedDates = Object.keys(nextStore).sort();
+    while (sortedDates.length > 45) {
+      const oldest = sortedDates.shift();
+      if (oldest) delete nextStore[oldest];
+    }
+    await saveAppSetting('station_action_tracker', nextStore);
+    res.json({ success: true, date: dateKey, erp_code: code, entry });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Territory Manager WhatsApp Directory & Personalized Brief Dispatch
+app.get('/api/tm-contacts', async (_req: Request, res: Response) => {
+  try {
+    const data = await loadAppSetting<{
+      contacts: Record<string, string>;
+      autoSendDaily: boolean;
+      autoOnlyBelowTarget: boolean;
+    }>('tm_whatsapp_contacts', {
+      contacts: {},
+      autoSendDaily: false,
+      autoOnlyBelowTarget: true,
+    });
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tm-contacts', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-whatsapp-request')) {
+    res.status(403).json({ error: 'TM contact updates are only available from this computer.' });
+    return;
+  }
+  try {
+    const { contacts, autoSendDaily, autoOnlyBelowTarget } = req.body || {};
+    const sanitized: Record<string, string> = {};
+    if (contacts && typeof contacts === 'object' && !Array.isArray(contacts)) {
+      for (const [tmName, rawPhone] of Object.entries(contacts)) {
+        const cleanTm = String(tmName).trim();
+        const rawStr = String(rawPhone ?? '').trim();
+        if (!cleanTm || !rawStr) continue;
+        const parsed = parseRecipientNumbers(rawStr);
+        if (parsed.length > 0) {
+          sanitized[cleanTm] = parsed[0];
+        }
+      }
+    }
+    const payload = {
+      contacts: sanitized,
+      autoSendDaily: Boolean(autoSendDaily),
+      autoOnlyBelowTarget: autoOnlyBelowTarget !== undefined ? Boolean(autoOnlyBelowTarget) : true,
+    };
+    await saveAppSetting('tm_whatsapp_contacts', payload);
+    res.json({ success: true, ...payload });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/whatsapp/send-tm-brief', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-whatsapp-request')) {
+    res.status(403).json({ error: 'WhatsApp dispatch is only available from this computer.' });
+    return;
+  }
+  if (whatsappSendInProgress) {
+    res.status(409).json({ error: 'Another WhatsApp dispatch is currently in progress.' });
+    return;
+  }
+  whatsappSendInProgress = true;
+  try {
+    const telemetry = await getTelemetryData(false);
+    if (!telemetry?.all_stations) {
+      res.status(503).json({ error: 'PostgreSQL telemetry is unavailable.' });
+      return;
+    }
+    const periodLabel = telemetry.tm_target_meta?.period_label || 'Monthly Daily Target';
+    const tmDirectory = await loadAppSetting<{
+      contacts: Record<string, string>;
+      autoSendDaily: boolean;
+      autoOnlyBelowTarget: boolean;
+    }>('tm_whatsapp_contacts', { contacts: {}, autoSendDaily: false, autoOnlyBelowTarget: true });
+
+    const { tm, phone, batchMode } = req.body || {};
+    if (batchMode === 'below_target' || batchMode === 'all_mapped') {
+      const tmSummaries = new Map<string, any>(
+        (telemetry.tm_summary || []).map((t: any) => [t.tm, t]),
+      );
+      const entries = Object.entries(tmDirectory.contacts || {}).filter(([tmName, p]) => {
+        if (!p) return false;
+        if (batchMode === 'below_target') {
+          const sum = tmSummaries.get(tmName);
+          return Boolean(sum && (sum.daily_target || 0) > 0 && sum.total_sale_qty < sum.daily_target);
+        }
+        return true;
+      });
+      if (entries.length === 0) {
+        res.status(400).json({
+          error: batchMode === 'below_target'
+            ? 'No mapped TMs are currently below their daily target (or no TM phone numbers are saved yet).'
+            : 'No TM phone numbers are configured in the TM WhatsApp Directory yet.',
+        });
+        return;
+      }
+      let sentCount = 0;
+      for (const [tmName, targetPhone] of entries) {
+        const parsed = parseRecipientNumbers(targetPhone);
+        if (parsed.length === 0) continue;
+        const brief = buildTmPersonalizedWhatsAppBrief(tmName, telemetry.all_stations, telemetry.date, periodLabel);
+        await sendWhatsAppMessage('briefing', brief, [parsed[0]]);
+        sentCount++;
+        if (sentCount < entries.length) {
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+      }
+      lastWhatsAppSentAt = Date.now();
+      res.json({
+        success: true,
+        sentCount,
+        message: `Dispatched personalized WhatsApp action briefs to ${sentCount} Territory Manager(s).`,
+      });
+      return;
+    }
+
+    const tmName = String(tm || '').trim();
+    if (!tmName) {
+      res.status(400).json({ error: 'Territory Manager name is required.' });
+      return;
+    }
+    const rawTarget = String(phone || tmDirectory.contacts?.[tmName] || '').trim();
+    const parsedPhones = rawTarget ? parseRecipientNumbers(rawTarget) : [];
+    if (parsedPhones.length === 0) {
+      res.status(400).json({
+        error: `No WhatsApp phone number mapped for TM ${tmName}. Open "TM WhatsApp Directory" to assign their 10-digit number.`,
+      });
+      return;
+    }
+
+    const brief = buildTmPersonalizedWhatsAppBrief(tmName, telemetry.all_stations, telemetry.date, periodLabel);
+    const result = await sendWhatsAppMessage('briefing', brief, [parsedPhones[0]]);
+    lastWhatsAppSentAt = Date.now();
+    res.json({
+      success: true,
+      tm: tmName,
+      phone: parsedPhones[0],
+      message: `Sent personalized brief to TM ${tmName} (${parsedPhones[0]}): ${result.message}`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    whatsappSendInProgress = false;
+  }
+});
+
+// In-App Daily Sales Excel Dry-Run Preview & Transactional Ingestion
+app.post('/api/sales/preview', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-email-request')) {
+    res.status(403).json({ error: 'Sales workbook upload is only available from this computer.' });
+    return;
+  }
+  try {
+    const { fileName, base64Data } = req.body || {};
+    if (!base64Data || typeof base64Data !== 'string') {
+      res.status(400).json({ error: 'Missing Excel file payload.' });
+      return;
+    }
+    const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    const preview = await previewSalesWorkbookBuffer(buffer, String(fileName || 'sale.xlsx'));
+    res.json(preview);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/sales/ingest', async (req: Request, res: Response) => {
+  if (!isDispatchAuthorized(req, 'x-go-gas-email-request')) {
+    res.status(403).json({ error: 'Sales workbook ingestion is only available from this computer.' });
+    return;
+  }
+  try {
+    const { fileName, base64Data, replaceExisting } = req.body || {};
+    if (!base64Data || typeof base64Data !== 'string') {
+      res.status(400).json({ error: 'Missing Excel file payload.' });
+      return;
+    }
+    const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+    const buffer = Buffer.from(cleanBase64, 'base64');
+    const result = await ingestSalesWorkbookBuffer(
+      buffer,
+      String(fileName || 'sale.xlsx'),
+      Boolean(replaceExisting),
+    );
+    cachedTelemetry = null;
+    lastLoadedTime = 0;
+    await getTelemetryData(true);
+    res.json({
+      ...result,
+      message: `Successfully loaded ${result.insertedRows} station records for ${result.saleDate} (${Math.round(result.totalSaleQty).toLocaleString('en-IN')} L).`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post('/api/email/send', async (req: Request, res: Response) => {
   if (!isDispatchAuthorized(req, 'x-go-gas-email-request')) {
     res.status(403).json({ error: 'Email sending is only available from this computer.' });
@@ -1752,32 +2110,91 @@ async function startServer() {
   server.listen(PORT, () => {
     console.log(`[${APP_NAME}] Dashboard active at ${APP_BASE_URL}`);
 
-    cron.schedule(EMAIL_CRON_EXPRESSION, async () => {
-      if (!isEmailConfigured()) {
+    const readEmailDispatchedSlots = (): string[] => {
+      const disk = readDiskSettings();
+      return Array.isArray(disk.email_dispatched_slots) ? disk.email_dispatched_slots.map(String) : [];
+    };
+    const recordEmailDispatchedSlot = (slotId: string) => {
+      const existing = readEmailDispatchedSlots();
+      if (!existing.includes(slotId)) existing.push(slotId);
+      writeDiskSetting('email_dispatched_slots', existing.slice(-30));
+    };
+
+    const emailCronExpressions = EMAIL_CRON_EXPRESSION
+      .split(';')
+      .map((expr) => expr.trim())
+      .filter((expr) => expr && cron.validate(expr));
+
+    const executeScheduledEmailBriefing = async (triggerLabel: string, slotIdToMark?: string) => {
+      if (!isEmailConfigured() || emailSendInProgress) {
         return;
       }
-      const timeLabel = new Date().toLocaleTimeString('en-IN', {
-        hour: 'numeric',
-        minute: '2-digit',
-        timeZone: APP_TIMEZONE,
-      });
-      console.log(`[EMAIL CRON] Executing automated ${timeLabel} executive briefing email...`);
+      emailSendInProgress = true;
+      console.log(`[EMAIL CRON] Executing automated ${triggerLabel} executive briefing email...`);
       try {
         const telemetry = await getTelemetryData(true);
         if (!telemetry) {
-          console.warn(`[EMAIL CRON] Telemetry unavailable; skipped ${timeLabel} email.`);
+          console.warn(`[EMAIL CRON] Telemetry unavailable; skipped ${triggerLabel} email.`);
           return;
         }
         const result = await sendExecutiveBriefing(telemetry);
-        console.log(`[EMAIL CRON] ${timeLabel} executive briefing sent to ${result.recipientCount} recipient(s).`);
+        lastEmailSentAt = Date.now();
+        if (slotIdToMark) {
+          recordEmailDispatchedSlot(slotIdToMark);
+        } else {
+          const { dateStr, minutesOfDay } = getCurrentIstDateAndMinutes();
+          const hh = String(Math.floor(minutesOfDay / 60)).padStart(2, '0');
+          const mm = String(minutesOfDay % 60).padStart(2, '0');
+          recordEmailDispatchedSlot(`${dateStr}@${hh}:${mm}`);
+        }
+        console.log(`[EMAIL CRON] ${triggerLabel} executive briefing sent to ${result.recipientCount} recipient(s).`);
       } catch (err: any) {
-        console.error(`[EMAIL CRON] Failed to send ${timeLabel} email: ${err.message}`);
+        console.error(`[EMAIL CRON] Failed to send ${triggerLabel} email: ${err.message}`);
+      } finally {
+        emailSendInProgress = false;
       }
-    });
+    };
+
+    for (const expr of emailCronExpressions) {
+      cron.schedule(
+        expr,
+        async () => {
+          const timeLabel = new Date().toLocaleTimeString('en-IN', {
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZone: APP_TIMEZONE,
+          });
+          const { dateStr } = getCurrentIstDateAndMinutes();
+          const slotMatch = parseCronDailySlots([expr])[0];
+          const slotId = slotMatch ? `${dateStr}@${slotMatch.key}` : undefined;
+          await executeScheduledEmailBriefing(timeLabel, slotId);
+        },
+        { timezone: APP_TIMEZONE },
+      );
+    }
+
+    // Missed-schedule catch-up check for Email briefings (2 to 180 mins window)
+    const emailDailySlots = parseCronDailySlots(emailCronExpressions);
+    if (emailDailySlots.length > 0) {
+      setInterval(() => {
+        if (!isEmailConfigured() || emailSendInProgress) return;
+        const { dateStr, minutesOfDay } = getCurrentIstDateAndMinutes();
+        const dispatched = new Set(readEmailDispatchedSlots());
+        for (const slot of emailDailySlots) {
+          const slotId = `${dateStr}@${slot.key}`;
+          const elapsed = minutesOfDay - slot.minutesOfDay;
+          if (elapsed >= 2 && elapsed <= 180 && !dispatched.has(slotId)) {
+            void executeScheduledEmailBriefing(`catch-up (${slot.key} IST)`, slotId);
+            break;
+          }
+        }
+      }, 90_000).unref?.();
+    }
+
     if (isEmailConfigured()) {
-      console.log(`[EMAIL CRON] Scheduled automated executive email briefings: ${EMAIL_SCHEDULE_LABEL}.`);
+      console.log(`[EMAIL CRON] Scheduled automated executive email briefings: ${EMAIL_SCHEDULE_LABEL} (${APP_TIMEZONE}).`);
     } else {
-      console.info(`[EMAIL CRON] Automated email schedule (${EMAIL_SCHEDULE_LABEL}) is on standby until REPORT_SENDER_EMAIL is configured in .env.`);
+      console.info(`[EMAIL CRON] Automated email schedule (${EMAIL_SCHEDULE_LABEL}) is on standby until configured via Morning Briefing UI or .env.`);
     }
 
     const refreshLearningData = () => {

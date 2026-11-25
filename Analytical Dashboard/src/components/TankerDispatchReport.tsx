@@ -1,20 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Truck,
   AlertTriangle,
   CheckCircle,
   Copy,
   Download,
-  Calendar,
-  Fuel,
   ShieldAlert,
-  ArrowRight,
   LoaderCircle,
 } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
 import { fmtQty, escapeCsvCell } from '../engine/formatting';
 import { recommendTanker } from '../engine/tanker';
 import productConfig from '../../../product-config.json';
+
+type ActionStatus =
+  | 'Open'
+  | 'Tanker Dispatched'
+  | 'Dispenser Maintenance'
+  | 'Stock Confirmed'
+  | 'Resolved';
+
+interface StationActionItem {
+  status: ActionStatus;
+  note: string;
+  updatedAt: string;
+}
+
+const ACTION_STATUS_OPTIONS: ActionStatus[] = [
+  'Open',
+  'Tanker Dispatched',
+  'Dispenser Maintenance',
+  'Stock Confirmed',
+  'Resolved',
+];
 
 interface TankerDispatchReportProps {
   stations: StationRecord[];
@@ -30,9 +48,64 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
   onSelectStation,
 }) => {
   const [selectedUrgency, setSelectedUrgency] = useState<'all' | 'critical' | 'warning'>('all');
+  const [actionFilter, setActionFilter] = useState<'all' | 'open' | 'in_progress' | 'resolved'>('all');
+  const [stationActions, setStationActions] = useState<Record<string, StationActionItem>>({});
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [savingCode, setSavingCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [whatsAppSending, setWhatsAppSending] = useState(false);
   const [whatsAppStatus, setWhatsAppStatus] = useState<{ message: string; success: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/station-actions?date=${encodeURIComponent(telemetry.date)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (payload?.actions && typeof payload.actions === 'object') {
+          setStationActions(payload.actions);
+          const notes: Record<string, string> = {};
+          for (const [code, item] of Object.entries(payload.actions as Record<string, StationActionItem>)) {
+            notes[code] = item.note || '';
+          }
+          setNoteDrafts(notes);
+        } else {
+          setStationActions({});
+          setNoteDrafts({});
+        }
+      })
+      .catch(() => {});
+  }, [telemetry.date]);
+
+  const handleSaveStationAction = async (erpCode: string, nextStatus: ActionStatus, nextNote?: string) => {
+    const noteToSave = nextNote !== undefined ? nextNote : (noteDrafts[erpCode] ?? stationActions[erpCode]?.note ?? '');
+    setSavingCode(erpCode);
+    setStationActions((prev) => ({
+      ...prev,
+      [erpCode]: { status: nextStatus, note: noteToSave, updatedAt: new Date().toISOString() },
+    }));
+    try {
+      const res = await fetch('/api/station-actions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-go-gas-whatsapp-request': 'authorized-client',
+        },
+        body: JSON.stringify({
+          date: telemetry.date,
+          erp_code: erpCode,
+          status: nextStatus,
+          note: noteToSave,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.entry) {
+        setStationActions((prev) => ({ ...prev, [erpCode]: json.entry }));
+      }
+    } catch {
+      // Optimistic local state retained
+    } finally {
+      setSavingCode(null);
+    }
+  };
   const exactLitres = (value: number) => value.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -84,13 +157,25 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
     .sort((a, b) => a.station.days_left - b.station.days_left);
 
   const filteredDispatches = dispatchCandidates.filter((d) => {
-    if (selectedUrgency === 'critical') return d.urgency === 'Critical';
-    if (selectedUrgency === 'warning') return d.urgency === 'Warning';
+    if (selectedUrgency === 'critical' && d.urgency !== 'Critical') return false;
+    if (selectedUrgency === 'warning' && d.urgency !== 'Warning') return false;
+    const status = stationActions[d.station.erp_code]?.status || 'Open';
+    if (actionFilter === 'open') return status === 'Open';
+    if (actionFilter === 'in_progress') {
+      return status === 'Tanker Dispatched' || status === 'Dispenser Maintenance' || status === 'Stock Confirmed';
+    }
+    if (actionFilter === 'resolved') return status === 'Resolved';
     return true;
   });
 
   const criticalCount = dispatchCandidates.filter((d) => d.urgency === 'Critical').length;
   const warningCount = dispatchCandidates.filter((d) => d.urgency === 'Warning').length;
+  const openActionCount = dispatchCandidates.filter((d) => (stationActions[d.station.erp_code]?.status || 'Open') === 'Open').length;
+  const inProgressActionCount = dispatchCandidates.filter((d) => {
+    const st = stationActions[d.station.erp_code]?.status || 'Open';
+    return st === 'Tanker Dispatched' || st === 'Dispenser Maintenance' || st === 'Stock Confirmed';
+  }).length;
+  const resolvedActionCount = dispatchCandidates.filter((d) => stationActions[d.station.erp_code]?.status === 'Resolved').length;
   const totalReplenishmentLtr = dispatchCandidates.reduce((sum, d) => sum + d.recommendedVolumeLtr, 0);
 
   const handleCopyWhatsApp = () => {
@@ -149,24 +234,31 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
       'Days Fuel Left',
       'Recommended Tanker',
       'Estimated Refill Litres',
+      'Action Status',
+      'Coordinator Note / ETA',
       'Remark',
     ];
 
-    const rows = dispatchCandidates.map((d) => [
-      escapeCsvCell(d.station.erp_code),
-      escapeCsvCell(d.station.alds_name),
-      escapeCsvCell(d.station.state),
-      escapeCsvCell(d.station.tm),
-      escapeCsvCell(d.station.coordinator),
-      escapeCsvCell(d.urgency),
-      d.currentStock,
-      d.dailyBurn,
-      d.burn3Day,
-      d.station.days_left,
-      escapeCsvCell(d.recommendedTanker),
-      d.recommendedVolumeLtr,
-      escapeCsvCell(d.station.remark || ''),
-    ]);
+    const rows = dispatchCandidates.map((d) => {
+      const act = stationActions[d.station.erp_code];
+      return [
+        escapeCsvCell(d.station.erp_code),
+        escapeCsvCell(d.station.alds_name),
+        escapeCsvCell(d.station.state),
+        escapeCsvCell(d.station.tm),
+        escapeCsvCell(d.station.coordinator),
+        escapeCsvCell(d.urgency),
+        d.currentStock,
+        d.dailyBurn,
+        d.burn3Day,
+        d.station.days_left,
+        escapeCsvCell(d.recommendedTanker),
+        d.recommendedVolumeLtr,
+        escapeCsvCell(act?.status || 'Open'),
+        escapeCsvCell(act?.note || ''),
+        escapeCsvCell(d.station.remark || ''),
+      ];
+    });
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -338,13 +430,57 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
           </button>
           <button
             onClick={() => setSelectedUrgency('warning')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
               selectedUrgency === 'warning'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-amber-600'
             }`}
           >
             Warning Only ({warningCount})
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-slate-500 dark:text-slate-400 font-medium mr-1">Action Loop:</span>
+          <button
+            onClick={() => setActionFilter('all')}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
+              actionFilter === 'all'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            All ({dispatchCandidates.length})
+          </button>
+          <button
+            onClick={() => setActionFilter('open')}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
+              actionFilter === 'open'
+                ? 'bg-rose-600 text-white'
+                : 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300'
+            }`}
+          >
+            Open ({openActionCount})
+          </button>
+          <button
+            onClick={() => setActionFilter('in_progress')}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
+              actionFilter === 'in_progress'
+                ? 'bg-amber-600 text-white'
+                : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300'
+            }`}
+          >
+            Dispatched / Active ({inProgressActionCount})
+          </button>
+          <button
+            onClick={() => setActionFilter('resolved')}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
+              actionFilter === 'resolved'
+                ? 'bg-emerald-600 text-white'
+                : 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+            }`}
+          >
+            Resolved ({resolvedActionCount})
           </button>
         </div>
       </div>
@@ -362,20 +498,25 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                 <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Daily Burn</th>
                 <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Days Left</th>
                 <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>Recommended Tanker</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>Closed-Loop Action &amp; ETA</th>
                 <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>Operational Remark</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-800 dark:text-slate-200">
               {filteredDispatches.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-8 text-slate-400">
+                  <td colSpan={9} className="text-center py-8 text-slate-400">
                     No stations requiring immediate tanker replenishment in this view.
                   </td>
                 </tr>
               ) : (
-                filteredDispatches.map((d) => (
+                filteredDispatches.map((d) => {
+                  const code = d.station.erp_code;
+                  const act = stationActions[code]?.status || 'Open';
+                  const noteVal = noteDrafts[code] ?? stationActions[code]?.note ?? '';
+                  return (
                   <tr
-                    key={d.station.erp_code}
+                    key={code}
                     onClick={() => onSelectStation?.(d.station)}
                     className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
                   >
@@ -427,7 +568,56 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                         {d.recommendedTanker}
                       </span>
                       <div className="text-[10px] text-slate-500 mt-1">
-                        Estimated fill:                         {exactLitres(d.recommendedVolumeLtr)} L
+                        Estimated fill: {exactLitres(d.recommendedVolumeLtr)} L
+                      </div>
+                    </td>
+
+                    <td
+                      className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex flex-col gap-1 min-w-44">
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            aria-label={`Action status for ${d.station.alds_name}`}
+                            value={act}
+                            onChange={(e) => {
+                              void handleSaveStationAction(code, e.target.value as ActionStatus);
+                            }}
+                            className={`text-[11px] font-semibold rounded-md px-2 py-1 border focus:outline-none cursor-pointer ${
+                              act === 'Resolved'
+                                ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-500/30'
+                                : act === 'Open'
+                                ? 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-500/30'
+                                : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-500/30'
+                            }`}
+                          >
+                            {ACTION_STATUS_OPTIONS.map((opt) => (
+                              <option key={opt} value={opt} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                          {act === 'Resolved' && <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
+                          {savingCode === code && <LoaderCircle className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />}
+                        </div>
+                        <input
+                          type="text"
+                          value={noteVal}
+                          placeholder="ETA / tanker # / note..."
+                          onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [code]: e.target.value }))}
+                          onBlur={(e) => {
+                            if ((stationActions[code]?.note || '') !== e.target.value) {
+                              void handleSaveStationAction(code, act, e.target.value);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                          className="text-[11px] px-2 py-0.5 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:border-indigo-500"
+                        />
                       </div>
                     </td>
 
@@ -435,7 +625,8 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                       {d.station.remark || (d.station.days_left < 1.5 ? 'Critical buffer threshold reached' : 'Low stock level')}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

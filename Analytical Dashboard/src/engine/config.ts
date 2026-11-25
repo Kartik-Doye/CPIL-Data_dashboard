@@ -18,7 +18,7 @@ loadEnvFile(path.resolve(process.cwd(), '.env'));
 loadEnvFile(path.resolve(process.cwd(), 'Manual Work', '.env'));
 loadEnvFile(
   path.resolve(process.cwd(), '.env'),
-  new Set(['WHATSAPP_CRON_EXPRESSION', 'WHATSAPP_SCHEDULE_LABEL']),
+  new Set(['WHATSAPP_CRON_EXPRESSION', 'WHATSAPP_SCHEDULE_LABEL', 'EMAIL_CRON_EXPRESSION', 'EMAIL_SCHEDULE_LABEL']),
 );
 
 export const PRODUCT_CONFIG = productConfig;
@@ -88,8 +88,10 @@ export const WHATSAPP_AUTH_DIRECTORY =
   process.env.WHATSAPP_AUTH_DIRECTORY || productConfig.whatsapp.authDirectory;
 export const WHATSAPP_WEB_VERSION_CACHE_DIRECTORY =
   process.env.WHATSAPP_WEB_VERSION_CACHE_DIRECTORY || productConfig.whatsapp.webVersionCacheDirectory;
-export const WHATSAPP_CRON_EXPRESSION = process.env.WHATSAPP_CRON_EXPRESSION?.trim() || '';
-export const WHATSAPP_SCHEDULE_LABEL = process.env.WHATSAPP_SCHEDULE_LABEL?.trim() || WHATSAPP_CRON_EXPRESSION || 'Not scheduled';
+export const WHATSAPP_CRON_EXPRESSION =
+  process.env.WHATSAPP_CRON_EXPRESSION?.trim() || productConfig.whatsapp.cronExpression || '';
+export const WHATSAPP_SCHEDULE_LABEL =
+  process.env.WHATSAPP_SCHEDULE_LABEL?.trim() || productConfig.whatsapp.scheduleLabel || WHATSAPP_CRON_EXPRESSION || 'Not scheduled';
 export const WHATSAPP_SEND_COOLDOWN_SECONDS = parseInt(
   process.env.WHATSAPP_SEND_COOLDOWN_SECONDS || String(productConfig.whatsapp.sendCooldownSeconds),
   10

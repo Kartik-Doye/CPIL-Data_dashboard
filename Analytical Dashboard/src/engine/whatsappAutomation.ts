@@ -106,10 +106,86 @@ function updateConnectionState(state: ReturnType<typeof getWhatsAppSessionState>
   ioInstance?.emit('qr-code', currentQrCode);
 }
 
+function readDispatchedSlots(): string[] {
+  try {
+    if (fs.existsSync(RUNTIME_SETTINGS_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_PATH, 'utf-8'));
+      if (Array.isArray(parsed?.whatsapp_dispatched_slots)) {
+        return parsed.whatsapp_dispatched_slots.map(String);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function recordDispatchedSlot(slotId: string): void {
+  try {
+    let current: Record<string, any> = {};
+    if (fs.existsSync(RUNTIME_SETTINGS_PATH)) {
+      current = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_PATH, 'utf-8')) || {};
+    }
+    const existing: string[] = Array.isArray(current.whatsapp_dispatched_slots)
+      ? current.whatsapp_dispatched_slots.map(String)
+      : [];
+    if (!existing.includes(slotId)) {
+      existing.push(slotId);
+    }
+    current.whatsapp_dispatched_slots = existing.slice(-30);
+    fs.writeFileSync(RUNTIME_SETTINGS_PATH, JSON.stringify(current, null, 2), 'utf-8');
+  } catch {
+    // ignore
+  }
+}
+
+export function getCurrentIstDateAndMinutes(): { dateStr: string; minutesOfDay: number } {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || '00';
+  const dateStr = `${get('year')}-${get('month')}-${get('day')}`;
+  const hour = parseInt(get('hour'), 10) % 24;
+  const minute = parseInt(get('minute'), 10);
+  return { dateStr, minutesOfDay: hour * 60 + minute };
+}
+
+export function parseCronDailySlots(cronExpressions: string[]): Array<{ key: string; minutesOfDay: number }> {
+  const slots: Array<{ key: string; minutesOfDay: number }> = [];
+  for (const expr of cronExpressions) {
+    const tokens = expr.trim().split(/\s+/);
+    if (tokens.length < 2) continue;
+    const minTokens = tokens[0].split(',');
+    const hourTokens = tokens[1].split(',');
+    for (const hStr of hourTokens) {
+      for (const mStr of minTokens) {
+        const h = parseInt(hStr, 10);
+        const m = parseInt(mStr, 10);
+        if (Number.isFinite(h) && Number.isFinite(m) && h >= 0 && h < 24 && m >= 0 && m < 60) {
+          const key = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+          slots.push({ key, minutesOfDay: h * 60 + m });
+        }
+      }
+    }
+  }
+  return slots.sort((a, b) => a.minutesOfDay - b.minutesOfDay);
+}
+
+let catchUpTimer: ReturnType<typeof setInterval> | null = null;
+let catchUpInFlight = false;
+
 export function initWhatsAppAutomation(
   app: Express,
   server: http.Server,
-  buildExecutiveMessage?: () => Promise<string>
+  buildExecutiveMessage?: () => Promise<string>,
+  onAfterScheduledBroadcast?: () => Promise<void>
 ) {
   const io = new SocketIOServer(server, {
     cors: {
@@ -172,7 +248,7 @@ export function initWhatsAppAutomation(
     socket.emit('qr-code', currentQrCode);
   });
 
-  async function sendBroadcast(triggerType = 'scheduled') {
+  async function sendBroadcast(triggerType = 'scheduled', slotIdToMark?: string) {
     if (connectionStatus !== 'Ready') {
       console.log(`[WHATSAPP AUTOMATION] ${triggerType} broadcast skipped: WhatsApp client is not logged in (Status: ${connectionStatus}).`);
       return { success: false, message: `WhatsApp client is not logged in (${connectionStatus})` };
@@ -184,11 +260,19 @@ export function initWhatsAppAutomation(
         ? await buildExecutiveMessage()
         : dailyMessageText;
       const result = await sendWhatsAppMessage('briefing', message, recipients);
+      if (slotIdToMark) {
+        recordDispatchedSlot(slotIdToMark);
+      }
       io.emit('broadcast-success', {
         timestamp: new Date().toISOString(),
         recipient: recipients.length ? recipients.join(', ') : 'configured recipients',
         type: triggerType,
       });
+      if (onAfterScheduledBroadcast && (triggerType.startsWith('scheduled') || triggerType.startsWith('catchup'))) {
+        void onAfterScheduledBroadcast().catch((err) => {
+          console.warn('[WHATSAPP AUTOMATION] Per-TM auto-dispatch warning:', err instanceof Error ? err.message : err);
+        });
+      }
       return result;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -199,24 +283,61 @@ export function initWhatsAppAutomation(
 
   for (const task of scheduledTasks) task.stop();
   scheduledTasks = [];
+  if (catchUpTimer) clearInterval(catchUpTimer);
   const cronExpressions = WHATSAPP_CRON_EXPRESSION
     .split(';')
     .map((expression) => expression.trim())
     .filter(Boolean);
+  const parsedDailySlots = parseCronDailySlots(cronExpressions);
+
+  async function checkMissedScheduledBroadcasts() {
+    if (catchUpInFlight || connectionStatus !== 'Ready' || parsedDailySlots.length === 0) return;
+    catchUpInFlight = true;
+    try {
+      const { dateStr, minutesOfDay } = getCurrentIstDateAndMinutes();
+      const dispatched = new Set(readDispatchedSlots());
+      for (const slot of parsedDailySlots) {
+        const slotId = `${dateStr}@${slot.key}`;
+        const elapsedMinutes = minutesOfDay - slot.minutesOfDay;
+        // Catch up if the scheduled slot passed between 2 and 180 minutes ago and was never sent
+        if (elapsedMinutes >= 2 && elapsedMinutes <= 180 && !dispatched.has(slotId)) {
+          console.log(`[WHATSAPP CATCH-UP] Missed scheduled slot ${slotId} detected (online now); dispatching catch-up broadcast...`);
+          await sendBroadcast(`catchup-${slot.key}`, slotId);
+        }
+      }
+    } finally {
+      catchUpInFlight = false;
+    }
+  }
+
   if (cronExpressions.length === 0) {
     console.error('[WHATSAPP CRON] Automated broadcasts disabled. Set WHATSAPP_CRON_EXPRESSION in the project-root .env file.');
   } else if (cronExpressions.some((expression) => !cron.validate(expression))) {
     console.error(`[WHATSAPP CRON] Automated broadcasts disabled. Invalid WHATSAPP_CRON_EXPRESSION: ${WHATSAPP_CRON_EXPRESSION}`);
   } else {
     scheduledTasks = cronExpressions.map((expression) => cron.schedule(expression, () => {
+      const { dateStr, minutesOfDay } = getCurrentIstDateAndMinutes();
+      const matchedSlot = parsedDailySlots.find((s) => Math.abs(s.minutesOfDay - minutesOfDay) <= 2);
+      const slotId = matchedSlot ? `${dateStr}@${matchedSlot.key}` : undefined;
+      if (slotId && readDispatchedSlots().includes(slotId)) {
+        return;
+      }
       const timeLabel = new Date().toLocaleTimeString('en-IN', {
         hour: 'numeric',
         minute: '2-digit',
         timeZone: APP_TIMEZONE,
       });
       console.log(`[WHATSAPP CRON] Running automated daily broadcast at ${timeLabel}...`);
-      void sendBroadcast(`scheduled-${timeLabel}`);
+      void sendBroadcast(`scheduled-${timeLabel}`, slotId);
     }, { timezone: APP_TIMEZONE }));
+
+    catchUpTimer = setInterval(() => {
+      void checkMissedScheduledBroadcasts();
+    }, 90_000);
+    // Also check shortly after boot once WhatsApp restores Ready state
+    setTimeout(() => {
+      void checkMissedScheduledBroadcasts();
+    }, 25_000);
   }
 
   app.get('/api/whatsapp/config', async (_req: Request, res: Response) => {

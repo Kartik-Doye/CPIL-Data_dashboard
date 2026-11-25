@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import nodemailer from 'nodemailer';
 import ExcelJS from 'exceljs';
 import { fileURLToPath } from 'node:url';
@@ -451,10 +453,10 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
         </thead>
         <tbody>
           ${tmSummaryList.map((t) => {
-            const tgt = t.daily_target ?? 0;
-            const pct = t.efficiency_pct ?? 0;
-            const trend3m = t.three_month_change_pct ?? 0;
-            return `
+      const tgt = t.daily_target ?? 0;
+      const pct = t.efficiency_pct ?? 0;
+      const trend3m = t.three_month_change_pct ?? 0;
+      return `
             <tr>
               <td style="padding:6px 7px;border:1px solid #e2e8f0;font-weight:bold">${escapeHtml(t.tm)}</td>
               <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right">${number(tgt)}</td>
@@ -464,7 +466,7 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
               <td style="padding:6px 7px;border:1px solid #e2e8f0;text-align:right">${t.digital_pct ?? 0}% Dig / ${t.cash_pct ?? 0}% Cash</td>
             </tr>
             `;
-          }).join('')}
+    }).join('')}
         </tbody>
       </table>
     `
@@ -477,27 +479,80 @@ export function buildExecutiveEmail(telemetry: ExecutiveEmailTelemetry) {
   };
 }
 
+const EMAIL_RUNTIME_SETTINGS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../.runtime_settings.json',
+);
+
+export interface RuntimeEmailConfig {
+  senderEmail?: string;
+  recipientEmails?: string;
+  appPassword?: string;
+}
+
+function readDiskEmailConfig(): RuntimeEmailConfig {
+  try {
+    if (fs.existsSync(EMAIL_RUNTIME_SETTINGS_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(EMAIL_RUNTIME_SETTINGS_PATH, 'utf-8'));
+      if (parsed?.email_config && typeof parsed.email_config === 'object') {
+        return parsed.email_config as RuntimeEmailConfig;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+export function saveRuntimeEmailConfig(cfg: RuntimeEmailConfig): void {
+  let current: Record<string, any> = {};
+  try {
+    if (fs.existsSync(EMAIL_RUNTIME_SETTINGS_PATH)) {
+      current = JSON.parse(fs.readFileSync(EMAIL_RUNTIME_SETTINGS_PATH, 'utf-8')) || {};
+    }
+  } catch {
+    current = {};
+  }
+  const existing = (current.email_config && typeof current.email_config === 'object') ? current.email_config : {};
+  current.email_config = {
+    senderEmail: cfg.senderEmail !== undefined ? cfg.senderEmail.trim() : existing.senderEmail || '',
+    recipientEmails: cfg.recipientEmails !== undefined ? cfg.recipientEmails.trim() : existing.recipientEmails || '',
+    appPassword: cfg.appPassword ? cfg.appPassword.replace(/\s/g, '') : existing.appPassword || '',
+  };
+  fs.writeFileSync(EMAIL_RUNTIME_SETTINGS_PATH, JSON.stringify(current, null, 2), 'utf-8');
+}
+
+export function getEmailConfigStatus() {
+  const disk = readDiskEmailConfig();
+  const sender = (disk.senderEmail || process.env.REPORT_SENDER_EMAIL || process.env.SMTP_USER || '').trim();
+  const recipientsRaw = (disk.recipientEmails || process.env.REPORT_RECIPIENT_EMAILS || process.env.SMTP_TO || '').trim();
+  const recipients = recipientsRaw.split(',').map((e) => e.trim()).filter(Boolean);
+  const hasPassword = Boolean((disk.appPassword || process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS || '').replace(/\s/g, ''));
+  return {
+    configured: Boolean(sender && recipients.length > 0 && hasPassword),
+    senderEmail: sender,
+    recipientEmails: recipients.join(', '),
+    recipientCount: recipients.length,
+    hasPassword,
+  };
+}
+
 export function isEmailConfigured(): boolean {
-  const sender = (process.env.REPORT_SENDER_EMAIL || process.env.SMTP_USER)?.trim();
-  const recipients = (process.env.REPORT_RECIPIENT_EMAILS || process.env.SMTP_TO)
-    ?.split(',')
-    .map((email) => email.trim())
-    .filter(Boolean);
-  const password = (process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s/g, '');
-  return Boolean(sender && recipients?.length && password);
+  return getEmailConfigStatus().configured;
 }
 
 function readEmailConfig() {
-  const sender = (process.env.REPORT_SENDER_EMAIL || process.env.SMTP_USER)?.trim();
-  const recipients = (process.env.REPORT_RECIPIENT_EMAILS || process.env.SMTP_TO)
+  const disk = readDiskEmailConfig();
+  const sender = (disk.senderEmail || process.env.REPORT_SENDER_EMAIL || process.env.SMTP_USER)?.trim();
+  const recipients = (disk.recipientEmails || process.env.REPORT_RECIPIENT_EMAILS || process.env.SMTP_TO)
     ?.split(',')
     .map((email) => email.trim())
     .filter(Boolean);
-  const password = (process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s/g, '');
+  const password = (disk.appPassword || process.env.REPORT_SENDER_APP_PASSWORD || process.env.SMTP_PASS)?.replace(/\s/g, '');
 
   if (!sender || !recipients?.length || !password) {
     throw new Error(
-      'Email is not configured. Set REPORT_SENDER_EMAIL, REPORT_RECIPIENT_EMAILS, and REPORT_SENDER_APP_PASSWORD in the local environment.',
+      'Email is not configured. Configure Sender Gmail, App Password, and Recipients in the Morning Briefing panel (or in .env).',
     );
   }
 

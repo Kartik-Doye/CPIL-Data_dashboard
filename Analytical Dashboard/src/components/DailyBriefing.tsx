@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Copy,
@@ -13,6 +13,7 @@ import {
   ShieldAlert,
   Mail,
   LoaderCircle,
+  Settings,
 } from 'lucide-react';
 import { ExecutiveTelemetry } from '../types';
 import productConfig from '../../../product-config.json';
@@ -28,6 +29,57 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
   const [emailStatus, setEmailStatus] = useState<{ message: string; success: boolean } | null>(null);
   const [whatsAppSending, setWhatsAppSending] = useState(false);
   const [whatsAppStatus, setWhatsAppStatus] = useState<{ message: string; success: boolean } | null>(null);
+  const [showEmailSettings, setShowEmailSettings] = useState(false);
+  const [emailConfigured, setEmailConfigured] = useState<boolean>(false);
+  const [senderEmailDraft, setSenderEmailDraft] = useState('');
+  const [recipientEmailsDraft, setRecipientEmailsDraft] = useState('');
+  const [appPasswordDraft, setAppPasswordDraft] = useState('');
+  const [hasSavedAppPassword, setHasSavedAppPassword] = useState(false);
+  const [emailConfigSaving, setEmailConfigSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/email/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((info) => {
+        if (!info) return;
+        setEmailConfigured(Boolean(info.configured));
+        if (info.senderEmail) setSenderEmailDraft(info.senderEmail);
+        if (info.recipientEmails) setRecipientEmailsDraft(info.recipientEmails);
+        setHasSavedAppPassword(Boolean(info.hasPassword));
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSaveEmailConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEmailConfigSaving(true);
+    setEmailStatus(null);
+    try {
+      const res = await fetch('/api/email/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-go-gas-email-request': 'authorized-client',
+        },
+        body: JSON.stringify({
+          senderEmail: senderEmailDraft,
+          recipientEmails: recipientEmailsDraft,
+          appPassword: appPasswordDraft || undefined,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Failed to save email settings.');
+      setEmailConfigured(Boolean(payload.configured));
+      setHasSavedAppPassword(Boolean(payload.hasPassword));
+      setAppPasswordDraft('');
+      setEmailStatus({ message: 'Email schedule & SMTP configuration saved (02:15 PM & 06:30 PM Daily active).', success: true });
+      setShowEmailSettings(false);
+    } catch (err) {
+      setEmailStatus({ message: err instanceof Error ? err.message : String(err), success: false });
+    } finally {
+      setEmailConfigSaving(false);
+    }
+  };
   const qty = (value: number) => value.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -166,11 +218,25 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
               <button
                 onClick={handleSendEmail}
                 disabled={emailSending}
-                title="Sends the current executive summary to the locally configured recipient(s)."
+                title="Sends the current executive summary + 4-sheet Excel workbook to configured recipient(s)."
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-sky-700 hover:bg-sky-600 disabled:bg-slate-400 dark:disabled:bg-slate-700 disabled:text-slate-100 dark:disabled:text-slate-400 text-white transition-colors cursor-pointer disabled:cursor-wait"
               >
                 {emailSending ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
                 <span>{emailSending ? 'Sending Email...' : 'Send Test Email'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowEmailSettings((v) => !v)}
+                title="Configure Gmail SMTP sender, App Password, and recipients for 02:15 PM & 06:30 PM automated Excel workbook emails"
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                  emailConfigured
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>{emailConfigured ? 'Email Active' : 'Setup Email'}</span>
               </button>
             </div>
 
@@ -194,10 +260,59 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
               </p>
             )}
             <p className="text-[10px] text-slate-500">
-              1-click dispatches to environment-configured leadership recipients.
+              Auto-schedules Email Workbook &amp; WhatsApp Flash at <strong>02:15 PM &amp; 06:30 PM Daily</strong>.
             </p>
           </div>
         </div>
+
+        {showEmailSettings && (
+          <form onSubmit={handleSaveEmailConfig} className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <label className="space-y-1">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 block">Sender Gmail Address</span>
+              <input
+                type="email"
+                required
+                placeholder="desk@gogas.com"
+                value={senderEmailDraft}
+                onChange={(e) => setSenderEmailDraft(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-mono text-xs"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 block">
+                Gmail App Password {hasSavedAppPassword ? '(Saved • enter to replace)' : '(16-char)'}
+              </span>
+              <input
+                type="password"
+                required={!hasSavedAppPassword}
+                placeholder={hasSavedAppPassword ? '••••••••••••••••' : 'xxxx xxxx xxxx xxxx'}
+                value={appPasswordDraft}
+                onChange={(e) => setAppPasswordDraft(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-mono text-xs"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 block">Recipient Emails (comma-separated)</span>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="cmd@gogas.com, md@gogas.com"
+                  value={recipientEmailsDraft}
+                  onChange={(e) => setRecipientEmailsDraft(e.target.value)}
+                  className="min-w-0 flex-1 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-mono text-xs"
+                />
+                <button
+                  type="submit"
+                  disabled={emailConfigSaving}
+                  className="px-3.5 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white font-semibold cursor-pointer shrink-0"
+                >
+                  {emailConfigSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </label>
+          </form>
+        )}
       </div>
 
       {/* Snapshot Cards */}

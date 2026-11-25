@@ -15,7 +15,11 @@
     "load-sales": "tsx \"Manual Work/load_sales.ts\"",
     "load-station-mapping": "tsx \"Manual Work/load_station_contact_mapping.ts\"",
     "test-db": "tsx test_db.ts",
-    "email:send": "tsx \"Analytical Dashboard/send_morning_report.ts\""
+    "email:send": "tsx \"Analytical Dashboard/send_morning_report.ts\"",
+    "service:prod": "npm run build && node -e \"const { spawn } = require('child_process'); spawn('npx', ['tsx', 'Analytical Dashboard/server.ts'], { stdio: 'inherit', shell: true, env: { ...process.env, NODE_ENV: 'production' } }).on('exit', c => process.exit(c || 0))\"",
+    "service:pm2:start": "npm run build && pm2 start ecosystem.config.cjs",
+    "service:pm2:stop": "pm2 stop go-gas-executive-suite",
+    "service:pm2:logs": "pm2 logs go-gas-executive-suite"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

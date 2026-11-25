@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Users, Award, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Search, Target, ShieldCheck, Banknote, Share2, Check, Copy } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Users, Award, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Search, Target, ShieldCheck, Banknote, Share2, Check, Copy, Phone, Send, LoaderCircle, Settings } from 'lucide-react';
 import { TMSummary, ExecutiveTelemetry, StationRecord } from '../types';
 import { fmtQty, fmtCurrency } from '../engine/formatting';
 import { buildTmPersonalizedWhatsAppBrief } from '../engine/whatsappBriefing';
@@ -23,6 +23,112 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
   const [filterMode, setFilterMode] = useState<'all' | 'below_target' | 'declining_3m' | 'cash_heavy'>('all');
   const [sortBy, setSortBy] = useState<'total_sale_qty' | 'avg_daily_sale' | 'efficiency_pct' | 'daily_target' | 'three_month_change_pct' | 'cash_pct'>('total_sale_qty');
   const [copiedTmBrief, setCopiedTmBrief] = useState<{ tm: string; text: string } | null>(null);
+  const [showTmDirectory, setShowTmDirectory] = useState(false);
+  const [tmContacts, setTmContacts] = useState<Record<string, string>>({});
+  const [autoSendDaily, setAutoSendDaily] = useState(false);
+  const [autoOnlyBelowTarget, setAutoOnlyBelowTarget] = useState(true);
+  const [savingContacts, setSavingContacts] = useState(false);
+  const [sendingTm, setSendingTm] = useState<string | null>(null);
+  const [batchSending, setBatchSending] = useState(false);
+  const [tmDispatchNotice, setTmDispatchNotice] = useState<{ text: string; ok: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/tm-contacts')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (!payload) return;
+        if (payload.contacts && typeof payload.contacts === 'object') {
+          setTmContacts(payload.contacts);
+        }
+        setAutoSendDaily(Boolean(payload.autoSendDaily));
+        if (payload.autoOnlyBelowTarget !== undefined) {
+          setAutoOnlyBelowTarget(Boolean(payload.autoOnlyBelowTarget));
+        }
+      })
+      .catch(() => { });
+  }, []);
+
+  const handleSaveTmDirectory = async () => {
+    setSavingContacts(true);
+    setTmDispatchNotice(null);
+    try {
+      const res = await fetch('/api/tm-contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-go-gas-whatsapp-request': 'authorized-client',
+        },
+        body: JSON.stringify({
+          contacts: tmContacts,
+          autoSendDaily,
+          autoOnlyBelowTarget,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || 'Failed to save TM directory.');
+      setTmContacts(payload.contacts || {});
+      setTmDispatchNotice({
+        text: `Saved ${Object.keys(payload.contacts || {}).length} TM WhatsApp number(s)${payload.autoSendDaily ? ' with 02:15 PM & 06:30 PM auto-dispatch active' : ''}.`,
+        ok: true,
+      });
+    } catch (err) {
+      setTmDispatchNotice({ text: err instanceof Error ? err.message : String(err), ok: false });
+    } finally {
+      setSavingContacts(false);
+    }
+  };
+
+  const handleSendTmWhatsAppDirect = async (tmName: string) => {
+    if (!tmContacts[tmName]?.trim()) {
+      setShowTmDirectory(true);
+      setTmDispatchNotice({
+        text: `Assign a WhatsApp number for TM ${tmName} below and click Save Directory to enable 1-click dispatch.`,
+        ok: false,
+      });
+      return;
+    }
+    setSendingTm(tmName);
+    setTmDispatchNotice(null);
+    try {
+      const res = await fetch('/api/whatsapp/send-tm-brief', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-go-gas-whatsapp-request': 'authorized-client',
+        },
+        body: JSON.stringify({ tm: tmName, phone: tmContacts[tmName] }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || `Dispatch failed (HTTP ${res.status}).`);
+      setTmDispatchNotice({ text: payload.message, ok: true });
+    } catch (err) {
+      setTmDispatchNotice({ text: err instanceof Error ? err.message : String(err), ok: false });
+    } finally {
+      setSendingTm(null);
+    }
+  };
+
+  const handleSendBatchBelowTarget = async () => {
+    setBatchSending(true);
+    setTmDispatchNotice(null);
+    try {
+      const res = await fetch('/api/whatsapp/send-tm-brief', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-go-gas-whatsapp-request': 'authorized-client',
+        },
+        body: JSON.stringify({ batchMode: 'below_target' }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || `Batch dispatch failed (HTTP ${res.status}).`);
+      setTmDispatchNotice({ text: payload.message, ok: true });
+    } catch (err) {
+      setTmDispatchNotice({ text: err instanceof Error ? err.message : String(err), ok: false });
+    } finally {
+      setBatchSending(false);
+    }
+  };
 
   const handleCopyTmWhatsApp = (tmName: string) => {
     const text = buildTmPersonalizedWhatsAppBrief(
@@ -122,13 +228,12 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
                     {fmtQty(totalVolume)} L / {fmtQty(totalDailyTarget)} L
                   </span>
                   <span
-                    className={`ml-1.5 font-mono font-bold ${
-                      overallAchievementPct >= 100
+                    className={`ml-1.5 font-mono font-bold ${overallAchievementPct >= 100
                         ? 'text-emerald-600 dark:text-emerald-400'
                         : overallAchievementPct >= 90
-                        ? 'text-indigo-600 dark:text-indigo-400'
-                        : 'text-rose-600 dark:text-rose-400'
-                    }`}
+                          ? 'text-indigo-600 dark:text-indigo-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
                   >
                     ({overallAchievementPct}%)
                   </span>
@@ -306,43 +411,47 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
 
           <button
             onClick={() => setFilterMode('all')}
-            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-              filterMode === 'all'
+            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${filterMode === 'all'
                 ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
                 : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-            }`}
+              }`}
           >
             All TMs ({tms.length})
           </button>
           <button
             onClick={() => setFilterMode('below_target')}
-            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-              filterMode === 'below_target'
+            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${filterMode === 'below_target'
                 ? 'bg-rose-600 text-white'
                 : 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30'
-            }`}
+              }`}
           >
             Not Achieving Daily Target ({belowTargetTmCount})
           </button>
           <button
             onClick={() => setFilterMode('declining_3m')}
-            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-              filterMode === 'declining_3m'
+            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${filterMode === 'declining_3m'
                 ? 'bg-amber-600 text-white'
                 : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
-            }`}
+              }`}
           >
             3-Month Declining Trend ({declining3mTmCount})
           </button>
           <button
             onClick={() => setFilterMode('cash_heavy')}
-            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
-              filterMode === 'cash_heavy'
+            className={`px-2.5 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${filterMode === 'cash_heavy'
                 ? 'bg-indigo-600 text-white'
                 : 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30'
-            }`}
+              }`}
           >
             High Cash &ge;60%
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowTmDirectory((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors cursor-pointer"
+          >
+            <Phone className="w-3.5 h-3.5" />
+            <span>TM WhatsApp Directory ({Object.values(tmContacts).filter(Boolean).length}/{tms.length})</span>
           </button>
         </div>
 
@@ -350,46 +459,142 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
           <span className="text-slate-500 dark:text-slate-400">Sort By:</span>
           <button
             onClick={() => setSortBy('total_sale_qty')}
-            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-              sortBy === 'total_sale_qty' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-            }`}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${sortBy === 'total_sale_qty' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
           >
             Actual Sale
           </button>
           <button
             onClick={() => setSortBy('daily_target')}
-            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-              sortBy === 'daily_target' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-            }`}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${sortBy === 'daily_target' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
           >
             Daily Target
           </button>
           <button
             onClick={() => setSortBy('efficiency_pct')}
-            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-              sortBy === 'efficiency_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-            }`}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${sortBy === 'efficiency_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
           >
             Achievement %
           </button>
           <button
             onClick={() => setSortBy('three_month_change_pct')}
-            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-              sortBy === 'three_month_change_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-            }`}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${sortBy === 'three_month_change_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
           >
             Steepest 3M Decline
           </button>
           <button
             onClick={() => setSortBy('cash_pct')}
-            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-              sortBy === 'cash_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-            }`}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${sortBy === 'cash_pct' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
           >
             Highest Cash %
           </button>
         </div>
       </div>
+
+      {tmDispatchNotice && (
+        <div
+          role="status"
+          className={`rounded-xl px-4 py-3 text-xs font-medium border flex items-center justify-between gap-3 ${tmDispatchNotice.ok
+              ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-600/40 text-emerald-800 dark:text-emerald-300'
+              : 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-600/40 text-rose-800 dark:text-rose-300'
+            }`}
+        >
+          <span>{tmDispatchNotice.text}</span>
+          <button
+            type="button"
+            onClick={() => setTmDispatchNotice(null)}
+            className="text-[11px] font-bold underline cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {showTmDirectory && (
+        <div className="bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700/60 rounded-xl p-4 space-y-4 text-xs shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Settings className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Territory Manager WhatsApp Directory &amp; Scheduled Action Cards</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Map 10-digit WhatsApp numbers (or 91XXXXXXXXXX) for 1-click individual TM briefs and optional automatic dispatch after the 02:15 PM &amp; 06:30 PM daily broadcasts.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSendBatchBelowTarget}
+                disabled={batchSending}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:bg-slate-500 text-white font-semibold cursor-pointer shadow-2xs"
+              >
+                {batchSending ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <span>Send to Mapped TMs Below Target</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTmDirectory}
+                disabled={savingContacts}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-500 text-white font-semibold cursor-pointer shadow-2xs"
+              >
+                {savingContacts ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                <span>Save Directory</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-5 bg-slate-50 dark:bg-slate-950 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
+            <label className="flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoSendDaily}
+                onChange={(e) => setAutoSendDaily(e.target.checked)}
+                className="rounded"
+              />
+              <span>Auto-send TM WhatsApp cards after 02:15 PM &amp; 06:30 PM Daily Broadcast</span>
+            </label>
+            <label className="flex items-center gap-2 text-slate-600 dark:text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoOnlyBelowTarget}
+                onChange={(e) => setAutoOnlyBelowTarget(e.target.checked)}
+                className="rounded"
+              />
+              <span>Auto-send only when TM is below daily target</span>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 max-h-64 overflow-y-auto pr-1">
+            {tms.map((tmRow) => (
+              <div
+                key={`dir-${tmRow.tm}`}
+                className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+              >
+                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate" title={tmRow.tm}>
+                  {tmRow.tm}
+                </span>
+                <input
+                  type="tel"
+                  placeholder="+91 / 10-digit"
+                  value={tmContacts[tmRow.tm] || ''}
+                  onChange={(e) =>
+                    setTmContacts((prev) => ({
+                      ...prev,
+                      [tmRow.tm]: e.target.value,
+                    }))
+                  }
+                  className="w-32 font-mono text-[11px] px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {copiedTmBrief && (
         <div className="bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-500/40 rounded-xl p-4 text-xs space-y-2 shadow-xs">
@@ -447,9 +652,8 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
                   <tr key={t.tm} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                     <td className={`px-3 font-sans ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                       <div className="flex items-center gap-2">
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center font-mono text-[11px] font-bold ${
-                          idx === 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                        }`}>
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center font-mono text-[11px] font-bold ${idx === 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                          }`}>
                           {idx + 1}
                         </span>
                         <div>
@@ -481,11 +685,10 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
 
                     <td className={`px-3 text-right font-bold ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] ${
-                          trend3m < 0
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] ${trend3m < 0
                             ? 'bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
                             : 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
-                        }`}
+                          }`}
                       >
                         {trend3m < 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
                         <span>{trend3m > 0 ? '+' : ''}{trend3m}%</span>
@@ -501,11 +704,10 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
                     </td>
 
                     <td
-                      className={`px-3 text-right font-bold ${isCompact ? 'py-1.5' : 'py-2.5'} ${
-                        variance >= 0
+                      className={`px-3 text-right font-bold ${isCompact ? 'py-1.5' : 'py-2.5'} ${variance >= 0
                           ? 'text-emerald-600 dark:text-emerald-400'
                           : 'text-rose-600 dark:text-rose-400'
-                      }`}
+                        }`}
                     >
                       {variance > 0 ? '+' : ''}
                       {fmtQty(variance)} L
@@ -515,28 +717,26 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-14 bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                           <div
-                            className={`h-full rounded-full ${
-                              achievePct >= 100
+                            className={`h-full rounded-full ${achievePct >= 100
                                 ? 'bg-emerald-500'
                                 : achievePct >= 90
-                                ? 'bg-indigo-500'
-                                : achievePct >= 75
-                                ? 'bg-amber-500'
-                                : 'bg-rose-500'
-                            }`}
+                                  ? 'bg-indigo-500'
+                                  : achievePct >= 75
+                                    ? 'bg-amber-500'
+                                    : 'bg-rose-500'
+                              }`}
                             style={{ width: `${Math.min(100, Math.max(4, achievePct))}%` }}
                           />
                         </div>
                         <span
-                          className={`font-bold ${
-                            achievePct >= 100
+                          className={`font-bold ${achievePct >= 100
                               ? 'text-emerald-600 dark:text-emerald-400'
                               : achievePct >= 90
-                              ? 'text-indigo-600 dark:text-indigo-400'
-                              : achievePct >= 75
-                              ? 'text-amber-600 dark:text-amber-400'
-                              : 'text-rose-600 dark:text-rose-400'
-                          }`}
+                                ? 'text-indigo-600 dark:text-indigo-400'
+                                : achievePct >= 75
+                                  ? 'text-amber-600 dark:text-amber-400'
+                                  : 'text-rose-600 dark:text-rose-400'
+                            }`}
                         >
                           {achievePct}%
                         </span>
@@ -578,15 +778,38 @@ export const TMLeaderboard: React.FC<TMLeaderboardProps> = ({
                     </td>
 
                     <td className={`px-3 text-center font-sans ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyTmWhatsApp(t.tm)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-semibold cursor-pointer shadow-2xs transition-colors"
-                        title={`Copy personalized WhatsApp action brief for TM ${t.tm}`}
-                      >
-                        <Copy className="w-3 h-3" />
-                        <span>Copy Brief</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleSendTmWhatsAppDirect(t.tm)}
+                          disabled={sendingTm === t.tm}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold cursor-pointer shadow-2xs transition-colors ${tmContacts[t.tm]
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                              : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100'
+                            }`}
+                          title={
+                            tmContacts[t.tm]
+                              ? `Send personalized WhatsApp brief directly to TM ${t.tm} (${tmContacts[t.tm]})`
+                              : `Set WhatsApp number for TM ${t.tm}`
+                          }
+                        >
+                          {sendingTm === t.tm ? (
+                            <LoaderCircle className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Send className="w-3 h-3" />
+                          )}
+                          <span>Send WA</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyTmWhatsApp(t.tm)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-semibold cursor-pointer transition-colors"
+                          title={`Copy personalized WhatsApp action brief for TM ${t.tm}`}
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

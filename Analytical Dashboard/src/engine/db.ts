@@ -110,6 +110,26 @@ export async function queryLoader<T = any>(sql: string, params: any[] = []): Pro
   }
 }
 
+export async function withLoaderTransaction<T>(
+  work: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  const p = getLoaderPool();
+  const client = await p.connect();
+  try {
+    await client.query(`SET statement_timeout = ${Math.max(DB_STATEMENT_TIMEOUT_MS, 30000)}`);
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[DB Loader Transaction Error]', err);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function ensureDatabaseEngine(): Promise<'external'> {
   if (engineInitialization) return engineInitialization;
   if (activeEngine === 'external' && pool) return 'external';

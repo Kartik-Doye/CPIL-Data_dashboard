@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { DollarSign, Download, Search } from 'lucide-react';
+import { DollarSign, Download, Search, ShieldAlert, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { StationRecord, ExecutiveTelemetry } from '../types';
 import { escapeCsvCell } from '../engine/formatting';
 
@@ -16,10 +16,13 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [minGap, setMinGap] = useState<number>(0.01);
-  const exact = (value: number) => value.toLocaleString('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const [auditFilter, setAuditFilter] = useState<'all' | 'unauthorized_scheme' | 'cash_shortfall'>('all');
+
+  const exact = (value: number) =>
+    value.toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
 
   const allDisparities = stations
     .filter((s) => s.sale_qty > 0 && (s.new_rate > 0 || s.erp_rate > 0))
@@ -31,39 +34,80 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
       const gapPerLitre = Number(rawGapPerLitre.toFixed(2));
       const dailyRevenueLoss = Number((rawGapPerLitre * s.sale_qty).toFixed(2));
 
+      const claimedScheme = Number((s.scheme || 0).toFixed(2));
+      const approvedHoScheme = Number((s.scheme_as_per_ho || 0).toFixed(2));
+      const unauthorizedSchemeRs = Number(Math.max(0, claimedScheme - approvedHoScheme).toFixed(2));
+      const unapprovedRspLeakageRs = Number(Math.max(0, dailyRevenueLoss - approvedHoScheme).toFixed(2));
+      const rawCheck = Number(s.collection_check || 0);
+      // Negative collection_check or positive shortfall check indicates collection mismatch
+      const collectionShortfallRs = Number(Math.abs(rawCheck) >= 1 ? rawCheck : 0);
+
       return {
         station: s,
         nominalRsp,
         effectiveRsp,
-        gapPerLitre: Number(gapPerLitre.toFixed(2)),
+        gapPerLitre,
         dailyRevenueLoss,
+        claimedScheme,
+        approvedHoScheme,
+        unauthorizedSchemeRs,
+        unapprovedRspLeakageRs,
+        collectionShortfallRs,
       };
     })
-    .filter((d) => d.gapPerLitre > 0)
-    .sort((a, b) => b.dailyRevenueLoss - a.dailyRevenueLoss);
-  const disparities = allDisparities
-    .filter((d) => {
-      if (d.gapPerLitre < minGap) return false;
-      if (!search.trim()) return true;
-      const q = search.toLowerCase();
-      return (
-        d.station.alds_name.toLowerCase().includes(q) ||
-        d.station.erp_code.toLowerCase().includes(q) ||
-        d.station.state.toLowerCase().includes(q) ||
-        d.station.tm.toLowerCase().includes(q)
-      );
-    });
+    .filter((d) => d.gapPerLitre > 0 || d.unauthorizedSchemeRs > 0 || Math.abs(d.collectionShortfallRs) >= 10)
+    .sort((a, b) => b.unapprovedRspLeakageRs - a.unapprovedRspLeakageRs || b.dailyRevenueLoss - a.dailyRevenueLoss);
+
+  const disparities = allDisparities.filter((d) => {
+    if (auditFilter === 'unauthorized_scheme' && d.unauthorizedSchemeRs <= 0 && d.unapprovedRspLeakageRs < 100) {
+      return false;
+    }
+    if (auditFilter === 'cash_shortfall' && Math.abs(d.collectionShortfallRs) < 10) {
+      return false;
+    }
+    if (auditFilter === 'all' && d.gapPerLitre < minGap && d.unauthorizedSchemeRs <= 0 && Math.abs(d.collectionShortfallRs) < 10) {
+      return false;
+    }
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      d.station.alds_name.toLowerCase().includes(q) ||
+      d.station.erp_code.toLowerCase().includes(q) ||
+      d.station.state.toLowerCase().includes(q) ||
+      d.station.tm.toLowerCase().includes(q)
+    );
+  });
 
   const totalFlagged = disparities.length;
   const totalDailyLoss = disparities.reduce((sum, d) => sum + d.dailyRevenueLoss, 0);
+  const totalApprovedHoScheme = disparities.reduce((sum, d) => sum + d.approvedHoScheme, 0);
+  const totalUnapprovedLeakage = disparities.reduce((sum, d) => sum + d.unapprovedRspLeakageRs, 0);
+  const totalCollectionMismatch = disparities.reduce((sum, d) => sum + Math.abs(d.collectionShortfallRs), 0);
+
   const pricedStations = stations.filter((s) => s.sale_qty > 0 && (s.new_rate > 0 || s.erp_rate > 0));
   const pricedVolume = pricedStations.reduce((sum, s) => sum + s.sale_qty, 0);
-  const filteredNominalAvgRsp = pricedVolume > 0
-    ? pricedStations.reduce((sum, s) => sum + (s.new_rate || s.erp_rate) * s.sale_qty, 0) / pricedVolume
-    : telemetry.average_rsp;
+  const filteredNominalAvgRsp =
+    pricedVolume > 0
+      ? pricedStations.reduce((sum, s) => sum + (s.new_rate || s.erp_rate) * s.sale_qty, 0) / pricedVolume
+      : telemetry.average_rsp;
 
   const exportCSV = () => {
-    const headers = ['Station Code', 'ALDS Name', 'State', 'TM', 'Daily Volume (L)', 'Nominal RSP (Rs)', 'Effective RSP (Rs)', 'Gap (Rs/L)', 'Daily Loss (Rs)'];
+    const headers = [
+      'Station Code',
+      'ALDS Name',
+      'State',
+      'TM',
+      'Daily Volume (L)',
+      'Nominal RSP (Rs)',
+      'Effective RSP (Rs)',
+      'Gap (Rs/L)',
+      'Gross RSP Gap (Rs)',
+      'Claimed Scheme (Rs)',
+      'HO Approved Scheme (Rs)',
+      'Unauthorized Scheme Excess (Rs)',
+      'Net Unapproved Leakage (Rs)',
+      'Collection Check Variance (Rs)',
+    ];
     const rows = disparities.map((d) => [
       escapeCsvCell(d.station.erp_code),
       escapeCsvCell(d.station.alds_name),
@@ -74,13 +118,18 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
       d.effectiveRsp.toFixed(2),
       d.gapPerLitre,
       d.dailyRevenueLoss,
+      d.claimedScheme,
+      d.approvedHoScheme,
+      d.unauthorizedSchemeRs,
+      d.unapprovedRspLeakageRs,
+      d.collectionShortfallRs,
     ]);
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `RSP_Disparity_Audit_${telemetry.date}.csv`;
+    link.download = `RSP_Scheme_Shortfall_Audit_${telemetry.date}.csv`;
     link.click();
   };
 
@@ -96,10 +145,10 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
               </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                  Automated RSP Pricing Disparity & Collection Gap Audit
+                  RSP Disparity, Unauthorized Scheme &amp; Cash-Shortfall Audit
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Identifies stations where effective realized rate per litre falls below the ERP state benchmark rate.
+                  Separates HO-approved commercial schemes from unauthorized station discounting and collection-check variances (Weighted Nominal RSP: ₹{filteredNominalAvgRsp.toFixed(2)}/L).
                 </p>
               </div>
             </div>
@@ -107,43 +156,77 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
 
           <button
             onClick={exportCSV}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Export Disparity CSV</span>
+            <span>Export Full Audit CSV</span>
           </button>
         </div>
 
         {/* Summary Strip */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
           <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30">
-            <span className="text-xs font-medium text-amber-700 dark:text-amber-400 block">Flagged Disparity Stations</span>
-            <span className="text-xl font-bold font-mono text-amber-800 dark:text-amber-300">{totalFlagged} Stations</span>
+            <span className="text-xs font-medium text-amber-700 dark:text-amber-400 block">Gross RSP Revenue Gap ({totalFlagged} stns)</span>
+            <span className="text-xl font-bold font-mono text-amber-800 dark:text-amber-300">₹{exact(totalDailyLoss)}</span>
+          </div>
+
+          <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-500/30">
+            <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Approved HO Scheme
+            </span>
+            <span className="text-xl font-bold font-mono text-emerald-800 dark:text-emerald-300">₹{exact(totalApprovedHoScheme)}</span>
           </div>
 
           <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30">
-            <span className="text-xs font-medium text-rose-700 dark:text-rose-400 block">Estimated Daily Revenue Loss</span>
-            <span className="text-xl font-bold font-mono text-rose-800 dark:text-rose-300">₹{exact(totalDailyLoss)}</span>
+            <span className="text-xs font-medium text-rose-700 dark:text-rose-400 flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5" /> Unapproved Discount / Leakage
+            </span>
+            <span className="text-xl font-bold font-mono text-rose-800 dark:text-rose-300">₹{exact(totalUnapprovedLeakage)}</span>
           </div>
 
           <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-500/30">
-            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 block">Weighted Nominal Avg RSP</span>
-            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">₹{filteredNominalAvgRsp.toFixed(2)} / L</span>
+            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-400 flex items-center gap-1">
+              <AlertTriangle className="w-3.5 h-3.5" /> Collection Check Mismatch
+            </span>
+            <span className="text-xl font-bold font-mono text-indigo-800 dark:text-indigo-300">₹{exact(totalCollectionMismatch)}</span>
           </div>
         </div>
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
-        <div className="relative min-w-55">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search station name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-200 focus:outline-none"
-          />
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-52">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search station, code, state, TM..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-200 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 text-xs">
+            {[
+              { id: 'all', label: 'All RSP Gaps' },
+              { id: 'unauthorized_scheme', label: 'Unapproved Discounting' },
+              { id: 'cash_shortfall', label: 'Collection Check Variance' },
+            ].map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setAuditFilter(mode.id as any)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  auditFilter === mode.id
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 text-xs">
@@ -151,8 +234,9 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
           {[0.01, 0.5, 1.0, 2.0].map((gap) => (
             <button
               key={gap}
+              type="button"
               onClick={() => setMinGap(gap)}
-              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
                 minGap === gap
                   ? 'bg-orange-600 text-white shadow-xs'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
@@ -170,13 +254,13 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 uppercase text-[10px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
               <tr>
-                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>Station Code & Name</th>
-                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>State & TM</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>Station Code &amp; Name</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'}`}>State &amp; TM</th>
                 <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Volume Sold</th>
-                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>ERP RSP Rate</th>
-                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Realized Effective RSP</th>
-                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Price Gap / Litre</th>
-                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Daily Revenue Deficit</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>ERP vs Realized RSP</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Claimed vs HO Scheme</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Unapproved Leakage</th>
+                <th className={`px-4 ${isCompact ? 'py-2' : 'py-3'} text-right`}>Collection Check</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-slate-800 dark:text-slate-200">
@@ -184,8 +268,8 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-slate-400 font-sans">
                     {allDisparities.length === 0
-                      ? 'No positive collection gap found against an available ERP RSP reference. Stations without an ERP RSP are excluded rather than assigned a made-up benchmark.'
-                      : `No stations meet the ₹${minGap.toFixed(2)}/L threshold and current search. ${allDisparities.length} station(s) have a smaller positive gap.`}
+                      ? 'No positive collection gap or scheme discrepancy found against an available ERP RSP reference.'
+                      : `No stations match the active filter and ₹${minGap.toFixed(2)}/L threshold.`}
                   </td>
                 </tr>
               ) : (
@@ -207,20 +291,32 @@ export const RSPDisparityReport: React.FC<RSPDisparityReportProps> = ({
                       {exact(d.station.sale_qty)} L
                     </td>
 
-                    <td className={`px-4 text-right text-slate-600 dark:text-slate-400 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      ₹{d.nominalRsp.toFixed(2)}
+                    <td className={`px-4 text-right ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                      <div className="text-slate-600 dark:text-slate-400">
+                        ₹{d.nominalRsp.toFixed(2)} → <span className="font-bold text-indigo-600 dark:text-indigo-400">₹{d.effectiveRsp.toFixed(2)}</span>
+                      </div>
+                      <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                        -₹{d.gapPerLitre.toFixed(2)}/L (₹{exact(d.dailyRevenueLoss)})
+                      </div>
                     </td>
 
-                    <td className={`px-4 text-right font-bold text-indigo-600 dark:text-indigo-400 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      ₹{d.effectiveRsp.toFixed(2)}
+                    <td className={`px-4 text-right ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                      <div>₹{exact(d.claimedScheme)} / ₹{exact(d.approvedHoScheme)}</div>
+                      {d.unauthorizedSchemeRs > 0 && (
+                        <div className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">
+                          +₹{exact(d.unauthorizedSchemeRs)} Excess
+                        </div>
+                      )}
                     </td>
 
-                    <td className={`px-4 text-right font-bold text-amber-600 dark:text-amber-400 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      -₹{d.gapPerLitre.toFixed(2)} / L
+                    <td className={`px-4 text-right font-bold ${d.unapprovedRspLeakageRs > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'} ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                      {d.unapprovedRspLeakageRs > 0 ? `-₹${exact(d.unapprovedRspLeakageRs)}` : '₹0.00'}
                     </td>
 
-                    <td className={`px-4 text-right font-bold text-rose-600 dark:text-rose-400 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      -₹{exact(d.dailyRevenueLoss)}
+                    <td className={`px-4 text-right font-bold ${Math.abs(d.collectionShortfallRs) >= 10 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'} ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                      {Math.abs(d.collectionShortfallRs) >= 1
+                        ? `${d.collectionShortfallRs > 0 ? '+' : ''}₹${exact(d.collectionShortfallRs)}`
+                        : 'Matched'}
                     </td>
                   </tr>
                 ))

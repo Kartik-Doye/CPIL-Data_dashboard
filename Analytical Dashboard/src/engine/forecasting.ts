@@ -615,12 +615,111 @@ function inverseMapeWeights(
   };
 }
 
-function rollingBacktest(dates: Date[], actuals: number[]): BacktestErrors {
-  const errors = createBacktestErrors();
-  // Use ALL available history in the database after the initial 7-day lag warm-up
-  const firstTestIndex = 7;
+function cloneBacktestErrors(src: BacktestErrors): BacktestErrors {
+  const weekdayCopy: Record<number, number[]> = {};
+  for (const [k, arr] of Object.entries(src.weekdayBiasPercentage)) {
+    weekdayCopy[Number(k)] = [...arr];
+  }
+  return {
+    percentage: {
+      linear: [...src.percentage.linear],
+      holt_winters: [...src.percentage.holt_winters],
+      naive_last_week: [...src.percentage.naive_last_week],
+      same_weekday_avg: [...src.percentage.same_weekday_avg],
+      gradient_boosting: [...src.percentage.gradient_boosting],
+    },
+    squared: {
+      linear: [...src.squared.linear],
+      holt_winters: [...src.squared.holt_winters],
+      naive_last_week: [...src.squared.naive_last_week],
+      same_weekday_avg: [...src.squared.same_weekday_avg],
+      gradient_boosting: [...src.squared.gradient_boosting],
+    },
+    ensemblePercentage: [...src.ensemblePercentage],
+    ensembleSquared: [...src.ensembleSquared],
+    ensembleBiasPercentage: [...src.ensembleBiasPercentage],
+    rawEnsembleBiasPercentage: [...src.rawEnsembleBiasPercentage],
+    weekdayBiasPercentage: weekdayCopy,
+    gradientBoostedEnsemblePercentage: [...src.gradientBoostedEnsemblePercentage],
+    modelAbsoluteErrorTotal: { ...src.modelAbsoluteErrorTotal },
+    scoredDates: [...src.scoredDates],
+    walkForwardOutcomes: src.walkForwardOutcomes.map((o) => ({ ...o })),
+    ensembleAbsoluteErrorTotal: src.ensembleAbsoluteErrorTotal,
+    ensembleSignedErrorTotal: src.ensembleSignedErrorTotal,
+    naiveLastWeekAbsoluteErrorTotal: src.naiveLastWeekAbsoluteErrorTotal,
+    sameWeekday3wkAbsoluteErrorTotal: src.sameWeekday3wkAbsoluteErrorTotal,
+    actualTotal: src.actualTotal,
+    gradientBoostingWins: src.gradientBoostingWins,
+    scoredDays: src.scoredDays,
+  };
+}
 
-  for (let testIndex = firstTestIndex; testIndex < actuals.length; testIndex++) {
+interface WalkForwardCacheEntry {
+  sigParts: string[];
+  errors: BacktestErrors;
+}
+
+const WALK_FORWARD_CACHE_MAX = 16;
+const walkForwardCache = new Map<string, WalkForwardCacheEntry>();
+let lastWalkForwardCacheMode: 'cold' | 'exact' | 'incremental' = 'cold';
+
+export function clearWalkForwardCache(): void {
+  walkForwardCache.clear();
+  lastWalkForwardCacheMode = 'cold';
+}
+
+export function getWalkForwardCacheDiagnostics(): {
+  size: number;
+  lastMode: 'cold' | 'exact' | 'incremental';
+} {
+  return {
+    size: walkForwardCache.size,
+    lastMode: lastWalkForwardCacheMode,
+  };
+}
+
+function rollingBacktest(dates: Date[], actuals: number[]): BacktestErrors {
+  const firstTestIndex = 7;
+  if (actuals.length <= firstTestIndex) {
+    lastWalkForwardCacheMode = 'cold';
+    return createBacktestErrors();
+  }
+
+  const sigParts = dates.map((d, i) => `${d.toISOString().slice(0, 10)}:${actuals[i]}`);
+  const fullKey = sigParts.join('|');
+
+  const exactHit = walkForwardCache.get(fullKey);
+  if (exactHit) {
+    // Refresh LRU order
+    walkForwardCache.delete(fullKey);
+    walkForwardCache.set(fullKey, exactHit);
+    lastWalkForwardCacheMode = 'exact';
+    return cloneBacktestErrors(exactHit.errors);
+  }
+
+  // Find longest cached prefix so adding 1+ new operating days only evaluates the new suffix
+  let bestPrefix: WalkForwardCacheEntry | null = null;
+  for (const entry of walkForwardCache.values()) {
+    const len = entry.sigParts.length;
+    if (len < firstTestIndex || len > sigParts.length) continue;
+    if (bestPrefix && len <= bestPrefix.sigParts.length) continue;
+    let matches = true;
+    for (let i = 0; i < len; i++) {
+      if (entry.sigParts[i] !== sigParts[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      bestPrefix = entry;
+    }
+  }
+
+  const errors = bestPrefix ? cloneBacktestErrors(bestPrefix.errors) : createBacktestErrors();
+  const startIndex = bestPrefix ? bestPrefix.sigParts.length : firstTestIndex;
+  lastWalkForwardCacheMode = bestPrefix ? 'incremental' : 'cold';
+
+  for (let testIndex = startIndex; testIndex < actuals.length; testIndex++) {
     const trainDates = dates.slice(0, testIndex);
     const trainActuals = actuals.slice(0, testIndex);
     const testDate = dates[testIndex];
@@ -729,6 +828,17 @@ function rollingBacktest(dates: Date[], actuals: number[]): BacktestErrors {
       errors.scoredDays++;
     }
   }
+
+  if (walkForwardCache.size >= WALK_FORWARD_CACHE_MAX) {
+    const oldestKey = walkForwardCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      walkForwardCache.delete(oldestKey);
+    }
+  }
+  walkForwardCache.set(fullKey, {
+    sigParts,
+    errors: cloneBacktestErrors(errors),
+  });
 
   return errors;
 }

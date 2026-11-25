@@ -4,7 +4,7 @@
     "port": 5050,
     "baseUrl": "http://localhost:5050",
     "timezone": "Asia/Kolkata",
-    "requestBodyLimit": "1mb",
+    "requestBodyLimit": "15mb",
     "localHostnames": ["localhost", "127.0.0.1", "::1"],
     "localAddressPrefixes": ["127.", "::ffff:127."],
     "trustedHostSuffixes": []
@@ -27,8 +27,8 @@
     "smtpPort": 465,
     "smtpSecure": true,
     "fromName": "GO Gas Executive Suite",
-    "cronExpression": "0 11,19 * * *",
-    "scheduleLabel": "11:00 AM & 07:00 PM Daily",
+    "cronExpression": "15 14 * * *;30 18 * * *",
+    "scheduleLabel": "02:15 PM & 06:30 PM Daily",
     "sendCooldownSeconds": 30,
     "apiTimeoutMs": 30000
   },
@@ -38,6 +38,8 @@
     "chromeExecutablePath": "",
     "authDirectory": ".wwebjs_auth",
     "webVersionCacheDirectory": ".wwebjs_cache",
+    "cronExpression": "15 14 * * *;30 18 * * *",
+    "scheduleLabel": "02:15 PM & 06:30 PM Daily",
     "dailyMessage": "*⚡ GO GAS AUTOMATED DAILY REPORT*\nYesterday sales and collections have been reconciled. Daily telemetry is active.\n_Dispatched via GO Gas WhatsApp Automation Portal_",
     "sendCooldownSeconds": 15
   },
