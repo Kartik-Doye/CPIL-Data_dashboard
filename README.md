@@ -155,12 +155,14 @@ workbook or dashboard for full station-level follow-up.
 Puppeteer needs Chrome or Chromium installed. If it is not found automatically,
 set `WHATSAPP_CHROME_EXECUTABLE_PATH` in `.env` to the browser executable.
 WhatsApp Web automation depends on unofficial internal modules. The current
-`whatsapp-web.js` release does not yet support WhatsApp's newer logged-out
-`/login/` page, so this project pins version 1.34.8 and applies a local patch
-based on the upstream compatibility work. The patch is reapplied by
-`postinstall`; remove it when an official compatible release is available.
-WhatsApp may change these internals again, in which case QR pairing can stop
-working until the client is updated.
+published `whatsapp-web.js` release does not yet include the upstream fix for
+WhatsApp's newer logged-out `/login/` page. This project pins version 1.34.8 and
+applies that compatibility patch locally; `postinstall` reapplies it. Remove
+the patch when a published release includes the fix. WhatsApp may change these
+internals again, in which case QR pairing can stop working until the client is
+updated. If WhatsApp reports that the session was logged out, the app preserves
+the local profile and reports the error instead of repeatedly deleting it or
+taking over another active WhatsApp Web session.
 Keep the computer and dashboard server running for the 1:15 p.m. and 6:30 p.m.
 scheduled sends. This uses unofficial WhatsApp Web automation, not the
 WhatsApp Business Platform; it may break when WhatsApp changes and may be

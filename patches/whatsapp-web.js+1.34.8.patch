@@ -118,7 +118,7 @@ index 62de5395407..fd8e316b768 100644
          });
          await this.pupBrowser.close();
  
-@@ -2036,7 +2062,10 @@ class Client extends EventEmitter {
+@@ -2036,6 +2062,9 @@ class Client extends EventEmitter {
       */
      async getState() {
          return await this.pupPage.evaluate(() => {
@@ -129,7 +129,6 @@ index 62de5395407..fd8e316b768 100644
 +            );
          });
      }
- 
 @@ -2264,7 +2293,9 @@ class Client extends EventEmitter {
       */
      async resetState() {
@@ -141,3 +140,10 @@ index 62de5395407..fd8e316b768 100644
          });
      }
  
+diff --git a/node_modules/whatsapp-web.js/index.d.ts b/node_modules/whatsapp-web.js/index.d.ts
+index 7ca5ea1..ce01402 100644
+--- a/node_modules/whatsapp-web.js/index.d.ts
++++ b/node_modules/whatsapp-web.js/index.d.ts
+@@ -732,1 +732,1 @@
+-        userAgent?: string;
++        userAgent?: string | false;

@@ -11,8 +11,6 @@ import {
   WHATSAPP_CHROME_EXECUTABLE_PATH,
   WHATSAPP_ENABLED,
   WHATSAPP_RECIPIENT_NUMBERS,
-  WHATSAPP_WEB_VERSION,
-  WHATSAPP_WEB_VERSION_CACHE_DIRECTORY,
 } from './config.js';
 
 const { Client, LocalAuth } = whatsappWeb;
@@ -390,9 +388,6 @@ function protectAsyncPageEventHandlers(client: InstanceType<typeof Client>): voi
   }
 
   const guardedAfterBrowserInitialized = async (...args: unknown[]) => {
-    const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-    recordBrowserPid(client, baseDataPath);
-
     const page = Reflect.get(client, 'pupPage');
     if (page && typeof page === 'object' && !protectedPages.has(page)) {
       const pageOn = Reflect.get(page, 'on');
@@ -532,10 +527,6 @@ export function isUnsupportedWhatsAppLoginPageError(message?: string): boolean {
   return Boolean(message && /unsupported login page/i.test(message));
 }
 
-function getChromePidFilePath(baseDataPath: string): string {
-  return path.join(baseDataPath, '.chrome.pid');
-}
-
 function getActiveClientIdFilePath(baseDataPath: string): string {
   return path.join(baseDataPath, '.active_client_id');
 }
@@ -556,15 +547,6 @@ function getActiveClientId(baseDataPath: string): string {
     return '';
   }
   return 'go-gas-primary';
-}
-
-function setActiveClientId(baseDataPath: string, clientId: string): void {
-  try {
-    fs.mkdirSync(baseDataPath, { recursive: true });
-    fs.writeFileSync(getActiveClientIdFilePath(baseDataPath), clientId, 'utf-8');
-  } catch {
-    // ignore
-  }
 }
 
 function getProfileDirForClientId(baseDataPath: string, clientId: string): string {
@@ -588,36 +570,7 @@ function killPidTree(pid: number): void {
   }
 }
 
-function recordBrowserPid(client: InstanceType<typeof Client>, baseDataPath: string): void {
-  try {
-    const browser = Reflect.get(client, 'pupBrowser') as { process?: () => { pid?: number } | null } | undefined;
-    const pid = browser?.process?.()?.pid;
-    if (pid) {
-      fs.mkdirSync(baseDataPath, { recursive: true });
-      fs.writeFileSync(getChromePidFilePath(baseDataPath), String(pid), 'utf-8');
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function killTrackedChromeProcess(baseDataPath: string): void {
-  try {
-    const pidFile = getChromePidFilePath(baseDataPath);
-    if (fs.existsSync(pidFile)) {
-      const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
-      if (pid > 0) {
-        killPidTree(pid);
-      }
-      fs.unlinkSync(pidFile);
-    }
-  } catch {
-    // ignore
-  }
-}
-
 async function destroyClientAndReleaseLocks(client: InstanceType<typeof Client> | null): Promise<void> {
-  const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
   if (client) {
     let pid: number | undefined;
     try {
@@ -638,9 +591,6 @@ async function destroyClientAndReleaseLocks(client: InstanceType<typeof Client> 
       killPidTree(pid);
     }
   }
-  killTrackedChromeProcess(baseDataPath);
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  cleanStaleSessionLocks(baseDataPath);
 }
 
 export function cleanStaleSessionLocks(baseDataPath: string): void {
@@ -668,81 +618,20 @@ export function cleanStaleSessionLocks(baseDataPath: string): void {
   }
 }
 
-function isProfileDirLockedByProcess(profileDir: string): boolean {
-  const lockfile = path.join(profileDir, 'lockfile');
-  if (!fs.existsSync(lockfile)) return false;
-  try {
-    fs.unlinkSync(lockfile);
-    return false;
-  } catch {
-    return true;
-  }
-}
-
 async function wipeSessionDirectoryResilient(baseDataPath: string): Promise<void> {
   if (!fs.existsSync(baseDataPath)) return;
-  killTrackedChromeProcess(baseDataPath);
-  cleanStaleSessionLocks(baseDataPath);
-
   const entries = fs.readdirSync(baseDataPath, { withFileTypes: true });
-  let activeId = getActiveClientId(baseDataPath);
-  let activeProfileLocked = false;
-
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith('session')) continue;
     const targetDir = path.join(baseDataPath, entry.name);
-    try {
-      await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 200 });
-    } catch {
-      // Windows may hold lockfile or a .pma metrics file if an external zombie Chrome is still running.
-      // Delete unlocked auth sub-paths (IndexedDB, Local Storage, Service Worker, Cookies) individually.
-      const authSubPaths = [
-        path.join(targetDir, 'Default', 'IndexedDB'),
-        path.join(targetDir, 'Default', 'Local Storage'),
-        path.join(targetDir, 'Default', 'Session Storage'),
-        path.join(targetDir, 'Default', 'Service Worker'),
-        path.join(targetDir, 'Default', 'Storage'),
-        path.join(targetDir, 'Default', 'Network'),
-        path.join(targetDir, 'Default', 'Cookies'),
-        path.join(targetDir, 'Default', 'Cookies-journal'),
-      ];
-      for (const sub of authSubPaths) {
-        await fs.promises.rm(sub, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 }).catch(() => {});
-      }
-      if (isProfileDirLockedByProcess(targetDir)) {
-        const expectedDirName = activeId ? `session-${activeId}` : 'session';
-        if (entry.name === expectedDirName) {
-          activeProfileLocked = true;
-        }
-      }
-    }
-  }
-
-  // If the current profile directory's lockfile is held by an unkillable external Chrome process,
-  // rotate to a fresh profile directory so New QR / Unlink always succeeds without EBUSY.
-  if (activeProfileLocked) {
-    activeId = `go-gas-${Date.now()}`;
-    setActiveClientId(baseDataPath, activeId);
-    console.info(`[WHATSAPP] Previous profile directory was locked by an external process; rotated to fresh profile session-${activeId}.`);
+    await fs.promises.rm(targetDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 200 });
   }
 }
 
 function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof Client> {
   const executablePath = WHATSAPP_CHROME_EXECUTABLE_PATH.trim();
   const baseDataPath = resolveProjectPath(WHATSAPP_AUTH_DIRECTORY);
-  cleanStaleSessionLocks(baseDataPath);
-
-  let clientId = getActiveClientId(baseDataPath);
-  const currentProfileDir = getProfileDirForClientId(baseDataPath, clientId);
-  if (isProfileDirLockedByProcess(currentProfileDir)) {
-    // Attempt to kill our tracked Chrome PID first
-    killTrackedChromeProcess(baseDataPath);
-    if (isProfileDirLockedByProcess(currentProfileDir)) {
-      clientId = `go-gas-${Date.now()}`;
-      setActiveClientId(baseDataPath, clientId);
-      console.warn(`[WHATSAPP] Profile ${currentProfileDir} is locked by another process; switching to clean profile session-${clientId}.`);
-    }
-  }
+  const clientId = getActiveClientId(baseDataPath);
 
   const authStrategy = new LocalAuth({
     ...(clientId ? { clientId } : {}),
@@ -757,7 +646,7 @@ function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof C
 
   return new Client({
     authStrategy,
-    takeoverOnConflict: true,
+    takeoverOnConflict: false,
     takeoverTimeoutMs: 3000,
     qrMaxRetries: 0,
     // First-time linking downloads keys + history; 30s (the library default for 0) is too short
@@ -769,8 +658,7 @@ function createWhatsAppClient(allowLogoutCleanup = false): InstanceType<typeof C
         document.hasFocus = () => true;
       } catch {}
     },
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    userAgent: false,
     webVersionCache: {
       type: 'none',
     },
@@ -863,12 +751,16 @@ function initializeWhatsAppClientAttempt(attempt: number): Promise<void> {
     initializingClient = false;
     whatsappClientReady = false;
     if (reason === 'LOGOUT') {
+      whatsappClient = null;
       updateSessionState({
-        connectionStatus: 'Connecting (Scan QR)',
+        connectionStatus: 'Connection error',
         qrCodeData: '',
+        connectionError: 'WhatsApp Web reported that this session was logged out. The saved product profile was preserved. Use New QR if you want to pair again.',
       });
-      console.warn('[WHATSAPP] WhatsApp Web reported LOGOUT; clearing revoked session and generating a fresh QR code automatically...');
-      scheduleSessionRecovery('LOGOUT', 1000, true);
+      console.warn('[WHATSAPP] WhatsApp Web reported LOGOUT; preserving the saved LocalAuth profile. A new QR can be requested manually.');
+      void activeClient.destroy().catch((error: unknown) => {
+        console.error(`[WHATSAPP] Failed to close the logged-out browser: ${error instanceof Error ? error.message : String(error)}`);
+      });
       return;
     }
     whatsappClient = null;

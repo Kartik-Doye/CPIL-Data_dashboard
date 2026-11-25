@@ -72,7 +72,7 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
           setNoteDrafts({});
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [telemetry.date]);
 
   const handleSaveStationAction = async (erpCode: string, nextStatus: ActionStatus, nextNote?: string) => {
@@ -204,11 +204,11 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
       ...(critical.length > 10 ? [`\n...and ${critical.length - 10} more critical station(s).`] : []),
       ...(warning.length > 0
         ? [
-            ``,
-            `*PRIORITY 2 WARNING SCHEDULE:*`,
-            warning.slice(0, 5).map((c, i) => formatRow(c, i, '⚠️')).join('\n\n'),
-            ...(warning.length > 5 ? [`\n...and ${warning.length - 5} more warning station(s).`] : []),
-          ]
+          ``,
+          `*PRIORITY 2 WARNING SCHEDULE:*`,
+          warning.slice(0, 5).map((c, i) => formatRow(c, i, '⚠️')).join('\n\n'),
+          ...(warning.length > 5 ? [`\n...and ${warning.length - 5} more warning station(s).`] : []),
+        ]
         : []),
       ``,
       `_Please verify station tank dip & ullage before gate dispatch._`,
@@ -410,31 +410,28 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
         <div className="flex items-center gap-1">
           <button
             onClick={() => setSelectedUrgency('all')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-              selectedUrgency === 'all'
-                ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${selectedUrgency === 'all'
+              ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
           >
             All Dispatch Orders ({dispatchCandidates.length})
           </button>
           <button
             onClick={() => setSelectedUrgency('critical')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-              selectedUrgency === 'critical'
-                ? 'bg-red-600 text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-red-600'
-            }`}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${selectedUrgency === 'critical'
+              ? 'bg-red-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-red-600'
+              }`}
           >
             Critical Only ({criticalCount})
           </button>
           <button
             onClick={() => setSelectedUrgency('warning')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-              selectedUrgency === 'warning'
-                ? 'bg-amber-600 text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-amber-600'
-            }`}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${selectedUrgency === 'warning'
+              ? 'bg-amber-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-amber-600'
+              }`}
           >
             Warning Only ({warningCount})
           </button>
@@ -444,41 +441,37 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
           <span className="text-slate-500 dark:text-slate-400 font-medium mr-1">Action Loop:</span>
           <button
             onClick={() => setActionFilter('all')}
-            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
-              actionFilter === 'all'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-            }`}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${actionFilter === 'all'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
           >
             All ({dispatchCandidates.length})
           </button>
           <button
             onClick={() => setActionFilter('open')}
-            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
-              actionFilter === 'open'
-                ? 'bg-rose-600 text-white'
-                : 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300'
-            }`}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${actionFilter === 'open'
+              ? 'bg-rose-600 text-white'
+              : 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300'
+              }`}
           >
             Open ({openActionCount})
           </button>
           <button
             onClick={() => setActionFilter('in_progress')}
-            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
-              actionFilter === 'in_progress'
-                ? 'bg-amber-600 text-white'
-                : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300'
-            }`}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${actionFilter === 'in_progress'
+              ? 'bg-amber-600 text-white'
+              : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300'
+              }`}
           >
             Dispatched / Active ({inProgressActionCount})
           </button>
           <button
             onClick={() => setActionFilter('resolved')}
-            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
-              actionFilter === 'resolved'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-            }`}
+            className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${actionFilter === 'resolved'
+              ? 'bg-emerald-600 text-white'
+              : 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+              }`}
           >
             Resolved ({resolvedActionCount})
           </button>
@@ -515,116 +508,114 @@ export const TankerDispatchReport: React.FC<TankerDispatchReportProps> = ({
                   const act = stationActions[code]?.status || 'Open';
                   const noteVal = noteDrafts[code] ?? stationActions[code]?.note ?? '';
                   return (
-                  <tr
-                    key={code}
-                    onClick={() => onSelectStation?.(d.station)}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
-                  >
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      {d.urgency === 'Critical' ? (
-                        <span className="inline-flex items-center gap-1 font-semibold text-red-600 dark:text-red-400">
-                          <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                          Critical
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                          Warning
-                        </span>
-                      )}
-                    </td>
-
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      <div className="font-bold text-slate-900 dark:text-white">
-                        {d.station.erp_code}
-                      </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-xs">
-                        {d.station.alds_name}
-                      </div>
-                    </td>
-
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      <div className="font-medium">{d.station.state}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{d.station.tm}</div>
-                    </td>
-
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-right font-mono font-semibold`}>
-                      {fmtQty(d.currentStock)} L
-                    </td>
-
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-right font-mono`}>
-                      {fmtQty(d.dailyBurn)} L/d
-                    </td>
-
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-right font-mono font-bold ${
-                      d.station.days_left < 1.5 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'
-                    }`}>
-                      {d.station.days_left} d
-                    </td>
-
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium text-xs bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/20">
-                        <Truck className="w-3 h-3 shrink-0" />
-                        {d.recommendedTanker}
-                      </span>
-                      <div className="text-[10px] text-slate-500 mt-1">
-                        Estimated fill: {exactLitres(d.recommendedVolumeLtr)} L
-                      </div>
-                    </td>
-
-                    <td
-                      className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}
-                      onClick={(e) => e.stopPropagation()}
+                    <tr
+                      key={code}
+                      onClick={() => onSelectStation?.(d.station)}
+                      className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
                     >
-                      <div className="flex flex-col gap-1 min-w-44">
-                        <div className="flex items-center gap-1.5">
-                          <select
-                            aria-label={`Action status for ${d.station.alds_name}`}
-                            value={act}
-                            onChange={(e) => {
-                              void handleSaveStationAction(code, e.target.value as ActionStatus);
-                            }}
-                            className={`text-[11px] font-semibold rounded-md px-2 py-1 border focus:outline-none cursor-pointer ${
-                              act === 'Resolved'
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                        {d.urgency === 'Critical' ? (
+                          <span className="inline-flex items-center gap-1 font-semibold text-red-600 dark:text-red-400">
+                            <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                            Critical
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            Warning
+                          </span>
+                        )}
+                      </td>
+
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                        <div className="font-bold text-slate-900 dark:text-white">
+                          {d.station.erp_code}
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-xs">
+                          {d.station.alds_name}
+                        </div>
+                      </td>
+
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                        <div className="font-medium">{d.station.state}</div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">{d.station.tm}</div>
+                      </td>
+
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-right font-mono font-semibold`}>
+                        {fmtQty(d.currentStock)} L
+                      </td>
+
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-right font-mono`}>
+                        {fmtQty(d.dailyBurn)} L/d
+                      </td>
+
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-right font-mono font-bold ${d.station.days_left < 1.5 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'
+                        }`}>
+                        {d.station.days_left} d
+                      </td>
+
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium text-xs bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/20">
+                          <Truck className="w-3 h-3 shrink-0" />
+                          {d.recommendedTanker}
+                        </span>
+                        <div className="text-[10px] text-slate-500 mt-1">
+                          Estimated fill: {exactLitres(d.recommendedVolumeLtr)} L
+                        </div>
+                      </td>
+
+                      <td
+                        className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'}`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex flex-col gap-1 min-w-44">
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              aria-label={`Action status for ${d.station.alds_name}`}
+                              value={act}
+                              onChange={(e) => {
+                                void handleSaveStationAction(code, e.target.value as ActionStatus);
+                              }}
+                              className={`text-[11px] font-semibold rounded-md px-2 py-1 border focus:outline-none cursor-pointer ${act === 'Resolved'
                                 ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-500/30'
                                 : act === 'Open'
-                                ? 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-500/30'
-                                : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-500/30'
-                            }`}
-                          >
-                            {ACTION_STATUS_OPTIONS.map((opt) => (
-                              <option key={opt} value={opt} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                          {act === 'Resolved' && <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
-                          {savingCode === code && <LoaderCircle className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />}
+                                  ? 'bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-500/30'
+                                  : 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-500/30'
+                                }`}
+                            >
+                              {ACTION_STATUS_OPTIONS.map((opt) => (
+                                <option key={opt} value={opt} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                            {act === 'Resolved' && <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
+                            {savingCode === code && <LoaderCircle className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />}
+                          </div>
+                          <input
+                            type="text"
+                            value={noteVal}
+                            placeholder="ETA / tanker # / note..."
+                            onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [code]: e.target.value }))}
+                            onBlur={(e) => {
+                              if ((stationActions[code]?.note || '') !== e.target.value) {
+                                void handleSaveStationAction(code, act, e.target.value);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="text-[11px] px-2 py-0.5 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:border-indigo-500"
+                          />
                         </div>
-                        <input
-                          type="text"
-                          value={noteVal}
-                          placeholder="ETA / tanker # / note..."
-                          onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [code]: e.target.value }))}
-                          onBlur={(e) => {
-                            if ((stationActions[code]?.note || '') !== e.target.value) {
-                              void handleSaveStationAction(code, act, e.target.value);
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              (e.target as HTMLInputElement).blur();
-                            }
-                          }}
-                          className="text-[11px] px-2 py-0.5 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-slate-500 dark:text-slate-400 text-[11px]`}>
-                      {d.station.remark || (d.station.days_left < 1.5 ? 'Critical buffer threshold reached' : 'Low stock level')}
-                    </td>
-                  </tr>
+                      <td className={`px-4 ${isCompact ? 'py-1.5' : 'py-2.5'} text-slate-500 dark:text-slate-400 text-[11px]`}>
+                        {d.station.remark || (d.station.days_left < 1.5 ? 'Critical buffer threshold reached' : 'Low stock level')}
+                      </td>
+                    </tr>
                   );
                 })
               )}

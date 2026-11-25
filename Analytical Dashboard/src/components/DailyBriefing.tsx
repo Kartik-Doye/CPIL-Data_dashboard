@@ -47,7 +47,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
         if (info.recipientEmails) setRecipientEmailsDraft(info.recipientEmails);
         setHasSavedAppPassword(Boolean(info.hasPassword));
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const handleSaveEmailConfig = async (e: React.FormEvent) => {
@@ -180,11 +180,10 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={handleCopy}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-md cursor-pointer ${
-                  copied
-                    ? 'bg-emerald-600 text-white shadow-emerald-600/30'
-                    : 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-600/30'
-                }`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-md cursor-pointer ${copied
+                  ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+                  : 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-600/30'
+                  }`}
               >
                 {copied ? (
                   <>
@@ -229,11 +228,10 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
                 type="button"
                 onClick={() => setShowEmailSettings((v) => !v)}
                 title="Configure Gmail SMTP sender, App Password, and recipients for 02:15 PM & 06:30 PM automated Excel workbook emails"
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
-                  emailConfigured
-                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-                    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${emailConfigured
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                  : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                  }`}
               >
                 <Settings className="w-3.5 h-3.5" />
                 <span>{emailConfigured ? 'Email Active' : 'Setup Email'}</span>
@@ -463,11 +461,10 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({ data }) => {
                   </td>
                   <td className="py-2 px-3 text-center">
                     <span
-                      className={`inline-block px-2 py-0.5 rounded font-mono font-bold text-xs ${
-                        st.days_left < 1.5
-                          ? 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
-                          : 'bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
-                      }`}
+                      className={`inline-block px-2 py-0.5 rounded font-mono font-bold text-xs ${st.days_left < 1.5
+                        ? 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
+                        : 'bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
+                        }`}
                     >
                       {st.days_left} Days
                     </span>
