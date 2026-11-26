@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { generateForecast, PersistedForecastErrors } from './src/engine/forecasting.js';
+import { generateForecast, generateStateForecasts, PersistedForecastErrors } from './src/engine/forecasting.js';
 import {
   runComprehensiveAnalysis,
   simulateWhatIf,
@@ -282,6 +282,22 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
       console.info('[DATABASE] Station/TM mapping table is not installed; using the current sale_tracker names and TM values.');
     }
 
+    const stateHistoryRows = await query<{ state: string; date: string; sale_qty: number }>(`
+      SELECT
+        COALESCE(m.to_state, ${hasStationContactMapping ? "NULLIF(TRIM(cm.state), ''), " : ''}s.state) AS state,
+        s.sale_date::text AS date,
+        SUM(s.sale_qty)::float AS sale_qty
+      FROM sale_tracker s
+      ${hasStationContactMapping
+    ? `LEFT JOIN public.station_contact_mapping cm ON UPPER(TRIM(cm.erp_code)) = UPPER(TRIM(s.erp_code))
+      LEFT JOIN state_map m ON UPPER(TRIM(COALESCE(NULLIF(TRIM(cm.state), ''), s.state))) = UPPER(TRIM(m.from_state))`
+    : 'LEFT JOIN state_map m ON UPPER(TRIM(s.state)) = UPPER(TRIM(m.from_state))'}
+      WHERE NULLIF(TRIM(COALESCE(m.to_state, ${hasStationContactMapping ? "NULLIF(TRIM(cm.state), ''), " : ''}s.state)), '') IS NOT NULL
+        AND s.sale_date <= $1::date
+      GROUP BY 1, s.sale_date
+      ORDER BY 1, s.sale_date
+    `, [activeDate]);
+
     const latestStations = await query(`
       SELECT 
         s.erp_code,
@@ -320,8 +336,8 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
       FROM sale_tracker s
       ${hasStationContactMapping
     ? `LEFT JOIN public.station_contact_mapping cm ON UPPER(TRIM(cm.erp_code)) = UPPER(TRIM(s.erp_code))
-      LEFT JOIN state_map m ON COALESCE(NULLIF(TRIM(cm.state), ''), s.state) = m.from_state`
-    : 'LEFT JOIN state_map m ON s.state = m.from_state'}
+      LEFT JOIN state_map m ON UPPER(TRIM(COALESCE(NULLIF(TRIM(cm.state), ''), s.state))) = UPPER(TRIM(m.from_state))`
+    : 'LEFT JOIN state_map m ON UPPER(TRIM(s.state)) = UPPER(TRIM(m.from_state))'}
       WHERE s.sale_date = $1::date
     `, [activeDate]);
 
@@ -584,7 +600,8 @@ async function loadFromDatabase(requestedDate?: string): Promise<any | null> {
       recent7dDates,
       availableDates,
       previousDate,
-      tmTargetDaily
+      tmTargetDaily,
+      stateHistoryRows
     );
   } catch (err: any) {
     console.error('[DATABASE] Critical query failure:', err.message);
@@ -600,7 +617,8 @@ async function processDataset(
   recent7dDates: string[] = [],
   availableDates: string[] = [],
   previousDate: string | null = null,
-  tmTargetDaily: TmTargetDailySummary | null = null
+  tmTargetDaily: TmTargetDailySummary | null = null,
+  stateHistoryRows: Array<{ state: string; date: string; sale_qty: number }> = []
 ) {
   const dailyView = getDailyView(stations);
   const statesSummary = getStatePeriodView(stations);
@@ -822,6 +840,14 @@ async function processDataset(
   }
 
   const forecastEngineResult = generateForecast(historySeries, 7, stations, persistedErrors);
+  const stateForecasts = generateStateForecasts(
+    stateHistoryRows.map((row) => ({
+      ...row,
+      state: normalizeStateCode(row.state),
+      date: row.date.slice(0, 10),
+      sale_qty: Number(row.sale_qty) || 0,
+    })),
+  );
   if (persistedErrors && persistedErrors.sample_count > 0) {
     writeDiskSetting('forecast_feedback_cache', persistedErrors);
   }
@@ -963,6 +989,7 @@ async function processDataset(
     top_performing_stations: topPerformingStations,
     bottom_performing_stations: bottomPerformingStations,
     forecast: forecastEngineResult,
+    state_forecasts: stateForecasts,
     history_30d: historySeries.slice(-30),
     recent_7d_dates: recent7dDates,
     station_monthly_sales: monthlySalesRows,

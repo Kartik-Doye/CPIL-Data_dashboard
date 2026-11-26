@@ -550,6 +550,7 @@ export function App() {
             {activeTab === 'forecast' && (
               <AIMLForecast
                 forecast={data.forecast}
+                stateForecasts={data.state_forecasts || []}
                 currentSale={data.total_sale_qty}
               />
             )}

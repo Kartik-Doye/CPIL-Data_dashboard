@@ -32,16 +32,7 @@ const DB_PASSWORD = process.env.BOT_LOADER_PASSWORD || '';
 
 function logMessage(msg: string) {
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const formatted = `[${timestamp}] ${msg}`;
-  console.log(formatted);
-
-  const logsDir = path.join(__dirname, 'logs');
-  if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-  }
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const logFile = path.join(logsDir, `load_${dateStr}.log`);
-  fs.appendFileSync(logFile, formatted + '\n');
+  console.log(`[${timestamp}] ${msg}`);
 }
 
 function parseDateCell(val: any): string | null {

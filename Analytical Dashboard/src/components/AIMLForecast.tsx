@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Sparkles, TrendingUp, CheckCircle, AlertCircle, Info, Calendar } from 'lucide-react';
-import { ForecastResult } from '../types';
+import { ForecastResult, StateForecast } from '../types';
 
 interface AIMLForecastProps {
   forecast: ForecastResult;
+  stateForecasts?: StateForecast[];
   currentSale: number;
 }
 
-export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSale }) => {
+export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, stateForecasts = [], currentSale }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   if (!forecast || !forecast.forecast || forecast.forecast.length === 0) {
@@ -1154,6 +1155,58 @@ export const AIMLForecast: React.FC<AIMLForecastProps> = ({ forecast, currentSal
           </table>
         </div>
       </div>
+
+      <section className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs">
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">7-Day State-wise Sales Prediction</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Each state is forecast from its own daily sales history. Confidence ranges and walk-forward scores are historical estimates, not guarantees.
+          </p>
+        </div>
+        {stateForecasts.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">State-level history is not available for forecasting.</p>
+        ) : (
+          <div className="space-y-3">
+            {stateForecasts.map((stateForecast) => (
+              <article key={stateForecast.state} className="rounded-lg border border-slate-200 dark:border-slate-800 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h4 className="font-semibold text-slate-900 dark:text-white">{stateForecast.state}</h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {stateForecast.days_available} historical days · {stateForecast.backtest_days} walk-forward scored days · MAPE {formatMape(stateForecast.mape_ensemble)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="block text-[10px] text-slate-500 dark:text-slate-400">7-day expected volume</span>
+                    <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                      {stateForecast.insufficient ? 'Not available' : `${exactLitres(stateForecast.predicted_total_7d)} L`}
+                    </strong>
+                  </div>
+                </div>
+                {stateForecast.insufficient ? (
+                  <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+                    Not enough state history yet; at least 7 daily observations are required.
+                  </p>
+                ) : (
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                    {stateForecast.forecast.map((day) => (
+                      <div key={day.date} className="rounded-md bg-slate-50 dark:bg-slate-950/70 p-2 text-xs">
+                        <span className="block text-slate-500 dark:text-slate-400">{day.date} · {day.day_name.slice(0, 3)}</span>
+                        <strong className="block mt-1 font-mono text-indigo-600 dark:text-indigo-300">
+                          {exactLitres(day.predicted_qty)} L
+                        </strong>
+                        <span className="block mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                          Range: {exactLitres(day.lower_bound)}–{exactLitres(day.upper_bound)} L
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Analytical Notes */}
       <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 text-xs text-slate-600 dark:text-slate-400 space-y-1.5 transition-colors">

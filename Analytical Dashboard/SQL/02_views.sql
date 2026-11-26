@@ -48,7 +48,7 @@ SELECT
     SUM(COALESCE(NULLIF(s.new_rate, 0), s.erp_rate) * s.sale_qty) AS rsp_num,
     SUM(COALESCE(s.effective_rsp, CASE WHEN s.sale_qty > 0 THEN COALESCE(s.net_total_collection, s.collection) / s.sale_qty ELSE 0 END) * s.sale_qty) AS eff_rsp_num
 FROM sale_tracker s
-LEFT JOIN state_map m ON s.state = m.from_state
+LEFT JOIN state_map m ON UPPER(TRIM(s.state)) = UPPER(TRIM(m.from_state))
 GROUP BY s.sale_date, COALESCE(m.to_state, s.state);
 
 -- =========================================================================
@@ -249,7 +249,7 @@ SELECT
     NULL::numeric                                           AS achievement_pct,
     NULL::text                                              AS status
 FROM sale_tracker s
-LEFT JOIN state_map m ON s.state = m.from_state
+LEFT JOIN state_map m ON UPPER(TRIM(s.state)) = UPPER(TRIM(m.from_state))
 GROUP BY COALESCE(m.to_state, s.state);
 
 -- =========================================================================

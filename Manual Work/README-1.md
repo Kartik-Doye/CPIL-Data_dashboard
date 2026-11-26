@@ -23,7 +23,8 @@ of adding a date column, saving as CSV, and importing via pgAdmin.
    - A blank or repeated Cost Code stops the file.
 5. Inserts all rows for that date in **one transaction** — either the whole
    day loads, or nothing does.
-6. Writes a timestamped log to `logs/`.
+6. Prints timestamped status and error messages to the console; it does not
+   create local upload log files.
 
 The loader does not create an archive copy. The source workbook remains where
 you saved it; save a separate backup yourself only if you need one.
@@ -174,7 +175,7 @@ numbers, including the header row as row 1:
 | `[FAILED] Row 18 (Cost Code "..."), column/constraint ...` | PostgreSQL rejected that station row. | Inspect the reported field or constraint and correct the source data. The load transaction is rolled back. |
 | `[FAILED] Database error: ...` | The database could not be reached or rejected the operation without a specific row. | Check PostgreSQL status, credentials, schema, and permissions. |
 
-The same output is saved to `logs/load_YYYYMMDD_HHMMSS.log`.
+The loader's status and error messages are printed to the console only.
 
 ### Step 4 (optional) — Check with a query
 
@@ -250,7 +251,6 @@ The corrected file will load fresh.
 | `.env.example` | Template for `.env`. |
 | `.gitignore` | Tells git to ignore `.env`, logs, and `sale.xlsx`. |
 | `sale.xlsx` | Today's data file (overwritten each day). |
-| `logs/` | Timestamped log files, one per run. |
 
 ---
 

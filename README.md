@@ -29,6 +29,11 @@ Open the URL from `APP_BASE_URL` (default: `http://localhost:3000`). The DB
 test verifies the PostgreSQL connection and the required `sale_tracker` and
 `state_map` tables. Configure connection settings in
 `Analytical Dashboard/.env`; never commit environment files.
+The state mapping migration in `Analytical Dashboard/SQL/03_state_map.sql`
+normalizes legacy state labels, including `ELANGO R` to `TN`; re-run it in
+PostgreSQL to apply mapping updates. Re-run
+`Analytical Dashboard/SQL/02_views.sql` as well to refresh the database views
+that aggregate sales by state.
 
 PostgreSQL must be available and `sale_tracker` must contain data for the
 dashboard to load. If the connection or data is unavailable, the UI reports an
@@ -53,6 +58,11 @@ the XGBoost library.
 The AIML report also shows recent forecast error, over/underforecast direction,
 the best-performing component model, and notable week-to-week demand shifts as
 possible miss signals; these signals are diagnostic, not guaranteed causes.
+It also provides seven-day state-wise projections, each trained and
+walk-forward-validated against that state's daily sales history. States with
+fewer than seven historical observations are shown without a prediction;
+state-level scores are historical estimates and do not use the network's
+persisted feedback ledger.
 Learning runs when the dashboard refreshes its telemetry, including its daily
 background refresh. As a PostgreSQL administrator, run
 `Manual Work/02_forecast_feedback.sql` in the `sale_alds` database, then

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { generateForecast } from './forecasting.js';
+import { generateForecast, generateStateForecasts } from './forecasting.js';
 import { getFestivalEntry, getFestivalName, isFestivalDate } from './festivalCalendar.js';
 import { buildFeaturesNoLeak } from './forecastFixes.js';
 
@@ -10,6 +10,29 @@ function makeHistory(days: number, sale: (index: number) => number) {
     sale_qty: sale(index),
   }));
 }
+
+test('generates separate state forecasts and marks states with too little history', () => {
+  const history = makeHistory(8, index => 100 + (index % 7) * 10 + index);
+  const stateForecasts = generateStateForecasts([
+    ...history.map(({ date, sale_qty }) => ({ state: 'Alpha', date, sale_qty })),
+    { state: 'Alpha', date: history[0].date, sale_qty: 50 },
+    ...history.slice(0, 6).map(({ date, sale_qty }) => ({ state: 'Beta', date, sale_qty })),
+  ]);
+  const alpha = stateForecasts.find(state => state.state === 'Alpha');
+  const beta = stateForecasts.find(state => state.state === 'Beta');
+
+  assert.ok(alpha);
+  assert.equal(alpha.days_available, 8);
+  assert.equal(alpha.insufficient, false);
+  assert.equal(alpha.forecast.length, 7);
+  assert.ok(alpha.predicted_total_7d > 0);
+  assert.ok(alpha.mape_ensemble !== null);
+  assert.ok(beta);
+  assert.equal(beta.insufficient, true);
+  assert.equal(beta.days_available, 6);
+  assert.equal(beta.forecast.length, 0);
+  assert.equal(beta.mape_ensemble, null);
+});
 
 test('reports walk-forward metrics only when historical test days are available', () => {
   const result = generateForecast(makeHistory(35, index => 100 + (index % 7) * 10 + index), 7);

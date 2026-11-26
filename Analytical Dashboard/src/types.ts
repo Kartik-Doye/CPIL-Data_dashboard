@@ -315,6 +315,16 @@ export interface DatabaseDiagnostics {
   };
 }
 
+export interface StateForecast {
+  state: string;
+  days_available: number;
+  insufficient: boolean;
+  predicted_total_7d: number;
+  mape_ensemble: number | null;
+  backtest_days: number;
+  forecast: Array<Pick<ForecastPoint, 'date' | 'day_name' | 'predicted_qty' | 'lower_bound' | 'upper_bound'>>;
+}
+
 export interface StationMonthlySales {
   erp_code: string;
   month: string;
@@ -350,6 +360,7 @@ export interface ExecutiveTelemetry {
   top_performing_stations: StationRecord[];
   bottom_performing_stations: StationRecord[];
   forecast: ForecastResult;
+  state_forecasts?: StateForecast[];
   history_30d: DailyHistoricalPoint[];
   recent_7d_dates?: string[];
   station_monthly_sales?: StationMonthlySales[];

@@ -11,7 +11,7 @@
  * 8. Root-Cause Diagnostic Error Analysis
  */
 
-import { ForecastPoint, ForecastResult, StationRecord } from '../types.js';
+import { ForecastPoint, ForecastResult, StateForecast, StationRecord } from '../types.js';
 import {
   buildFeaturesNoLeak,
   computeEmpiricalWeekdayRatio,
@@ -24,6 +24,45 @@ export interface HistoricalDay {
   date: string;
   sale_qty: number;
   collection?: number;
+}
+
+export function generateStateForecasts(
+  stateHistory: Array<{ state: string; date: string; sale_qty: number }>,
+  forecastDays = 7,
+): StateForecast[] {
+  const historyByState = new Map<string, Map<string, number>>();
+  for (const row of stateHistory) {
+    const state = row.state.trim();
+    const date = row.date.slice(0, 10);
+    if (!state || !date || !Number.isFinite(row.sale_qty)) continue;
+    const historyByDate = historyByState.get(state) ?? new Map<string, number>();
+    historyByDate.set(date, (historyByDate.get(date) ?? 0) + row.sale_qty);
+    historyByState.set(state, historyByDate);
+  }
+
+  return [...historyByState.entries()]
+    .map(([state, historyByDate]) => {
+      const result = generateForecast(
+        [...historyByDate.entries()].map(([date, sale_qty]) => ({ date, sale_qty })),
+        forecastDays,
+      );
+      return {
+        state,
+        days_available: result.days_available ?? 0,
+        insufficient: result.insufficient ?? false,
+        predicted_total_7d: result.predicted_total_7d,
+        mape_ensemble: result.mape_ensemble,
+        backtest_days: result.backtest_days ?? 0,
+        forecast: result.forecast.map(({ date, day_name, predicted_qty, lower_bound, upper_bound }) => ({
+          date,
+          day_name,
+          predicted_qty,
+          lower_bound,
+          upper_bound,
+        })),
+      };
+    })
+    .sort((a, b) => Number(a.insufficient) - Number(b.insufficient) || b.predicted_total_7d - a.predicted_total_7d);
 }
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

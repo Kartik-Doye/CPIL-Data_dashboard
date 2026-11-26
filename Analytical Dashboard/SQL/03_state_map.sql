@@ -20,3 +20,9 @@ ON CONFLICT (from_state) DO NOTHING;
 
 INSERT INTO state_map (from_state, to_state) VALUES ('RAJ', 'RJ')
 ON CONFLICT (from_state) DO NOTHING;
+
+-- ELANGO R is a Territory Manager name, not a state; this legacy value belongs to Tamil Nadu.
+INSERT INTO state_map (from_state, to_state) VALUES ('ELANGO R', 'TN')
+ON CONFLICT (from_state) DO UPDATE
+SET to_state = EXCLUDED.to_state
+WHERE state_map.to_state IS DISTINCT FROM EXCLUDED.to_state;
